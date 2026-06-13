@@ -1,0 +1,116 @@
+"""Full-year 2024 backtest — all 6 strategies on real market data.
+
+Usage:
+    python backtest_2024.py                         # all strategies
+    python backtest_2024.py --strategy breakout
+"""
+from __future__ import annotations
+
+import sys
+from datetime import date
+from pathlib import Path
+
+import pandas as pd
+
+from config import PARAMS, TICKERS, StrategyType
+from logger_setup import get_logger
+from strategy import Trade, backtest_ticker
+from dashboard import db as db_mod
+from backtest_2025 import download_history, apply_portfolio_cap, compute_stats, compute_max_drawdown
+from build_report_2025 import build_report_2025
+
+log = get_logger(__name__)
+ROOT = Path(__file__).parent
+OUTPUT_PATH = ROOT / "reports" / "backtest_2024.html"
+
+BACKTEST_START = date(2024, 1, 1)
+BACKTEST_END = date(2024, 12, 31)
+
+
+def run_full_backtest() -> int:
+    log.info("=== 2024 Multi-Strategy Backtest (V2) ===")
+    log.info("Downloading history for %d tickers from yfinance...", len(TICKERS))
+
+    ticker_data: dict[str, pd.DataFrame] = {}
+    for tk in TICKERS:
+        log.info("Downloading %s...", tk)
+        df = download_history(tk, BACKTEST_START, BACKTEST_END)
+        if df.empty or len(df) < PARAMS.sma_slow + 5:
+            log.warning("%s: insufficient data — skipping", tk)
+            ticker_data[tk] = pd.DataFrame()
+            continue
+        ticker_data[tk] = df
+
+    v2_strategies = [
+        StrategyType.TREND_PULLBACK,
+        StrategyType.BREAKOUT,
+        StrategyType.MEAN_REVERSION,
+        StrategyType.MOMENTUM_MACD,
+        StrategyType.ENSEMBLE,
+        StrategyType.REGIME_ADAPTIVE,
+    ]
+
+    strategy_results = {}
+    per_strategy_details = {}
+    overall_best = None
+    best_pnl = float("-inf")
+
+    for strategy in v2_strategies:
+        strat_name = strategy.value
+        log.info("=" * 50)
+        log.info("Running strategy: %s", strat_name)
+        log.info("=" * 50)
+
+        per_ticker: dict[str, tuple[pd.DataFrame, list[Trade]]] = {}
+        all_candidate_trades: list[Trade] = []
+
+        bt_id = db_mod.start_backtest_run(2024, strat_name)
+
+        for tk in TICKERS:
+            df = ticker_data.get(tk)
+            if df is None or df.empty:
+                continue
+            window_start = pd.Timestamp(BACKTEST_START)
+            trades = backtest_ticker(df, tk, window_start, PARAMS, strategy)
+            all_candidate_trades.extend(trades)
+            per_ticker[tk] = (df, trades)
+
+        capped, skipped = apply_portfolio_cap(
+            all_candidate_trades, PARAMS.dollars_per_trade, PARAMS.max_concurrent_capital
+        )
+        stats = compute_stats(capped)
+        dd = compute_max_drawdown(capped)
+        stats["max_drawdown_pct"] = dd
+        stats["roi_on_cap"] = stats["total_pnl"] / PARAMS.max_concurrent_capital
+        stats["_trades"] = capped
+        stats["skipped"] = skipped
+
+        strategy_results[strat_name] = stats
+        per_strategy_details[strat_name] = per_ticker
+
+        pf = stats["profit_factor"]
+        db_mod.finish_backtest_run(bt_id, stats["trades"], stats["win_rate"],
+                                   stats["total_pnl"], pf if pf != float("inf") else 999.0,
+                                   dd, 0.0)
+
+        if stats["total_pnl"] > best_pnl:
+            best_pnl = stats["total_pnl"]
+            overall_best = strat_name
+
+        log.info("  %s: %d trades, WR=%.1f%%, P&L=%+.2f, PF=%.2f, DD=%.1f%%%s",
+                 strat_name, stats["trades"], stats["win_rate"] * 100,
+                 stats["total_pnl"], stats["profit_factor"], dd * 100,
+                 " (best!)" if overall_best == strat_name else "")
+
+    html = build_report_2025(strategy_results, per_strategy_details, overall_best)
+    html = html.replace("2025 Backtest", "2024 Backtest")
+    OUTPUT_PATH.write_text(html, encoding="utf-8")
+
+    log.info("=" * 50)
+    log.info("2024 backtest complete. Best strategy: %s ($%.2f)", overall_best, best_pnl)
+    log.info("Report: %s", OUTPUT_PATH)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run_full_backtest())

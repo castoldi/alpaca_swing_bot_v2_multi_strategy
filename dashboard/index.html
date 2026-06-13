@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>📈 Alpaca Swing Bot V2 - Multi-strategy</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f1117;color:#e1e7ef;min-height:100vh}
+
+/* ── Header ── */
+.header{background:linear-gradient(135deg,#1a1d27,#0f1117);border-bottom:1px solid #2a2d35;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.header h1{font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px}
+.badge{font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;background:#22c55e20;color:#22c55e;border:1px solid #22c55e40}
+.subtitle{font-size:12px;color:#8892a4}
+
+/* ── Nav ── */
+.nav-bar{background:#13151f;border-bottom:1px solid #2a2d35;padding:0 28px;display:flex;align-items:center;gap:0}
+.nav-tab{padding:12px 18px;font-size:13px;font-weight:600;color:#6b7280;cursor:pointer;border-bottom:2px solid transparent;transition:.15s;user-select:none;text-decoration:none;display:inline-block}
+.nav-tab:hover{color:#c8cedb}
+.nav-tab.active{color:#60a5fa;border-bottom-color:#60a5fa}
+.nav-sep{width:1px;height:24px;background:#2a2d35;margin:0 8px;align-self:center}
+.nav-link{padding:10px 14px;font-size:12px;font-weight:600;color:#6b7280;text-decoration:none;border-radius:6px;transition:.15s}
+.nav-link:hover{color:#e1e7ef;background:#1a1d27}
+
+/* ── Layout ── */
+.container{max-width:1440px;margin:0 auto;padding:24px}
+.page{display:none}.page.active{display:block}
+
+/* ── KPI cards ── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}
+.kpi{background:#1a1d27;border:1px solid #2a2d35;border-radius:12px;padding:16px}
+.kpi .label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;margin-bottom:4px}
+.kpi .value{font-size:24px;font-weight:700}
+.kpi .sub{font-size:12px;color:#6b7280;margin-top:2px}
+
+/* ── Section titles ── */
+.section-title{font-size:16px;font-weight:600;color:#c8cedb;margin:28px 0 12px;display:flex;align-items:center;gap:8px}
+
+/* ── Tables ── */
+.table-wrap{overflow-x:auto;border-radius:10px;border:1px solid #2a2d35;background:#161822;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#1a1d27;color:#8892a4;font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.04em;padding:10px 14px;text-align:left;border-bottom:1px solid #2a2d35;white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid #252830;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#1e212b}
+
+/* ── Colors ── */
+.pos{color:#22c55e}.neg{color:#ef4444}.neu{color:#f59e0b}
+
+/* ── Strategy cards ── */
+.strat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;margin-bottom:24px}
+.strat-card{background:#1a1d27;border:1px solid #2a2d35;border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:12px}
+.strat-card:hover{border-color:#374151}
+.strat-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.strat-name{font-size:15px;font-weight:700;color:#e1e7ef}
+.strat-badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;text-transform:uppercase;letter-spacing:.05em}
+.v1{background:#60a5fa20;color:#60a5fa;border:1px solid #60a5fa30}
+.v2{background:#a78bfa20;color:#a78bfa;border:1px solid #a78bfa30}
+.strat-entry{font-size:12px;color:#8892a4;line-height:1.6}
+.strat-params{display:flex;flex-wrap:wrap;gap:6px}
+.param-chip{font-size:11px;padding:3px 8px;border-radius:5px;background:#0f1117;border:1px solid #2a2d35;color:#c8cedb}
+.strat-pnl{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding-top:12px;border-top:1px solid #252830}
+.pnl-cell{text-align:center}
+.pnl-cell .yr{font-size:10px;color:#6b7280;margin-bottom:2px}
+.pnl-cell .amt{font-size:13px;font-weight:700}
+
+/* ── Misc ── */
+.loading{text-align:center;color:#6b7280;padding:40px;font-size:14px}
+.error{text-align:center;color:#ef4444;padding:20px}
+.empty{color:#6b7280;padding:12px 0;font-size:13px}
+code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
+
+@media(max-width:768px){.container{padding:12px}.kpis{grid-template-columns:repeat(2,1fr)}td,th{padding:8px 10px;font-size:12px}.strat-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📈 Alpaca Swing Bot V2 - Multi-strategy <span class="badge" id="paperBadge">Paper</span></h1>
+  <div class="subtitle" id="subtitle">Loading...</div>
+</div>
+
+<div class="nav-bar">
+  <span class="nav-tab active" data-page="home">Home</span>
+  <span class="nav-tab" data-page="strategies">Strategies</span>
+  <div class="nav-sep"></div>
+  <a class="nav-link" href="/backtest-2024">2024 Report ↗</a>
+  <a class="nav-link" href="/backtest-2025">2025 Report ↗</a>
+  <a class="nav-link" href="/backtest-2026">2026 Report ↗</a>
+</div>
+
+<div class="container">
+
+  <!-- ══ HOME ══ -->
+  <div id="page-home" class="page active">
+
+    <div id="kpis" class="kpis"><div class="loading">Loading...</div></div>
+
+    <div class="section-title">Open Positions</div>
+    <div id="positions"><div class="loading">Loading positions...</div></div>
+
+    <div class="section-title">Recent Trades</div>
+    <div id="trades"><div class="loading">Loading trades...</div></div>
+
+    <div class="section-title">Backtest Results — All Years</div>
+    <div id="backtestRuns"><div class="loading">Loading backtest results...</div></div>
+
+  </div>
+
+  <!-- ══ STRATEGIES ══ -->
+  <div id="page-strategies" class="page">
+
+    <div class="section-title">All Strategies</div>
+    <div id="stratGrid" class="strat-grid"><div class="loading">Loading...</div></div>
+
+    <div class="section-title">3-Year Performance Summary</div>
+    <div id="stratTable"><div class="loading">Loading...</div></div>
+
+  </div>
+
+</div>
+
+<script>
+const STRATEGIES = [
+  {
+    id: 'trend_pullback', name: 'Trend Pullback', type: 'V1',
+    entry: 'Price above SMA(50). RSI dipped below 55 in recent bars, then a bounce bar (close > open, close > prev close, rising RSI). Skips entries 3 days before earnings to avoid gap risk.',
+    params: ['SL 10%', 'TP 2×ATR [3%–8%]', 'Time stop 5d if breakeven+', 'Earnings filter'],
+  },
+  {
+    id: 'breakout', name: 'Breakout', type: 'V1',
+    entry: 'Price breaks above the 20-bar high with ≥1.5× average volume. Price above SMA(50). RSI above 50 and rising. Range filter rejects abnormally wide days.',
+    params: ['SL 8%', 'TP 3×ATR [5%–15%]', 'Time stop 7d if breakeven+', 'Volume 1.5×'],
+  },
+  {
+    id: 'mean_reversion', name: 'Mean Reversion', type: 'V1',
+    entry: 'Price above SMA(50) but below SMA(20) (pullback). RSI pulled back below 50. Price near or below Bollinger lower band (2.2σ). Bounce confirmed by close > prev close.',
+    params: ['SL 7%', 'TP 1.5×ATR [1.5%–5%]', 'Time stop 3d if breakeven+', 'Bollinger 2.2σ'],
+  },
+  {
+    id: 'momentum_macd', name: 'MACD Momentum', type: 'V2',
+    entry: 'MACD histogram just crossed above zero (fresh bullish cross). RSI above 50 and rising. Price above both SMA(20) and SMA(50). Not on very low volume (<0.7× avg).',
+    params: ['SL 9%', 'TP 2.5×ATR [4%–12%]', 'Time stop 6d if breakeven+', 'MACD(12,26,9)'],
+  },
+  {
+    id: 'ensemble', name: 'Ensemble', type: 'V2',
+    entry: 'Weighted vote of all 5 base strategies must score ≥ 0.30. Weights: Regime 35%, MACD 25%, Trend 20%, Breakout 15%, Mean Rev 5%. Enters only when multiple strategies agree.',
+    params: ['SL 9%', 'TP 2.5×ATR [4%–12%]', 'Time stop 6d if breakeven+', 'Score ≥ 0.30'],
+  },
+  {
+    id: 'regime', name: 'Regime Adaptive', type: 'V2',
+    entry: 'Detects market regime via EMA(10)/EMA(50) cross. Risk-on: buy dips in strong uptrends. Risk-off: defensive oversold bounces only. Neutral: standard trend-pullback style.',
+    params: ['SL adaptive', 'TP 2×ATR [3%–8%]', 'Time stop 5d if breakeven+', 'EMA(10/50)'],
+  },
+];
+
+const STRAT_COLORS = {
+  trend_pullback:'#60a5fa', breakout:'#f59e0b', mean_reversion:'#a78bfa',
+  momentum_macd:'#34d399', ensemble:'#f472b6', regime:'#fb923c',
+};
+
+// ── Nav tab switching ──────────────────────────────────────────────────────────
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+    if (tab.dataset.page === 'strategies') renderStrategies();
+  });
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmt$(x) {
+  const v = parseFloat(x);
+  if (isNaN(v)) return '$0';
+  return (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(0);
+}
+function fmtFull$(x) {
+  const v = parseFloat(x);
+  if (isNaN(v)) return '$0.00';
+  return (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2);
+}
+function pnlClass(v) { return parseFloat(v) >= 0 ? 'pos' : 'neg'; }
+async function api(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+// ── HOME ─────────────────────────────────────────────────────────────────────
+async function loadHome() {
+  try {
+    const [summary, trades, bt] = await Promise.all([
+      api('/api/summary'),
+      api('/api/trades?limit=15'),
+      api('/api/backtest-results'),
+    ]);
+
+    // Header
+    const badge = document.getElementById('paperBadge');
+    badge.textContent = summary.is_paper ? 'Paper' : 'LIVE';
+    Object.assign(badge.style, summary.is_paper
+      ? {background:'#22c55e20',color:'#22c55e',borderColor:'#22c55e40'}
+      : {background:'#ef444420',color:'#ef4444',borderColor:'#ef444440'});
+    document.getElementById('subtitle').textContent =
+      `${(summary.tickers||[]).join(' · ')}  ·  $${summary.dollars_per_trade||200}/trade  ·  $${summary.max_capital||1000} cap`;
+
+    // KPIs
+    document.getElementById('kpis').innerHTML = `
+      <div class="kpi"><div class="label">Total P&L</div><div class="value ${pnlClass(summary.total_pnl)}">${fmtFull$(summary.total_pnl)}</div><div class="sub">${summary.trades||0} trades</div></div>
+      <div class="kpi"><div class="label">Win Rate</div><div class="value">${summary.win_rate||0}%</div><div class="sub">${summary.wins||0}W / ${summary.losses||0}L</div></div>
+      <div class="kpi"><div class="label">Profit Factor</div><div class="value">${summary.profit_factor||0}</div><div class="sub">Gross P&L ratio</div></div>
+      <div class="kpi"><div class="label">Open Positions</div><div class="value">${summary.open_positions||0}</div><div class="sub">Deployed $${summary.deployed||0}</div></div>
+      <div class="kpi"><div class="label">Strategies</div><div class="value" style="font-size:16px">6</div><div class="sub">V1 + V2 active</div></div>
+    `;
+
+    // Positions
+    const openTrades = (trades.trades||[]).filter(t => !t.exit_date);
+    if (openTrades.length) {
+      document.getElementById('positions').innerHTML = tableHtml(
+        ['Ticker','Entry Date','Entry $','Stop','Target','Strategy'],
+        openTrades.map(t => [
+          `<strong>${t.ticker}</strong>`,
+          (t.entry_date||'').split('T')[0],
+          `$${parseFloat(t.entry_price||0).toFixed(2)}`,
+          `$${parseFloat(t.stop_loss||0).toFixed(2)}`,
+          `$${parseFloat(t.take_profit||0).toFixed(2)}`,
+          `<span style="color:${STRAT_COLORS[t.strategy]||'#8892a4'}">${t.strategy}</span>`,
+        ])
+      );
+    } else {
+      document.getElementById('positions').innerHTML = '<p class="empty">No open positions.</p>';
+    }
+
+    // Recent trades
+    const closed = (trades.trades||[]).filter(t => t.exit_date).slice(0,12);
+    if (closed.length) {
+      document.getElementById('trades').innerHTML = tableHtml(
+        ['Ticker','Entry','Exit','Entry $','Reason','Strategy','P&L'],
+        closed.map(t => [
+          `<strong>${t.ticker}</strong>`,
+          (t.entry_date||'').split('T')[0],
+          (t.exit_date||'').split('T')[0],
+          `$${parseFloat(t.entry_price||0).toFixed(2)}`,
+          t.exit_reason||'—',
+          `<span style="color:${STRAT_COLORS[t.strategy]||'#8892a4'}">${t.strategy}</span>`,
+          `<span class="${pnlClass(t.pnl_dollars)}">${fmtFull$(t.pnl_dollars)}</span>`,
+        ])
+      );
+    } else {
+      document.getElementById('trades').innerHTML = '<p class="empty">No closed trades yet.</p>';
+    }
+
+    // Backtest results grouped by year
+    const results = bt.results || [];
+    if (results.length) {
+      // Sort by year desc, then by pnl desc within year
+      results.sort((a,b) => b.year - a.year || b.total_pnl - a.total_pnl);
+      document.getElementById('backtestRuns').innerHTML = tableHtml(
+        ['Year','Strategy','Trades','Win %','P&L','Profit Factor','Max DD'],
+        results.map(r => [
+          r.year,
+          `<span style="color:${STRAT_COLORS[r.strategy]||'#8892a4'}">${r.strategy}</span>`,
+          r.num_trades,
+          `${(r.win_rate*100).toFixed(1)}%`,
+          `<span class="${pnlClass(r.total_pnl)}">${fmtFull$(r.total_pnl)}</span>`,
+          r.profit_factor > 999 ? '∞' : r.profit_factor.toFixed(2),
+          `${(r.max_drawdown*100).toFixed(1)}%`,
+        ])
+      );
+    } else {
+      document.getElementById('backtestRuns').innerHTML =
+        '<p class="empty">Run <code>python backtest_2025.py</code> to populate.</p>';
+    }
+
+  } catch(e) {
+    document.getElementById('kpis').innerHTML = `<div class="error">Failed to load: ${e.message}</div>`;
+  }
+}
+
+function tableHtml(headers, rows) {
+  const ths = headers.map(h => `<th>${h}</th>`).join('');
+  const trs = rows.map(cells =>
+    `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`
+  ).join('');
+  return `<div class="table-wrap"><table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table></div>`;
+}
+
+// ── STRATEGIES ────────────────────────────────────────────────────────────────
+async function renderStrategies() {
+  document.getElementById('stratGrid').innerHTML = '<div class="loading">Loading...</div>';
+
+  let pnlByStrat = {}; // { strategy: { 2024: x, 2025: x, 2026: x } }
+  try {
+    const bt = await api('/api/backtest-results');
+    for (const r of (bt.results||[])) {
+      if (!pnlByStrat[r.strategy]) pnlByStrat[r.strategy] = {};
+      pnlByStrat[r.strategy][r.year] = r.total_pnl;
+    }
+  } catch(_) {}
+
+  // Strategy cards
+  const cards = STRATEGIES.map(s => {
+    const color = STRAT_COLORS[s.id] || '#8892a4';
+    const pnl = pnlByStrat[s.id] || {};
+    const years = [2024, 2025, 2026];
+    const total = years.reduce((sum, y) => sum + (pnl[y]||0), 0);
+
+    const pnlCells = years.map(y => {
+      const v = pnl[y];
+      return `<div class="pnl-cell"><div class="yr">${y}</div><div class="amt ${v!=null?pnlClass(v):''}">${v!=null?fmt$(v):'—'}</div></div>`;
+    }).join('');
+
+    const chips = s.params.map(p => `<span class="param-chip">${p}</span>`).join('');
+
+    return `
+      <div class="strat-card" style="border-left:3px solid ${color}">
+        <div class="strat-header">
+          <span class="strat-name">${s.name}</span>
+          <span class="strat-badge ${s.type.toLowerCase()}">${s.type}</span>
+        </div>
+        <div class="strat-entry">${s.entry}</div>
+        <div class="strat-params">${chips}</div>
+        <div class="strat-pnl">
+          ${pnlCells}
+          <div class="pnl-cell" style="grid-column:span 3;border-top:1px solid #252830;padding-top:8px;margin-top:4px">
+            <div class="yr">3-Year Total</div>
+            <div class="amt" style="font-size:16px" class="${pnlClass(total)}">${fmt$(total)}</div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+  document.getElementById('stratGrid').innerHTML = cards;
+
+  // Summary table
+  const sorted = [...STRATEGIES].sort((a, b) => {
+    const totA = [2024,2025,2026].reduce((s,y) => s+(pnlByStrat[a.id]?.[y]||0), 0);
+    const totB = [2024,2025,2026].reduce((s,y) => s+(pnlByStrat[b.id]?.[y]||0), 0);
+    return totB - totA;
+  });
+  document.getElementById('stratTable').innerHTML = tableHtml(
+    ['Rank','Strategy','Type','2024','2025','2026','3-Year Total'],
+    sorted.map((s, i) => {
+      const pnl = pnlByStrat[s.id] || {};
+      const total = [2024,2025,2026].reduce((sum,y) => sum+(pnl[y]||0), 0);
+      const color = STRAT_COLORS[s.id] || '#8892a4';
+      return [
+        `<span style="color:#6b7280">#${i+1}</span>`,
+        `<span style="color:${color};font-weight:600">${s.name}</span>`,
+        `<span class="strat-badge ${s.type.toLowerCase()}">${s.type}</span>`,
+        `<span class="${pnlClass(pnl[2024])}">${pnl[2024]!=null?fmtFull$(pnl[2024]):'—'}</span>`,
+        `<span class="${pnlClass(pnl[2025])}">${pnl[2025]!=null?fmtFull$(pnl[2025]):'—'}</span>`,
+        `<span class="${pnlClass(pnl[2026])}">${pnl[2026]!=null?fmtFull$(pnl[2026]):'—'}</span>`,
+        `<span class="${pnlClass(total)}" style="font-weight:700">${fmtFull$(total)}</span>`,
+      ];
+    })
+  );
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadHome();
+setInterval(loadHome, 30000);
+</script>
+</body>
+</html>
