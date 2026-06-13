@@ -1,5 +1,19 @@
 # Alpaca Swing Bot V2 — Multi-Strategy
 
+> [!WARNING]
+> **DISCLAIMER — PLEASE READ BEFORE USE**
+>
+> This project is a **Beta proof-of-concept** built for learning and research purposes only. It is **not ready for real live trading** and should not be used with real money.
+>
+> - This software was **not built by a financial professional, trading expert, or licensed investment advisor**.
+> - Nothing in this repository constitutes financial advice, investment advice, or a recommendation to buy or sell any security.
+> - Past backtest performance does not guarantee future results. Backtests are simulated and do not account for slippage, commissions, liquidity constraints, or real-world execution delays.
+> - Use this software entirely at your own risk. The authors accept no responsibility for any financial losses incurred.
+>
+> **Always consult a qualified financial professional before making any investment decisions.**
+
+---
+
 An automated swing trading bot that trades a focused universe of high-momentum US equities using six independently-tuned strategies. All execution is through the Alpaca brokerage API (paper trading by default) with a live FastAPI dashboard.
 
 ---
