@@ -24,9 +24,11 @@ from strategy import add_indicators, get_entry_checker, simulate_exit, is_tp_rea
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
+import runtime
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
+SERVICE = "bot"  # name used for run/bot.pid, run/bot.meta.json, run/bot.heartbeat
 
 
 # ── Alpaca client (lazy) ──────────────────────────────────────────────────────
@@ -118,31 +120,29 @@ def run_once(strategy: StrategyType) -> int:
 
                     qty = int(PARAMS.dollars_per_trade / sig.entry_price)
                     if qty < 1:
-                        log.warning("  Price too high for whole shares ($%.2f) — skipping OCO", sig.entry_price)
-                        # Notional buy without bracket
-                        mkt = MarketOrderRequest(
-                            symbol=ticker,
-                            notional=PARAMS.dollars_per_trade,
-                            side=OrderSide.BUY,
-                            time_in_force=TimeInForce.DAY,
-                        )
-                        tc.submit_order(mkt)
-                        log.info("  Placed notional market order: %s $%.0f", ticker, PARAMS.dollars_per_trade)
-                    else:
-                        from alpaca.trading.requests import TakeProfitRequest, StopLossRequest
-                        tp = TakeProfitRequest(limit_price=round(sig.take_profit, 2))
-                        sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
-                        mkt = MarketOrderRequest(
-                            symbol=ticker,
-                            qty=qty,
-                            side=OrderSide.BUY,
-                            time_in_force=TimeInForce.DAY,
-                            take_profit=tp,
-                            stop_loss=sl,
-                        )
-                        tc.submit_order(mkt)
-                        log.info("  Placed OCO bracket: %s x%d @ $%.2f (SL $%.2f / TP $%.2f)",
-                                 ticker, qty, sig.entry_price, sig.stop_loss, sig.take_profit)
+                        # $200/trade can't buy a whole share of a >$200 stock (ARM, etc.).
+                        # A bracket order (SL/TP) requires whole shares, and a bare notional
+                        # buy would be an UNPROTECTED position. Skip entirely — and crucially
+                        # do NOT notify, which is what produced the repeated "Qty 0" emails.
+                        log.info("  $%.0f/trade buys <1 whole share of %s @ $%.2f — skipping "
+                                 "(no order, no notify)",
+                                 PARAMS.dollars_per_trade, ticker, sig.entry_price)
+                        continue
+
+                    from alpaca.trading.requests import TakeProfitRequest, StopLossRequest
+                    tp = TakeProfitRequest(limit_price=round(sig.take_profit, 2))
+                    sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
+                    mkt = MarketOrderRequest(
+                        symbol=ticker,
+                        qty=qty,
+                        side=OrderSide.BUY,
+                        time_in_force=TimeInForce.DAY,
+                        take_profit=tp,
+                        stop_loss=sl,
+                    )
+                    tc.submit_order(mkt)
+                    log.info("  Placed OCO bracket: %s x%d @ $%.2f (SL $%.2f / TP $%.2f)",
+                             ticker, qty, sig.entry_price, sig.stop_loss, sig.take_profit)
 
                     orders_placed += 1
                     db_mod.save_trade(ticker, strat_name, str(sig.date),
@@ -206,7 +206,9 @@ def run_loop(strategy: StrategyType, interval_minutes: int = 30):
     """Run bot in continuous loop."""
     log.info("Starting Bot V2 loop — %s every %d min", strategy.value, interval_minutes)
     while True:
+        runtime.heartbeat(SERVICE)  # mark "alive & looping" for manage.ps1 health checks
         run_once(strategy)
+        runtime.heartbeat(SERVICE)
         log.info("Sleeping %d minutes...", interval_minutes)
         time.sleep(interval_minutes * 60)
 
@@ -227,6 +229,15 @@ def main():
         parser.error(f"--strategy is required. Choose one of:\n  {choices}")
 
     strategy = StrategyType(args.strategy)
+
+    # Record our PID + run metadata so manage.ps1 can detect a live, healthy
+    # instance and refuse to spawn a duplicate (the cause of the email flood).
+    runtime.register(SERVICE, {
+        "strategy": strategy.value,
+        "interval": args.interval,
+        "loop": bool(args.loop),
+        "cmd": "python " + " ".join(sys.argv),
+    })
 
     if args.loop:
         run_loop(strategy, args.interval)

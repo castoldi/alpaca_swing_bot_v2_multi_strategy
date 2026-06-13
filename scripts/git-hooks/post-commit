@@ -1,0 +1,49 @@
+#!/bin/sh
+# Auto-tag every commit with the build version + commit datetime.
+#
+#   tag = v<VERSION>+build<N>-<YYYYMMDD-HHMMSS>
+#         |          |       |
+#         |          |       commit datetime (%cd)
+#         |          total commit count (auto-incrementing build number)
+#         semantic version from the VERSION file
+#
+# Installed via:  git config core.hooksPath scripts/git-hooks
+# A post-commit hook runs AFTER the commit, so tagging here never alters or
+# blocks the commit. Exits 0 no matter what.
+
+set -e
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# Don't tag while a rebase / cherry-pick / merge sequence is replaying commits —
+# that would spray dozens of tags.
+git_dir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ] \
+   || [ -f "$git_dir/CHERRY_PICK_HEAD" ] || [ -f "$git_dir/MERGE_HEAD" ]; then
+    exit 0
+fi
+
+version="0.0.0"
+if [ -f "$repo_root/VERSION" ]; then
+    version=$(tr -d ' \t\r\n' < "$repo_root/VERSION")
+fi
+
+build=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+stamp=$(git show -s --format=%cd --date=format:%Y%m%d-%H%M%S HEAD)
+short=$(git rev-parse --short HEAD)
+subject=$(git show -s --format=%s HEAD)
+
+tag="v${version}+build${build}-${stamp}"
+
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1; then
+    echo "post-commit: tag $tag already exists — skipping." >&2
+    exit 0
+fi
+
+git tag -a "$tag" -m "build $build | $version | $short | $subject" >/dev/null 2>&1 || {
+    echo "post-commit: failed to create tag $tag" >&2
+    exit 0
+}
+
+echo "post-commit: tagged $tag" >&2
+exit 0

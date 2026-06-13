@@ -23,22 +23,55 @@ python backtest_2024.py
 python backtest_2025.py
 python backtest_2026.py
 
-# Start dashboard — run backtests first or DB will be empty
-python -m uvicorn dashboard.server:app --host 0.0.0.0 --port 8004
-# Dashboard URL:  http://localhost:8004  (LAN: http://192.168.0.191:8004)
-# Routes:
-#   /                  Home tab — KPIs, positions, trades, backtest results table
-#   /                  Strategies tab — 6 strategy cards with live P&L from DB
-#   /backtest-2024     Full Plotly report for 2024
-#   /backtest-2025     Full Plotly report for 2025
-#   /backtest-2026     Full Plotly report for 2026
-
-# Live trader — ONE strategy per process, paper trading only
-python bot.py                                 # default: trend_pullback
-python bot.py --strategy ensemble             # recommended: best combined P&L
-python bot.py --strategy ensemble --loop      # continuous loop every 30 min
-python bot.py --strategy ensemble --loop --interval 60  # every 60 min
+# Run backtests first or the dashboard DB will be empty.
 ```
+
+## Running the bot & dashboard — use the manager (NEVER start duplicates)
+
+The bot and dashboard are **singletons**. Two `--loop` bots running at once flooded
+the user with duplicate emails, so a long-running process must be started **only**
+through `scripts/manage.ps1`, which checks for a live, healthy instance and refuses
+to spawn a duplicate. Do **not** call `python bot.py --loop` or the raw `uvicorn`
+command directly to start one.
+
+```powershell
+pwsh scripts\manage.ps1 status                       # what's running + health
+pwsh scripts\manage.ps1 start-bot                     # ensemble loop @30m (idempotent)
+pwsh scripts\manage.ps1 start-bot -Strategy regime -Interval 60
+pwsh scripts\manage.ps1 restart-bot                   # after editing bot.py
+pwsh scripts\manage.ps1 stop-bot
+pwsh scripts\manage.ps1 start-dashboard               # idempotent — http://localhost:8004
+pwsh scripts\manage.ps1 restart-dashboard             # after editing dashboard/*
+pwsh scripts\manage.ps1 stop-dashboard
+```
+
+`start-*` is safe to call repeatedly: a healthy instance is left alone; a dead/hung
+one is replaced and any orphan processes are swept first.
+
+Dashboard URL: http://localhost:8004 (LAN: http://192.168.0.191:8004). Routes:
+`/` Home (KPIs, positions, trades, backtests), `/` Strategies (6 cards + live P&L),
+`/backtest-2024`, `/backtest-2025`, `/backtest-2026` (Plotly reports).
+
+### Finding the PIDs
+
+Runtime state is in `run/` (git-ignored): `bot.pid`, `bot.meta.json`,
+`bot.heartbeat` (written by `bot.py` via `runtime.py`); `dashboard.pid`,
+`dashboard.meta.json` (written by `manage.ps1`).
+
+```powershell
+pwsh scripts\manage.ps1 status     # preferred — PID + HEALTHY/UNHEALTHY/STOPPED
+Get-Content run\bot.pid            # bot loop PID    (Get-Content run\dashboard.pid for dashboard)
+Get-Content run\bot.meta.json      # strategy, interval, started_at, cmd
+# Fallback by command line / port:
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+  Where-Object { $_.CommandLine -like '*bot.py*--strategy*' } | Select ProcessId,CommandLine
+Get-NetTCPConnection -LocalPort 8004 -State Listen | Select OwningProcess
+```
+
+Health = bot pid alive AND `bot.heartbeat` fresh (within ~2 intervals); dashboard =
+`http://localhost:8004` responds. Each bot is **two** python processes (a venv
+launcher shim + its uv-managed child); the child in `run/bot.pid` is the real loop —
+that pair is one instance, not a duplicate.
 
 ## Important: one strategy at a time
 
@@ -116,12 +149,11 @@ All strategies share: TP reachability filter (must be reachable in ≤2 ATR-days
 
 ## RULE: restart after changes
 
-**Whenever you make changes to any dashboard file (`dashboard/server.py`, `dashboard/index.html`, `dashboard/db.py`, `dashboard/bot_hooks.py`) or to `bot.py`, you MUST:**
+**Whenever you make changes to any dashboard file (`dashboard/server.py`, `dashboard/index.html`, `dashboard/db.py`, `dashboard/bot_hooks.py`) or to `bot.py`, you MUST restart via the manager (it swaps in place — never start a second process):**
 
-1. Kill the running process and restart it.
-2. For the **dashboard**: restart with `python -m uvicorn dashboard.server:app --host 0.0.0.0 --port 8004` and post `http://localhost:8004` in your response once running.
-3. For the **bot**: restart with the appropriate `python bot.py --strategy <strategy>` command.
-4. Confirm restart completed and include the relevant URL in your response.
+1. For the **dashboard**: `pwsh scripts\manage.ps1 restart-dashboard`, then post `http://localhost:8004` once `status` shows it HEALTHY.
+2. For the **bot**: `pwsh scripts\manage.ps1 restart-bot -Strategy <strategy>`.
+3. Run `pwsh scripts\manage.ps1 status` and confirm HEALTHY in your response.
 
 ## Pitfalls
 
@@ -129,6 +161,7 @@ All strategies share: TP reachability filter (must be reachable in ≤2 ATR-days
 - **Alpaca paper only**: `paper=True` is hardcoded in `bot.py` regardless of `.env` — this is intentional
 - **Ensemble threshold**: currently 0.30 (tightened from 0.25 on 2026-05-28) — check `strategy.py:467` if tuning
 - **Ensemble warmup**: requires 60+ bars before first signal; regime needs 50+ bars for EMA(50)
-- **OCO brackets**: Alpaca requires whole shares for bracket orders; notional-only orders are used when price × 1 share > $200
+- **OCO brackets / high-priced stocks**: Alpaca requires whole shares for bracket (SL/TP) orders. With `dollars_per_trade=$200`, a stock priced >$200 gives `qty=0`, so the bot now **skips it entirely** (no order, no email). This replaced the old notional-buy fallback, which placed unprotected positions and spammed "Qty 0" emails every loop. Raise `dollars_per_trade` in `config.py` to trade those names.
+- **Never start duplicates**: start the bot/dashboard only via `scripts/manage.ps1` — two `--loop` bots email the user twice over. PIDs live in `run/`.
 - **DB population**: backtests write to `dashboard/swing_bot_v2.db` — run both backtest scripts before opening the dashboard or it will appear empty
 - **simulate_exit uses signal prices directly**: SL/TP on the signal object are authoritative — do not recalculate from params in `simulate_exit` (bug fixed 2026-05-31)

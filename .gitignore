@@ -24,6 +24,9 @@ ENV/
 logs/
 reports/
 
+# Runtime PID / heartbeat state (scripts/manage.ps1, runtime.py)
+run/
+
 # Database files
 *.db
 *.db-shm
