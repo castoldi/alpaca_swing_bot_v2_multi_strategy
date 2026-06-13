@@ -109,8 +109,32 @@ alpaca_swing_bot_v2_multi_strategy/
 │
 ├── reports/                   # Backtest HTML reports
 ├── logs/                      # Rotating logs
+├── run/                       # PID/heartbeat state (git-ignored)
+├── VERSION                    # Canonical semantic version (manually bumped)
+├── CHANGELOG.md               # Keep a Changelog history, keyed by version
+├── scripts/
+│   ├── manage.ps1             # Singleton bot/dashboard controller
+│   ├── version.ps1            # Show/bump version, list builds
+│   └── git-hooks/post-commit  # Auto-tags every commit
 └── .venv/                     # Python venv
 ```
+
+## Versioning & build tags
+
+Every commit is auto-tagged `v<version>+build<N>-<datetime>` by a `post-commit`
+hook (`N` = total commit count = the auto-incrementing build number). The
+semantic version lives in `VERSION`; history is in `CHANGELOG.md`.
+
+```powershell
+pwsh scripts\version.ps1                 # current version, build #, latest tag
+pwsh scripts\version.ps1 -Bump patch     # bump VERSION + scaffold CHANGELOG entry
+pwsh scripts\version.ps1 -Builds         # list all build tags
+git config core.hooksPath scripts/git-hooks   # ONE-TIME install (fresh clones only)
+```
+
+The hook is installed via `core.hooksPath`, which is **local** git config — re-run
+the one-time install command above after a fresh clone. Before releasing a new
+version, bump `VERSION`, fill in the new `CHANGELOG.md` section, then commit.
 
 ## Research loop (autoresearch pattern)
 
