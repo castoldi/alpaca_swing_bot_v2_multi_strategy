@@ -194,6 +194,15 @@ class EntrySignal:
     atr: float
     rsi: float
     strategy: str = "trend_pullback"
+    tp1: float = 0.0
+    tp2: float = 0.0
+    tp3: float = 0.0
+
+    def __post_init__(self):
+        # Derive the 3-level ladder from the entry and full target unless the
+        # caller already supplied tp3. All 6 strategy checkers get this for free.
+        if not self.tp3:
+            self.tp1, self.tp2, self.tp3 = split_take_profit(self.entry_price, self.take_profit)
 
 
 @dataclass
