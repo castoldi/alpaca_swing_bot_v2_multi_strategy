@@ -40,6 +40,8 @@ TICKERS: list[str] = [
 BAR_TIMEFRAME = "4h"
 # Warmup history fetched before a backtest window so indicators are primed.
 HISTORY_WARMUP_DAYS = 90
+# Position fraction sold at TP1 / TP2 / TP3 (must sum to 1.0).
+TP_SPLITS: tuple[float, float, float] = (0.33, 0.33, 0.34)
 
 
 # ---------------------------------------------------------------------------

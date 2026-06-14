@@ -39,6 +39,24 @@ def is_tp_reachable_in_days(entry_price: float, take_profit: float, atr: float, 
     return distance <= days * atr
 
 
+def split_take_profit(entry_price: float, take_profit: float) -> tuple[float, float, float]:
+    """Place 3 TP levels at 1/3, 2/3, and full of the entry->target distance."""
+    d = take_profit - entry_price
+    return (entry_price + d / 3.0, entry_price + 2.0 * d / 3.0, take_profit)
+
+
+def split_qty(qty: int) -> list[int]:
+    """Whole-share split for 3 TP legs: floor thirds, remainder on the last leg.
+
+    Returns [] when there are fewer than 3 shares (caller falls back to a single
+    target in that case)."""
+    q = int(qty)
+    if q < 3:
+        return []
+    base = q // 3
+    return [base, base, q - 2 * base]
+
+
 # ── Earnings dates cache ──────────────────────────────────────────────────────
 # Which strategies apply the earnings avoidance filter
 SKIP_EARNINGS_STRATEGIES = {"trend_pullback"}
