@@ -77,7 +77,8 @@ def compute_stats(trades: list[Trade]) -> dict:
                     avg_bars_held=0.0, total_tp_pnl=0.0, total_sl_pnl=0.0,
                     total_time_pnl=0.0, tp_count=0, sl_count=0, time_count=0,
                     avg_win_pct=0.0, avg_loss_pct=0.0, total_volume=0.0, profit_factor=0.0)
-    tp_t = [t for t in trades if t.exit_reason == "take_profit"]
+    TP_REASONS = {"take_profit", "tp1", "tp2", "tp3"}
+    tp_t = [t for t in trades if t.exit_reason in TP_REASONS]
     sl_t = [t for t in trades if t.exit_reason == "stop_loss"]
     time_t = [t for t in trades if t.exit_reason == "time_stop"]
     win_pnls = [t.pnl_dollars for t in trades if t.pnl_dollars > 0]
