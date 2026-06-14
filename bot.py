@@ -209,10 +209,10 @@ def run_once(strategy: StrategyType) -> int:
                          ticker, sig.entry_price, sig.stop_loss, sig.take_profit)
                 bot_hooks.log_signal(sig, ticker, strat_name)
 
-                # Only enter if the TP target is reachable within 2 trading days
-                if not is_tp_reachable_in_days(sig.entry_price, sig.take_profit, sig.atr, days=4):
-                    log.info("  TP $%.2f not reachable within 2 days (ATR=%.2f) — skipping",
-                             sig.take_profit, sig.atr)
+                # Only enter if the nearest target (TP1) is reachable within ~2 trading days
+                if not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4):
+                    log.info("  TP1 $%.2f not reachable (ATR=%.2f) — skipping",
+                             sig.tp1, sig.atr)
                     continue
 
                 # Skip if THIS bot already has an open trade for the ticker.
@@ -234,49 +234,48 @@ def run_once(strategy: StrategyType) -> int:
 
                 # Place order
                 try:
-                    from alpaca.trading.requests import MarketOrderRequest
-                    from alpaca.trading.enums import OrderSide, TimeInForce
-
                     qty = int(PARAMS.dollars_per_trade / sig.entry_price)
                     if qty < 1:
                         # $200/trade can't buy a whole share of a >$200 stock (ARM, etc.).
-                        # A bracket order (SL/TP) requires whole shares, and a bare notional
-                        # buy would be an UNPROTECTED position. Skip entirely — and crucially
-                        # do NOT notify, which is what produced the repeated "Qty 0" emails.
+                        # Skip entirely (and do NOT notify — this was the "Qty 0" spam).
                         log.info("  $%.0f/trade buys <1 whole share of %s @ $%.2f — skipping "
                                  "(no order, no notify)",
                                  PARAMS.dollars_per_trade, ticker, sig.entry_price)
                         continue
 
-                    from alpaca.trading.requests import TakeProfitRequest, StopLossRequest
-                    tp = TakeProfitRequest(limit_price=round(sig.take_profit, 2))
-                    sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
                     coid = _make_client_order_id(strat_name, ticker, "entry")
-                    mkt = MarketOrderRequest(
-                        symbol=ticker,
-                        qty=qty,
-                        side=OrderSide.BUY,
-                        time_in_force=TimeInForce.DAY,
-                        take_profit=tp,
-                        stop_loss=sl,
-                        client_order_id=coid,  # ← correlation id with Alpaca
-                    )
-                    order = tc.submit_order(mkt)
-                    alpaca_id = str(getattr(order, "id", "") or "")
-                    log.info("  Placed OCO bracket: %s x%d @ $%.2f (SL $%.2f / TP $%.2f) "
-                             "[coid=%s alpaca_id=%s]",
-                             ticker, qty, sig.entry_price, sig.stop_loss, sig.take_profit,
-                             coid, alpaca_id)
+                    if qty >= 3:
+                        # Full 3-TP scale-out (market entry + 3 limit legs + managed stop)
+                        info = _place_scaled_entry(tc, ticker, qty, sig, strat_name)
+                        coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
+                        log.info("  Scaled entry: %s x%d (TP1 $%.2f / TP2 $%.2f / TP3 $%.2f, "
+                                 "SL $%.2f) [coid=%s]", ticker, qty, sig.tp1, sig.tp2, sig.tp3,
+                                 sig.stop_loss, coid)
+                    else:
+                        # qty 1-2: too few shares to scale out — single OCO bracket at TP3
+                        from alpaca.trading.requests import (MarketOrderRequest,
+                                                             TakeProfitRequest, StopLossRequest)
+                        from alpaca.trading.enums import OrderSide, TimeInForce
+                        tp = TakeProfitRequest(limit_price=round(sig.tp3, 2))
+                        sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
+                        mkt = MarketOrderRequest(symbol=ticker, qty=qty, side=OrderSide.BUY,
+                                                 time_in_force=TimeInForce.DAY, take_profit=tp,
+                                                 stop_loss=sl, client_order_id=coid)
+                        order = tc.submit_order(mkt)
+                        alpaca_id = str(getattr(order, "id", "") or "")
+                        log.info("  Single bracket (qty<3): %s x%d @ $%.2f (SL $%.2f / TP $%.2f) [coid=%s]",
+                                 ticker, qty, sig.entry_price, sig.stop_loss, sig.tp3, coid)
 
                     orders_placed += 1
                     db_mod.save_trade(ticker, strat_name, str(sig.date),
-                                      sig.entry_price, sig.stop_loss, sig.take_profit,
+                                      sig.entry_price, sig.stop_loss, sig.tp3,
                                       shares=qty, client_order_id=coid,
                                       alpaca_order_id=alpaca_id)
                     send_notification(
                         f"Bot V2: {ticker} entry ({strat_name})",
                         f"Entry ${sig.entry_price:.2f}\nSL ${sig.stop_loss:.2f}\n"
-                        f"TP ${sig.take_profit:.2f}\nQty {qty}\nRef {coid}"
+                        f"TP1 ${sig.tp1:.2f} / TP2 ${sig.tp2:.2f} / TP3 ${sig.tp3:.2f}\n"
+                        f"Qty {qty}\nRef {coid}"
                     )
 
                 except Exception as e:
@@ -360,6 +359,11 @@ def _reconcile_and_exit(strat_name: str):
             if pos is None:
                 _reconcile_closed(tc, trade)
                 continue
+
+            # Ratchet the stepped stop (breakeven after TP1, TP1 after TP2) for our
+            # scaled positions. No-op for single-bracket trades (no managed stop order).
+            if _verify_owned(tc, trade):
+                _sync_stepped_stop(tc, trade)
 
             held = _days_held(trade["entry_date"])
             # max-hold is expressed in 4h bars (~2 per trading day); convert to a
