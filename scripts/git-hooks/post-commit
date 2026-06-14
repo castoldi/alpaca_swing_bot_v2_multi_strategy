@@ -49,11 +49,16 @@ echo "post-commit: tagged $tag" >&2
 
 # Auto-push the commit + tag (the project rule is: every commit is pushed).
 # Best-effort and non-fatal — a push failure must never break the commit.
+# CRITICAL: the push is forced NON-INTERACTIVE. If credentials aren't cached the
+# push must fail fast, never block on a credential-manager / terminal prompt
+# (which would hang the commit in a headless context).
 if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-    if git push --follow-tags >/dev/null 2>&1; then
+    if GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never \
+       git -c credential.interactive=false -c credential.guiPrompt=false \
+           push --follow-tags >/dev/null 2>&1; then
         echo "post-commit: pushed commit + $tag to $(git rev-parse --abbrev-ref '@{u}')" >&2
     else
-        echo "post-commit: push FAILED — commit + tag are local only; push manually" >&2
+        echo "post-commit: push skipped/failed (no cached creds?) — commit + tag are local; push manually" >&2
     fi
 else
     echo "post-commit: no upstream branch set — skipping push" >&2
