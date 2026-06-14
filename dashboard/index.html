@@ -248,6 +248,8 @@ async function loadHome() {
     }
 
     // Recent trades
+    const REASON_LABEL = { tp1:'TP1', tp2:'TP2', tp3:'TP3', take_profit:'TP',
+                           stop_loss:'Stop', time_stop:'Time', end_of_data:'Open' };
     const closed = (trades.trades||[]).filter(t => t.exit_date).slice(0,12);
     if (closed.length) {
       document.getElementById('trades').innerHTML = tableHtml(
@@ -257,7 +259,7 @@ async function loadHome() {
           (t.entry_date||'').split('T')[0],
           (t.exit_date||'').split('T')[0],
           `$${parseFloat(t.entry_price||0).toFixed(2)}`,
-          t.exit_reason||'—',
+          REASON_LABEL[t.exit_reason] || t.exit_reason || '—',
           `<span style="color:${STRAT_COLORS[t.strategy]||'#8892a4'}">${t.strategy}</span>`,
           `<span class="${pnlClass(t.pnl_dollars)}">${fmtFull$(t.pnl_dollars)}</span>`,
         ])
