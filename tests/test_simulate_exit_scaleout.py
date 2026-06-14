@@ -49,3 +49,18 @@ def test_stop_checked_before_tp_same_bar():
     df = _df([(100,100,100), (89,103,95)])
     legs = S.simulate_exit_scaleout(df, 0, _sig(), PARAMS)
     assert legs[0].reason == "stop_loss" and legs[0].fraction == 1.0
+
+def test_no_time_stop_while_underwater_runs_to_end():
+    # never hits a TP, stays below entry (above SL) -> time-stop suppressed -> end_of_data
+    bars = [(100, 100, 100)] + [(94, 96, 95) for _ in range(7)]
+    legs = S.simulate_exit_scaleout(_df(bars), 0, _sig(tp=130.0), PARAMS)
+    assert [l.reason for l in legs] == ["end_of_data"]
+    assert legs[0].fraction == 1.0
+
+def test_end_of_data_closes_remainder_after_partial():
+    # hit TP1 then data ends with no further TP/stop -> remainder exits as end_of_data
+    df = _df([(100, 100, 100), (101, 103, 102), (101, 103, 102), (101, 103, 102)])
+    legs = S.simulate_exit_scaleout(df, 0, _sig(), PARAMS)
+    assert legs[0].reason == "tp1"
+    assert legs[-1].reason == "end_of_data"
+    assert round(sum(l.fraction for l in legs), 6) == 1.0

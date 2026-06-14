@@ -18,7 +18,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from config import PARAMS, StrategyParams, StrategyType
+from config import PARAMS, StrategyParams, StrategyType, TP_SPLITS
 
 
 # ── TP reachability filter ──────────────────────────────────────────────────
@@ -602,7 +602,6 @@ def simulate_exit_scaleout(
     bar (breakeven after TP1, TP1 price after TP2). Time-stop / end-of-data close
     whatever remains.
     """
-    from config import TP_SPLITS
     entry = signal.entry_price
     tps = [signal.tp1, signal.tp2, signal.tp3]
     fracs = list(TP_SPLITS)
