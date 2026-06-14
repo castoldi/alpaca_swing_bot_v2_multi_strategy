@@ -17,6 +17,23 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 
+
+## [0.3.0] - 2026-06-13
+
+### Added
+- **Per-strategy candlestick examples on the Strategies page.** Each strategy card
+  now shows **2 annotated candlestick charts** of real, recent setups so the strategy
+  is easy to visualise: entry marker, dotted **SL** and **TP** lines, the exit marker,
+  and a title with the outcome (e.g. `ARM · +12% · take profit (1d)`).
+- `dashboard/strategy_examples.py` — generates the examples by reusing the strategies'
+  own `get_entry_checker` + `simulate_exit` over ~18 months of daily bars, preferring
+  the most recent **resolved** trades (real SL/TP/time-stop outcomes) with ticker
+  variety. Cached in-process and on disk (`reports/strategy_examples_cache.json`,
+  6-hour TTL) since the yfinance fetch + scan takes a few seconds.
+- `GET /api/strategy-examples` (threadpool-backed, `?refresh=true` to force a rebuild)
+  serving the cached examples; Plotly.js mini-charts rendered client-side in the
+  existing dark theme.
+
 ## [0.2.0] - 2026-06-13
 
 ### Added
@@ -79,4 +96,5 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 

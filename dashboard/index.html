@@ -71,8 +71,17 @@ tr:hover td{background:#1e212b}
 .empty{color:#6b7280;padding:12px 0;font-size:13px}
 code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 
+/* ── Strategy example charts ── */
+.strat-charts{display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid #252830}
+.strat-charts-title{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.chart-legend{display:flex;gap:9px;font-size:9px;color:#8892a4;text-transform:none;letter-spacing:0}
+.chart-legend i{display:inline-block;width:9px;height:0;border-top:2px solid;vertical-align:middle;margin-right:3px}
+.strat-chart{width:100%;height:180px;background:#0f1117;border:1px solid #2a2d35;border-radius:8px;overflow:hidden}
+.mini-empty{display:flex;align-items:center;justify-content:center;height:100%;color:#6b7280;font-size:11px}
+
 @media(max-width:768px){.container{padding:12px}.kpis{grid-template-columns:repeat(2,1fr)}td,th{padding:8px 10px;font-size:12px}.strat-grid{grid-template-columns:1fr}}
 </style>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 </head>
 <body>
 
@@ -323,6 +332,17 @@ async function renderStrategies() {
         </div>
         <div class="strat-entry">${s.entry}</div>
         <div class="strat-params">${chips}</div>
+        <div class="strat-charts" id="charts-${s.id}">
+          <div class="strat-charts-title">Recent real setups
+            <span class="chart-legend">
+              <span><i style="border-color:#60a5fa"></i>Entry</span>
+              <span><i style="border-color:#22c55e"></i>TP</span>
+              <span><i style="border-color:#ef4444"></i>SL</span>
+            </span>
+          </div>
+          <div class="strat-chart" id="chart-${s.id}-0"><div class="mini-empty">Loading chart…</div></div>
+          <div class="strat-chart" id="chart-${s.id}-1"><div class="mini-empty">Loading chart…</div></div>
+        </div>
         <div class="strat-pnl">
           ${pnlCells}
           <div class="pnl-cell" style="grid-column:span 3;border-top:1px solid #252830;padding-top:8px;margin-top:4px">
@@ -333,6 +353,7 @@ async function renderStrategies() {
       </div>`;
   }).join('');
   document.getElementById('stratGrid').innerHTML = cards;
+  loadStrategyCharts();  // fire-and-forget; fills in the per-strategy candlesticks
 
   // Summary table
   const sorted = [...STRATEGIES].sort((a, b) => {
@@ -357,6 +378,87 @@ async function renderStrategies() {
       ];
     })
   );
+}
+
+// ── STRATEGY EXAMPLE CHARTS ────────────────────────────────────────────────────
+let _exCache = null;  // examples are stable for hours; fetch once per page load
+
+async function loadStrategyCharts() {
+  let data;
+  try {
+    data = _exCache || (_exCache = await api('/api/strategy-examples'));
+  } catch (e) {
+    for (const s of STRATEGIES) for (let i = 0; i < 2; i++) {
+      const el = document.getElementById(`chart-${s.id}-${i}`);
+      if (el) el.innerHTML = '<div class="mini-empty">Charts unavailable</div>';
+    }
+    return;
+  }
+  const examples = (data && data.examples) || {};
+  for (const s of STRATEGIES) {
+    const list = examples[s.id] || [];
+    for (let i = 0; i < 2; i++) renderMiniChart(`chart-${s.id}-${i}`, list[i]);
+  }
+}
+
+function _hline(y, color, dash) {
+  return { type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: y, y1: y,
+           line: { color: color, width: 1, dash: dash || 'solid' } };
+}
+function _hlabel(y, color, txt) {
+  return { xref: 'paper', x: 0, xanchor: 'left', yref: 'y', y: y, text: txt,
+           showarrow: false, font: { size: 8, color: color },
+           bgcolor: 'rgba(15,17,23,0.8)', xshift: 2 };
+}
+
+function renderMiniChart(elId, ex) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!ex || !ex.bars || !ex.bars.length) {
+    el.innerHTML = '<div class="mini-empty">No recent example</div>';
+    return;
+  }
+  el.innerHTML = '';
+  const x = ex.bars.map(b => b.t);
+  const candle = {
+    type: 'candlestick', x: x,
+    open: ex.bars.map(b => b.o), high: ex.bars.map(b => b.h),
+    low: ex.bars.map(b => b.l), close: ex.bars.map(b => b.c),
+    increasing: { line: { color: '#22c55e' }, fillcolor: '#22c55e' },
+    decreasing: { line: { color: '#ef4444' }, fillcolor: '#ef4444' },
+    whiskerwidth: 0.4, line: { width: 1 }, showlegend: false, hoverinfo: 'x+y',
+  };
+  const markers = {
+    type: 'scatter', mode: 'markers',
+    x: [ex.entryDate, ex.exitDate], y: [ex.entry, ex.exitPrice],
+    marker: {
+      symbol: ['triangle-up', 'x'], size: 10,
+      color: ['#60a5fa', ex.outcome === 'win' ? '#22c55e' : '#ef4444'],
+      line: { width: 1, color: '#0f1117' },
+    },
+    text: ['Entry', 'Exit'], hoverinfo: 'text+y', showlegend: false,
+  };
+  const reason = (ex.exitReason || '').replace(/_/g, ' ');
+  const sign = ex.pnlPct > 0 ? '+' : '';
+  const layout = {
+    height: 180, margin: { l: 44, r: 10, t: 18, b: 18 },
+    paper_bgcolor: '#0f1117', plot_bgcolor: '#0f1117',
+    font: { color: '#6b7280', size: 9, family: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" },
+    title: {
+      text: `${ex.ticker} · ${sign}${ex.pnlPct}% · ${reason} (${ex.barsHeld}d)`,
+      font: { size: 10, color: ex.outcome === 'win' ? '#22c55e' : '#ef4444' },
+      x: 0.01, xanchor: 'left', y: 0.98, yanchor: 'top',
+    },
+    xaxis: { type: 'category', showgrid: false, color: '#4b5563', nticks: 4,
+             tickangle: 0, rangeslider: { visible: false }, fixedrange: true },
+    yaxis: { showgrid: true, gridcolor: '#1d2029', color: '#4b5563',
+             tickprefix: '$', fixedrange: true, nticks: 5 },
+    shapes: [_hline(ex.entry, '#60a5fa'), _hline(ex.tp, '#22c55e', 'dot'), _hline(ex.sl, '#ef4444', 'dot')],
+    annotations: [_hlabel(ex.entry, '#60a5fa', 'Entry $' + ex.entry),
+                  _hlabel(ex.tp, '#22c55e', 'TP $' + ex.tp),
+                  _hlabel(ex.sl, '#ef4444', 'SL $' + ex.sl)],
+  };
+  Plotly.newPlot(el, [candle, markers], layout, { displayModeBar: false, responsive: true });
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────

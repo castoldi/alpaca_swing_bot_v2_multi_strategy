@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT = _HERE.parent
@@ -102,6 +103,20 @@ async def get_signals(limit: int = Query(100, ge=1, le=500)):
 @app.get("/api/backtest-results")
 async def backtest_results(year: Optional[int] = None):
     return {"results": db_mod.get_backtest_results(year)}
+
+
+@app.get("/api/strategy-examples")
+async def strategy_examples(refresh: bool = False):
+    """Real recent entry examples per strategy (candles + entry/SL/TP/exit).
+
+    Heavy (yfinance fetch + scan) but cached, so it runs in a threadpool to keep
+    the event loop responsive.
+    """
+    from dashboard import strategy_examples as se
+    try:
+        return await run_in_threadpool(se.get_examples, refresh)
+    except Exception as e:
+        return JSONResponse({"error": str(e), "examples": {}}, status_code=500)
 
 
 @app.get("/api/experiments")
