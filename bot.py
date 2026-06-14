@@ -42,6 +42,14 @@ def _make_client_order_id(strategy: str, ticker: str, kind: str) -> str:
     return f"{CLIENT_ORDER_PREFIX}-{kind}-{strategy}-{ticker}-{uuid.uuid4().hex[:8]}"
 
 
+def stepped_stop_target(n_tp_filled: int, entry: float, initial_sl: float, tp1: float):
+    """Where the stop should sit given how many TP legs have filled.
+
+    0 -> initial SL, 1 -> entry (breakeven), 2 -> TP1, 3 -> None (position closed).
+    """
+    return [initial_sl, entry, tp1, None][min(int(n_tp_filled), 3)]
+
+
 # ── Alpaca client (lazy) ──────────────────────────────────────────────────────
 
 _trading_client = None
