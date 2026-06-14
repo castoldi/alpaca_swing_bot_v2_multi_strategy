@@ -583,6 +583,73 @@ def simulate_exit(
     return last.name, float(last["close"]), "end_of_data", len(df) - 1 - entry_idx
 
 
+@dataclass
+class ExitLeg:
+    exit_date: pd.Timestamp
+    exit_price: float
+    reason: str          # tp1 | tp2 | tp3 | stop_loss | time_stop | end_of_data
+    bars_held: int
+    fraction: float      # portion of the original position this leg closes
+
+
+def simulate_exit_scaleout(
+    df: pd.DataFrame, entry_idx: int, signal: EntrySignal, p: StrategyParams = PARAMS
+) -> list[ExitLeg]:
+    """Walk forward producing per-leg exits for the 3-TP / stepped-stop model.
+
+    Per bar: check the stop FIRST (conservative) against the *current* floor, then
+    TP1->TP2->TP3 in order. A TP fill raises the stepped floor effective the NEXT
+    bar (breakeven after TP1, TP1 price after TP2). Time-stop / end-of-data close
+    whatever remains.
+    """
+    from config import TP_SPLITS
+    entry = signal.entry_price
+    tps = [signal.tp1, signal.tp2, signal.tp3]
+    fracs = list(TP_SPLITS)
+    stop = signal.stop_loss
+    max_days = _max_holding_days(signal, p)
+
+    legs: list[ExitLeg] = []
+    tp_hit = [False, False, False]
+    remaining = 1.0
+
+    for i in range(entry_idx + 1, len(df)):
+        bar = df.iloc[i]
+        bars_held = i - entry_idx
+
+        # 1) stop first, against the floor as of the previous bar
+        if float(bar["low"]) <= stop:
+            legs.append(ExitLeg(bar.name, stop, "stop_loss", bars_held, remaining))
+            return legs
+
+        # 2) take-profits in ascending order (a wide bar can fill several)
+        for k in range(3):
+            if not tp_hit[k] and float(bar["high"]) >= tps[k]:
+                tp_hit[k] = True
+                legs.append(ExitLeg(bar.name, tps[k], f"tp{k+1}", bars_held, fracs[k]))
+                remaining -= fracs[k]
+
+        if tp_hit[2]:
+            return legs  # fully scaled out
+
+        # 3) raise the stepped floor (effective next bar)
+        if tp_hit[1]:
+            stop = max(stop, signal.tp1)
+        elif tp_hit[0]:
+            stop = max(stop, entry)
+
+        # 4) time-stop on the remainder (only at breakeven+)
+        if bars_held >= max_days and float(bar["close"]) >= entry and remaining > 1e-9:
+            legs.append(ExitLeg(bar.name, float(bar["close"]), "time_stop", bars_held, remaining))
+            return legs
+
+    if remaining > 1e-9:
+        last = df.iloc[len(df) - 1]
+        legs.append(ExitLeg(last.name, float(last["close"]), "end_of_data",
+                            len(df) - 1 - entry_idx, remaining))
+    return legs
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Backtest (per-ticker, per-strategy)
 # ═════════════════════════════════════════════════════════════════════════════
