@@ -14,7 +14,8 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
-_Changes landed but not yet released under a new version number go here._
+- Design spec for stepped trailing stop + 3 take-profit scale-out
+  (`docs/superpowers/specs/2026-06-14-trailing-stop-3tp-design.md`). Implementation pending.
 
 
 
