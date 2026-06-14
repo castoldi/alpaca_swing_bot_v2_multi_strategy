@@ -80,6 +80,78 @@ def _place_scaled_entry(tc, ticker: str, qty: int, sig, strat_name: str) -> dict
             "entry_coid": entry_coid, "alpaca_id": str(getattr(entry_order, "id", "") or "")}
 
 
+def _position_qty(tc, ticker: str) -> float:
+    try:
+        pos = tc.get_open_position(ticker)
+        return abs(float(pos.qty)) if pos else 0.0
+    except Exception:
+        return 0.0
+
+
+def _our_sell_orders(tc, ticker: str):
+    """Open + recently-closed SELL orders for the symbol that we own."""
+    from alpaca.trading.requests import GetOrdersRequest
+    from alpaca.trading.enums import QueryOrderStatus, OrderSide
+    out = []
+    for st in (QueryOrderStatus.OPEN, QueryOrderStatus.CLOSED):
+        try:
+            req = GetOrdersRequest(status=st, symbols=[ticker], side=OrderSide.SELL, limit=50)
+            out.extend(tc.get_orders(filter=req) or [])
+        except Exception:
+            pass
+    return [o for o in out if str(getattr(o, "client_order_id", "") or "").startswith(CLIENT_ORDER_PREFIX)]
+
+
+def _count_filled_tp_legs(tc, trade: dict) -> int:
+    n = 0
+    for o in _our_sell_orders(tc, trade["ticker"]):
+        coid = str(getattr(o, "client_order_id", "") or "")
+        if "-tp" in coid and str(getattr(o, "status", "")).lower() in ("filled", "done_for_day", "closed"):
+            n += 1
+    return n
+
+
+def _open_stop_order(tc, trade: dict):
+    for o in _our_sell_orders(tc, trade["ticker"]):
+        coid = str(getattr(o, "client_order_id", "") or "")
+        if "-stop-" in coid and str(getattr(o, "status", "")).lower() in ("new", "accepted", "held", "pending_new"):
+            return o
+    return None
+
+
+def _sync_stepped_stop(tc, trade: dict):
+    """Move the resting stop to match how many TP legs have filled (breakeven/TP1)."""
+    from strategy import split_take_profit
+    entry = float(trade["entry_price"])
+    tp1, _, _ = split_take_profit(entry, float(trade["take_profit"]))
+
+    n = _count_filled_tp_legs(tc, trade)
+    target = stepped_stop_target(n, entry, float(trade["stop_loss"]), tp1)
+    if target is None:
+        return  # all TPs filled; reconciliation closes the trade elsewhere
+
+    stop = _open_stop_order(tc, trade)
+    if stop is None:
+        return
+    if abs(float(getattr(stop, "stop_price", 0.0)) - target) < 1e-6:
+        return  # already at the right level
+
+    qty = _position_qty(tc, trade["ticker"]) or float(getattr(stop, "qty", 0) or 0)
+    if qty < 1:
+        return
+    try:
+        tc.cancel_order_by_id(stop.id)
+        from alpaca.trading.requests import StopOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        coid = _make_client_order_id(trade["strategy"], trade["ticker"], "stop")
+        tc.submit_order(StopOrderRequest(symbol=trade["ticker"], qty=int(qty),
+                                         side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                                         stop_price=round(target, 2), client_order_id=coid))
+        log.info("  %s stepped stop -> $%.2f (%d TP legs filled)", trade["ticker"], target, n)
+    except Exception as e:
+        log.error("  Failed to move stepped stop for %s: %s", trade["ticker"], e)
+
+
 # ── Alpaca client (lazy) ──────────────────────────────────────────────────────
 
 _trading_client = None
