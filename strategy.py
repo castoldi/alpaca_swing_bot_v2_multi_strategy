@@ -684,31 +684,32 @@ def backtest_ticker(
         if sig is None:
             continue
 
-        # Only enter if the TP target is reachable within 2 trading days
-        if not is_tp_reachable_in_days(sig.entry_price, sig.take_profit, sig.atr, days=4):
+        # Nearest target (TP1) must be reachable, else skip
+        if not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4):
             continue
 
-        exit_date, exit_price, reason, bars = simulate_exit(df, idx, sig, p)
-        shares = p.dollars_per_trade / sig.entry_price
-        pnl_dollars = (exit_price - sig.entry_price) * shares
-        pnl_pct = (exit_price - sig.entry_price) / sig.entry_price
-
-        trades.append(Trade(
-            ticker=ticker,
-            entry_date=sig.date,
-            entry_price=sig.entry_price,
-            stop_loss=sig.stop_loss,
-            take_profit=sig.take_profit,
-            exit_date=exit_date if isinstance(exit_date, pd.Timestamp) else pd.Timestamp(exit_date),
-            exit_price=exit_price,
-            exit_reason=reason,
-            bars_held=bars,
-            shares=shares,
-            pnl_dollars=pnl_dollars,
-            pnl_pct=pnl_pct,
-            strategy=strategy.value if isinstance(strategy, StrategyType) else strategy,
-        ))
-        in_trade_until = idx + bars
+        legs = simulate_exit_scaleout(df, idx, sig, p)
+        if not legs:
+            continue
+        shares_total = p.dollars_per_trade / sig.entry_price
+        for leg in legs:
+            shares = shares_total * leg.fraction
+            trades.append(Trade(
+                ticker=ticker,
+                entry_date=sig.date,
+                entry_price=sig.entry_price,
+                stop_loss=sig.stop_loss,
+                take_profit=sig.tp3,
+                exit_date=leg.exit_date if isinstance(leg.exit_date, pd.Timestamp) else pd.Timestamp(leg.exit_date),
+                exit_price=leg.exit_price,
+                exit_reason=leg.reason,
+                bars_held=leg.bars_held,
+                shares=shares,
+                pnl_dollars=(leg.exit_price - sig.entry_price) * shares,
+                pnl_pct=(leg.exit_price - sig.entry_price) / sig.entry_price,
+                strategy=strategy.value if isinstance(strategy, StrategyType) else strategy,
+            ))
+        in_trade_until = idx + max(leg.bars_held for leg in legs)
 
     return trades
 
