@@ -14,11 +14,48 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
-- Design spec for stepped trailing stop + 3 take-profit scale-out
-  (`docs/superpowers/specs/2026-06-14-trailing-stop-3tp-design.md`). Implementation pending.
+_Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.5.0] - 2026-06-14
+
+### Added
+- **3-level take-profit scale-out + stepped stop** (design:
+  `docs/superpowers/specs/2026-06-14-trailing-stop-3tp-design.md`, plan:
+  `docs/superpowers/plans/2026-06-14-trailing-stop-3tp.md`).
+  - TP1/TP2/TP3 at 1/3, 2/3, and full of each strategy's existing ATR target;
+    position split 33/33/34. `config.TP_SPLITS`; `strategy.split_take_profit` /
+    `split_qty`; `EntrySignal` exposes `tp1/tp2/tp3`.
+  - **Stepped stop** (not a continuous trail): initial SL → **breakeven after TP1**
+    → **TP1 after TP2**. Time-stop applies to the remainder.
+  - Backtest: new `strategy.simulate_exit_scaleout` (conservative intrabar priority —
+    stop checked first; floor raised effective next bar). `backtest_ticker` emits one
+    `Trade` row per leg (`tp1`/`tp2`/`tp3`/`stop_loss`/`time_stop`/`end_of_data`);
+    `compute_stats` counts `tp1/2/3` as take-profits.
+  - Live: `_place_scaled_entry` (market entry + 3 GTC limit legs + a full-qty stop),
+    and `_sync_stepped_stop` which ratchets the resting stop each loop from live
+    Alpaca order/position state. Entry now branches: `qty>=3` scales out, `qty 1-2`
+    falls back to a single OCO bracket at TP3, `qty<1` skips. Reachability checks TP1.
+  - Dashboard labels `tp1/tp2/tp3` exit reasons.
+- **pytest test suite** under `tests/` (helpers + scale-out simulation + backtest +
+  stats + live order helpers, using a fake Alpaca client).
+- All three 4h backtests rerun with scale-out and recorded as history.
+
+### Changed
+- ⚠️ **Backtested P&L dropped materially under scale-out on the current universe.**
+  Taking 1/3 off at the near target and ratcheting the stop to breakeven/TP1 caps the
+  big trending winners the single-TP model rode to the full target. Several strategies
+  flipped negative for 2026 (e.g. ensemble +$213→−$198, regime +$242→−$139;
+  momentum_macd held up best). The feature is correct per spec — but on these momentum
+  names the single-TP exit performed better. Worth tuning (back-loaded splits, or a
+  less aggressive breakeven move) before relying on it.
+
+### Fixed
+- `post-commit` auto-push forced non-interactive (`GIT_TERMINAL_PROMPT=0`,
+  `GCM_INTERACTIVE=never`) so it can never hang on a credential prompt headlessly.
 
 ## [0.4.0] - 2026-06-13
 
@@ -124,6 +161,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
