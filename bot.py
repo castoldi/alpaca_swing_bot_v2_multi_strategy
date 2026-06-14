@@ -20,7 +20,7 @@ import pandas as pd
 
 from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
-from strategy import add_indicators, get_entry_checker, simulate_exit, is_tp_reachable_in_days
+from strategy import add_indicators, get_entry_checker, simulate_exit, is_tp_reachable_in_days, split_qty
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
@@ -48,6 +48,36 @@ def stepped_stop_target(n_tp_filled: int, entry: float, initial_sl: float, tp1: 
     0 -> initial SL, 1 -> entry (breakeven), 2 -> TP1, 3 -> None (position closed).
     """
     return [initial_sl, entry, tp1, None][min(int(n_tp_filled), 3)]
+
+
+def _place_scaled_entry(tc, ticker: str, qty: int, sig, strat_name: str) -> dict:
+    """Market buy + 3 limit-sell TP legs + a full-qty protective stop. Bot-owned."""
+    from alpaca.trading.requests import (MarketOrderRequest, LimitOrderRequest, StopOrderRequest)
+    from alpaca.trading.enums import OrderSide, TimeInForce
+
+    entry_coid = _make_client_order_id(strat_name, ticker, "entry")
+    buy = MarketOrderRequest(symbol=ticker, qty=qty, side=OrderSide.BUY,
+                             time_in_force=TimeInForce.DAY, client_order_id=entry_coid)
+    entry_order = tc.submit_order(buy)
+
+    legs = split_qty(qty)            # [a, a, qty-2a]
+    tps = [sig.tp1, sig.tp2, sig.tp3]
+    leg_orders = []
+    for i, (lq, tp) in enumerate(zip(legs, tps), start=1):
+        coid = _make_client_order_id(strat_name, ticker, f"tp{i}")
+        req = LimitOrderRequest(symbol=ticker, qty=lq, side=OrderSide.SELL,
+                                time_in_force=TimeInForce.GTC,
+                                limit_price=round(tp, 2), client_order_id=coid)
+        leg_orders.append(tc.submit_order(req))
+
+    stop_coid = _make_client_order_id(strat_name, ticker, "stop")
+    stop_req = StopOrderRequest(symbol=ticker, qty=qty, side=OrderSide.SELL,
+                                time_in_force=TimeInForce.GTC,
+                                stop_price=round(sig.stop_loss, 2), client_order_id=stop_coid)
+    stop_order = tc.submit_order(stop_req)
+
+    return {"entry": entry_order, "tp_legs": leg_orders, "stop": stop_order,
+            "entry_coid": entry_coid, "alpaca_id": str(getattr(entry_order, "id", "") or "")}
 
 
 # ── Alpaca client (lazy) ──────────────────────────────────────────────────────
