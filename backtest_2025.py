@@ -20,10 +20,11 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from config import PARAMS, TICKERS, StrategyType
+from config import PARAMS, TICKERS, StrategyType, BAR_TIMEFRAME, HISTORY_WARMUP_DAYS
 from logger_setup import get_logger
 from strategy import Trade, add_indicators, backtest_ticker
 from dashboard import db as db_mod
+import data_feed
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
@@ -47,17 +48,12 @@ STRATEGY_COLORS = OrderedDict([
 
 
 def download_history(ticker: str, start: date, end: date) -> pd.DataFrame:
-    warmup_start = date(start.year - 1, start.month, start.day)
-    raw = yf.download(ticker, start=warmup_start.isoformat(),
-                      end=(end + timedelta(days=1)).isoformat(),
-                      interval="1d", auto_adjust=True, progress=False)
-    if raw.empty:
-        return raw
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
-    df = raw.rename(columns=str.lower)[["open", "high", "low", "close", "volume"]]
-    df.index = pd.to_datetime(df.index).tz_localize(None)
-    return df
+    """Fetch 4h bars from Alpaca with a warmup window so indicators are primed.
+
+    (Previously yfinance daily bars — switched to Alpaca 4h; see data_feed.py.)
+    """
+    warmup_start = start - timedelta(days=HISTORY_WARMUP_DAYS)
+    return data_feed.fetch_4h(ticker, warmup_start, end + timedelta(days=1))
 
 
 def apply_portfolio_cap(trades: list[Trade], dollars_per_trade: float, cap: float) -> tuple[list[Trade], int]:

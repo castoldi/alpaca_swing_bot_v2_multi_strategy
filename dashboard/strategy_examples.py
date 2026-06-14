@@ -17,11 +17,11 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
-import yfinance as yf
 
-from config import PARAMS, TICKERS, StrategyType
+from config import PARAMS, TICKERS, StrategyType, BAR_TIMEFRAME
 from strategy import add_indicators, get_entry_checker, simulate_exit
 from logger_setup import get_logger
+import data_feed
 
 log = get_logger(__name__)
 
@@ -39,17 +39,8 @@ _mem: dict = {"ts": 0.0, "data": None}
 # ── data ──────────────────────────────────────────────────────────────────────
 
 def _fetch_bars(ticker: str, days: int = _HISTORY_DAYS) -> pd.DataFrame:
-    end = date.today() + timedelta(days=1)
-    start = date.today() - timedelta(days=days)
-    raw = yf.download(ticker, start=start.isoformat(), end=end.isoformat(),
-                      interval="1d", auto_adjust=True, progress=False)
-    if raw.empty:
-        return raw
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
-    df = raw.rename(columns=str.lower)[["open", "high", "low", "close", "volume"]]
-    df.index = pd.to_datetime(df.index).tz_localize(None)
-    return df
+    """Recent 4h bars (Alpaca via data_feed) for building chart examples."""
+    return data_feed.fetch_recent_4h(ticker, days=days)
 
 
 def _build_example(ticker: str, idx: int, sig, df: pd.DataFrame) -> dict:
@@ -158,6 +149,7 @@ def _compute() -> dict:
 
     return {
         "generated_at": pd.Timestamp.now("UTC").isoformat(),
+        "timeframe": BAR_TIMEFRAME,
         "universe": list(frames.keys()),
         "examples": examples,
     }

@@ -22,7 +22,7 @@ _PROJECT = _HERE.parent
 if str(_PROJECT) not in sys.path:
     sys.path.insert(0, str(_PROJECT))
 
-from config import ALPACA_KEY, ALPACA_PAPER, ALPACA_SECRET, PARAMS, TICKERS
+from config import ALPACA_KEY, ALPACA_PAPER, ALPACA_SECRET, PARAMS, TICKERS, BAR_TIMEFRAME
 from dashboard import db as db_mod
 from logger_setup import get_logger
 
@@ -85,6 +85,7 @@ async def get_summary():
     stats["max_capital"] = PARAMS.max_concurrent_capital
     stats["dollars_per_trade"] = PARAMS.dollars_per_trade
     stats["tickers"] = TICKERS
+    stats["timeframe"] = BAR_TIMEFRAME
     stats["is_paper"] = ALPACA_PAPER
     stats["now"] = datetime.now(timezone.utc).isoformat()
     return stats
@@ -102,7 +103,13 @@ async def get_signals(limit: int = Query(100, ge=1, le=500)):
 
 @app.get("/api/backtest-results")
 async def backtest_results(year: Optional[int] = None):
-    return {"results": db_mod.get_backtest_results(year)}
+    return {"results": db_mod.get_backtest_results(year), "timeframe": BAR_TIMEFRAME}
+
+
+@app.get("/api/backtest-history")
+async def backtest_history(limit: int = Query(200, ge=1, le=1000), year: Optional[int] = None):
+    """Full historical log of every backtest run (all timeframes, timestamped)."""
+    return {"history": db_mod.get_backtest_history(limit, year)}
 
 
 @app.get("/api/strategy-examples")

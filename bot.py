@@ -17,14 +17,14 @@ from datetime import datetime, date, timezone, timedelta
 from pathlib import Path
 
 import pandas as pd
-import yfinance as yf
 
-from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType
+from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
 from strategy import add_indicators, get_entry_checker, simulate_exit, is_tp_reachable_in_days
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
+import data_feed
 import runtime
 
 log = get_logger(__name__)
@@ -59,17 +59,8 @@ def _get_trading():
 # ── Data fetch ────────────────────────────────────────────────────────────────
 
 def fetch_bars(ticker: str, days: int = 90) -> pd.DataFrame:
-    end = date.today() + timedelta(days=1)
-    start = date.today() - timedelta(days=days + 30)
-    raw = yf.download(ticker, start=start.isoformat(), end=end.isoformat(),
-                      interval="1d", auto_adjust=True, progress=False)
-    if raw.empty:
-        return raw
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
-    df = raw.rename(columns=str.lower)[["open", "high", "low", "close", "volume"]]
-    df.index = pd.to_datetime(df.index).tz_localize(None)
-    return df
+    """Recent 4h bars for live trading (Alpaca via data_feed)."""
+    return data_feed.fetch_recent_4h(ticker, days=days + 30)
 
 
 # ── Main trading loop ─────────────────────────────────────────────────────────
@@ -261,7 +252,9 @@ def _reconcile_and_exit(strat_name: str):
                 continue
 
             held = _days_held(trade["entry_date"])
-            max_hold = _max_hold_days(strat_name)
+            # max-hold is expressed in 4h bars (~2 per trading day); convert to a
+            # calendar-day backstop for the live time-stop so it tracks the backtest.
+            max_hold = max(1, round(_max_hold_days(strat_name) / 2))
             current = float(pos.current_price)
             entry = float(trade["entry_price"])
             if held >= max_hold and current >= entry:

@@ -32,6 +32,16 @@ TICKERS: list[str] = [
 ]
 
 
+# --- Bar timeframe -----------------------------------------------------------
+# All strategies, backtests, the live bot, and the dashboard charts run on this
+# candle timeframe. 4h bars are sourced from Alpaca via data_feed.py — yfinance
+# has no native 4h interval and caps intraday history at ~730 days (so 2024 is
+# unavailable there). Change here to switch the whole system's timeframe.
+BAR_TIMEFRAME = "4h"
+# Warmup history fetched before a backtest window so indicators are primed.
+HISTORY_WARMUP_DAYS = 90
+
+
 # ---------------------------------------------------------------------------
 # Platform detection
 # ---------------------------------------------------------------------------

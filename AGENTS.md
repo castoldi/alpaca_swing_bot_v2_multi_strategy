@@ -119,22 +119,34 @@ alpaca_swing_bot_v2_multi_strategy/
 └── .venv/                     # Python venv
 ```
 
-## Versioning & build tags
+## Versioning, changelog & release workflow — REQUIRED for every change
 
-Every commit is auto-tagged `v<version>+build<N>-<datetime>` by a `post-commit`
-hook (`N` = total commit count = the auto-incrementing build number). The
-semantic version lives in `VERSION`; history is in `CHANGELOG.md`.
+**Every change to this project MUST follow this loop. No exceptions.**
+
+1. **Record it in `CHANGELOG.md`.** Add bullet(s) under the current version's
+   `### Added/Fixed/Changed`. Nothing ships undocumented.
+2. **Bump the build version** when the change is user-visible or behavioural:
+   `pwsh scripts\version.ps1 -Bump patch|minor|major` (updates `VERSION` and
+   scaffolds a dated `CHANGELOG.md` section to fill in). The semantic version
+   lives in `VERSION`; the full history lives in `CHANGELOG.md`.
+3. **Always commit AND push.** Never leave work committed-but-unpushed.
+4. **Tag with the version + datetime** — this is automatic: the `post-commit`
+   hook tags every commit `v<version>+build<N>-<datetime>` (`N` = total commit
+   count) **and pushes the commit + tag** to the upstream branch (best-effort).
+
+So in practice: update `CHANGELOG.md` → bump `VERSION` if needed → `git commit`.
+The hook does the tag + push. Verify the push landed; if the hook reports a push
+failure, run `git push --follow-tags` manually.
 
 ```powershell
 pwsh scripts\version.ps1                 # current version, build #, latest tag
-pwsh scripts\version.ps1 -Bump patch     # bump VERSION + scaffold CHANGELOG entry
+pwsh scripts\version.ps1 -Bump minor     # bump VERSION + scaffold CHANGELOG entry
 pwsh scripts\version.ps1 -Builds         # list all build tags
 git config core.hooksPath scripts/git-hooks   # ONE-TIME install (fresh clones only)
 ```
 
 The hook is installed via `core.hooksPath`, which is **local** git config — re-run
-the one-time install command above after a fresh clone. Before releasing a new
-version, bump `VERSION`, fill in the new `CHANGELOG.md` section, then commit.
+the one-time install command above after a fresh clone (otherwise no auto tag/push).
 
 ## Research loop (autoresearch pattern)
 

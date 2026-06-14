@@ -100,3 +100,21 @@ manager and confirm it came back up:
 
 Do not leave the user without a live server after a dashboard change. Do **not**
 start a fresh process if one is already healthy — `restart-*` handles the swap.
+
+## RULE: version, changelog, commit + push + tag on every change
+
+Every change MUST be released through this loop (full details in `AGENTS.md`):
+
+1. **Document** it in `CHANGELOG.md` (under the current version's Added/Fixed/Changed).
+2. **Bump** the build version for anything user-visible/behavioural:
+   `pwsh scripts\version.ps1 -Bump patch|minor|major` (edits `VERSION` + scaffolds
+   the changelog section).
+3. **Commit AND push** — never leave work committed-but-unpushed.
+4. The `post-commit` hook automatically **tags** the commit
+   `v<version>+build<N>-<datetime>` and **pushes** it. Confirm the push landed;
+   if it reports a failure, run `git push --follow-tags`.
+
+The candle timeframe for the whole system is **4h** (see `BAR_TIMEFRAME` in
+`config.py`, sourced from Alpaca via `data_feed.py`). Backtests are kept as
+historical records in the DB (`timeframe` column) and shown under **Backtest
+History** on the dashboard Home tab.

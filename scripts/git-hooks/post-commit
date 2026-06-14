@@ -46,4 +46,16 @@ git tag -a "$tag" -m "build $build | $version | $short | $subject" >/dev/null 2>
 }
 
 echo "post-commit: tagged $tag" >&2
+
+# Auto-push the commit + tag (the project rule is: every commit is pushed).
+# Best-effort and non-fatal — a push failure must never break the commit.
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    if git push --follow-tags >/dev/null 2>&1; then
+        echo "post-commit: pushed commit + $tag to $(git rev-parse --abbrev-ref '@{u}')" >&2
+    else
+        echo "post-commit: push FAILED — commit + tag are local only; push manually" >&2
+    fi
+else
+    echo "post-commit: no upstream branch set — skipping push" >&2
+fi
 exit 0

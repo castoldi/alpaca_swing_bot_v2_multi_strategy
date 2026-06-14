@@ -18,6 +18,33 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.4.0] - 2026-06-13
+
+### Added
+- **4h candle timeframe across the whole system** (was daily). New `data_feed.py`
+  sources 4h bars from **Alpaca** (`StockHistoricalDataClient`, IEX feed) — yfinance
+  has no native 4h interval and caps intraday history at ~730 days (2024 unavailable),
+  so Alpaca is used for all years. Centralised in `config.BAR_TIMEFRAME = "4h"`.
+- **Historical backtest records.** `backtest_runs` gains a `timeframe` column
+  (existing rows tagged `1d`); every rerun is **kept** as history rather than
+  overwritten. New `get_backtest_history()` + `GET /api/backtest-history`, and a
+  **Backtest History** table on the dashboard Home tab showing every run
+  (timestamp, timeframe, stats). The headline tables now show the *latest* run per
+  strategy/year via `get_backtest_results()`, with a timeframe badge.
+- All three 4h backtests (2024/2025/2026) rerun and recorded.
+- **Auto-push**: the `post-commit` hook now pushes the commit + tag to upstream
+  (best-effort, non-fatal) so every commit is committed, tagged, and pushed.
+
+### Changed
+- Backtests (`download_history`), the live bot (`fetch_bars`), and the Strategies-page
+  charts (`strategy_examples.py`) all fetch 4h bars via `data_feed`. The live bot now
+  trades on 4h signals; its time-stop converts the bar-based max-hold to calendar days.
+- Indicator/holding params are unchanged (literal timeframe switch) — on 4h bars they
+  now span a shorter calendar window (e.g. SMA-50 ≈ 25 trading days).
+- `CLAUDE.md` / `AGENTS.md`: documented the mandatory version + changelog +
+  commit/push/tag-with-datetime release workflow.
+
 ## [0.3.0] - 2026-06-13
 
 ### Added
@@ -96,5 +123,6 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 

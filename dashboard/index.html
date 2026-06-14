@@ -69,6 +69,7 @@ tr:hover td{background:#1e212b}
 .loading{text-align:center;color:#6b7280;padding:40px;font-size:14px}
 .error{text-align:center;color:#ef4444;padding:20px}
 .empty{color:#6b7280;padding:12px 0;font-size:13px}
+.hint{font-size:11px;color:#6b7280;font-weight:400;text-transform:none;letter-spacing:0}
 code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 
 /* ── Strategy example charts ── */
@@ -112,8 +113,11 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
     <div class="section-title">Recent Trades</div>
     <div id="trades"><div class="loading">Loading trades...</div></div>
 
-    <div class="section-title">Backtest Results — All Years</div>
+    <div class="section-title">Backtest Results — All Years <span class="hint">(latest run per strategy)</span></div>
     <div id="backtestRuns"><div class="loading">Loading backtest results...</div></div>
+
+    <div class="section-title">Backtest History <span class="hint">(every run, kept over time)</span></div>
+    <div id="backtestHistory"><div class="loading">Loading history...</div></div>
 
   </div>
 
@@ -214,7 +218,7 @@ async function loadHome() {
       ? {background:'#22c55e20',color:'#22c55e',borderColor:'#22c55e40'}
       : {background:'#ef444420',color:'#ef4444',borderColor:'#ef444440'});
     document.getElementById('subtitle').textContent =
-      `${(summary.tickers||[]).join(' · ')}  ·  $${summary.dollars_per_trade||200}/trade  ·  $${summary.max_capital||1000} cap`;
+      `${(summary.tickers||[]).join(' · ')}  ·  ${(summary.timeframe||'4h')} candles  ·  $${summary.dollars_per_trade||200}/trade  ·  $${summary.max_capital||1000} cap`;
 
     // KPIs
     document.getElementById('kpis').innerHTML = `
@@ -262,16 +266,17 @@ async function loadHome() {
       document.getElementById('trades').innerHTML = '<p class="empty">No closed trades yet.</p>';
     }
 
-    // Backtest results grouped by year
+    // Backtest results grouped by year (latest run per strategy/year)
     const results = bt.results || [];
     if (results.length) {
       // Sort by year desc, then by pnl desc within year
       results.sort((a,b) => b.year - a.year || b.total_pnl - a.total_pnl);
       document.getElementById('backtestRuns').innerHTML = tableHtml(
-        ['Year','Strategy','Trades','Win %','P&L','Profit Factor','Max DD'],
+        ['Year','Strategy','TF','Trades','Win %','P&L','Profit Factor','Max DD'],
         results.map(r => [
           r.year,
           `<span style="color:${STRAT_COLORS[r.strategy]||'#8892a4'}">${r.strategy}</span>`,
+          tfBadge(r.timeframe),
           r.num_trades,
           `${(r.win_rate*100).toFixed(1)}%`,
           `<span class="${pnlClass(r.total_pnl)}">${fmtFull$(r.total_pnl)}</span>`,
@@ -284,6 +289,8 @@ async function loadHome() {
         '<p class="empty">Run <code>python backtest_2025.py</code> to populate.</p>';
     }
 
+    loadBacktestHistory();
+
   } catch(e) {
     document.getElementById('kpis').innerHTML = `<div class="error">Failed to load: ${e.message}</div>`;
   }
@@ -295,6 +302,48 @@ function tableHtml(headers, rows) {
     `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`
   ).join('');
   return `<div class="table-wrap"><table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table></div>`;
+}
+
+function tfBadge(tf) {
+  tf = tf || '1d';
+  const c = tf === '4h' ? '#a78bfa' : '#60a5fa';
+  return `<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:${c}20;color:${c};border:1px solid ${c}40">${tf}</span>`;
+}
+function fmtWhen(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+
+// Full historical log of every backtest run (kept across reruns).
+async function loadBacktestHistory() {
+  const el = document.getElementById('backtestHistory');
+  if (!el) return;
+  let hist;
+  try {
+    hist = (await api('/api/backtest-history?limit=150')).history || [];
+  } catch (e) {
+    el.innerHTML = `<div class="error">Failed to load history: ${e.message}</div>`;
+    return;
+  }
+  if (!hist.length) { el.innerHTML = '<p class="empty">No backtest runs recorded yet.</p>'; return; }
+  el.innerHTML = tableHtml(
+    ['Run','When (UTC)','Year','Strategy','TF','Trades','Win %','P&L','PF','Max DD','Status'],
+    hist.map(r => [
+      `#${r.id}`,
+      fmtWhen(r.finished_at || r.started_at),
+      r.year,
+      `<span style="color:${STRAT_COLORS[r.strategy]||'#8892a4'}">${r.strategy}</span>`,
+      tfBadge(r.timeframe),
+      r.num_trades != null ? r.num_trades : '—',
+      r.win_rate != null ? `${(r.win_rate*100).toFixed(1)}%` : '—',
+      r.total_pnl != null ? `<span class="${pnlClass(r.total_pnl)}">${fmtFull$(r.total_pnl)}</span>` : '—',
+      r.profit_factor != null ? (r.profit_factor > 999 ? '∞' : r.profit_factor.toFixed(2)) : '—',
+      r.max_drawdown != null ? `${(r.max_drawdown*100).toFixed(1)}%` : '—',
+      r.status || '—',
+    ])
+  );
 }
 
 // ── STRATEGIES ────────────────────────────────────────────────────────────────
@@ -333,7 +382,7 @@ async function renderStrategies() {
         <div class="strat-entry">${s.entry}</div>
         <div class="strat-params">${chips}</div>
         <div class="strat-charts" id="charts-${s.id}">
-          <div class="strat-charts-title">Recent real setups
+          <div class="strat-charts-title"><span class="tf-label">Recent setups</span>
             <span class="chart-legend">
               <span><i style="border-color:#60a5fa"></i>Entry</span>
               <span><i style="border-color:#22c55e"></i>TP</span>
@@ -395,6 +444,8 @@ async function loadStrategyCharts() {
     return;
   }
   const examples = (data && data.examples) || {};
+  const tf = (data && data.timeframe) || '4h';
+  document.querySelectorAll('.tf-label').forEach(e => { e.textContent = `Recent ${tf} setups`; });
   for (const s of STRATEGIES) {
     const list = examples[s.id] || [];
     for (let i = 0; i < 2; i++) renderMiniChart(`chart-${s.id}-${i}`, list[i]);

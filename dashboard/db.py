@@ -111,6 +111,12 @@ def _migrate(c: sqlite3.Connection):
         if col not in have:
             c.execute(f"ALTER TABLE trades ADD COLUMN {col} {decl}")
 
+    # backtest_runs: tag each run with the candle timeframe it ran on. Existing
+    # rows predate the 4h switch, so they default to '1d'.
+    bt_have = {row["name"] for row in c.execute("PRAGMA table_info(backtest_runs)")}
+    if "timeframe" not in bt_have:
+        c.execute("ALTER TABLE backtest_runs ADD COLUMN timeframe TEXT DEFAULT '1d'")
+
 
 def set_tickers(tickers: list[str]):
     global _TICKERS
@@ -254,12 +260,12 @@ def get_recent_signals(limit: int = 100) -> list[dict]:
 
 # ── Backtest runs ─────────────────────────────────────────────────────────────
 
-def start_backtest_run(year: int, strategy: str) -> int:
+def start_backtest_run(year: int, strategy: str, timeframe: str = "4h") -> int:
     _ensure_tables()
     with _con() as c:
         cur = c.execute(
-            "INSERT INTO backtest_runs (year, strategy, started_at) VALUES (?, ?, ?)",
-            (year, strategy, datetime.now(timezone.utc).isoformat()),
+            "INSERT INTO backtest_runs (year, strategy, started_at, timeframe) VALUES (?, ?, ?, ?)",
+            (year, strategy, datetime.now(timezone.utc).isoformat(), timeframe),
         )
         return cur.lastrowid
 
@@ -275,12 +281,38 @@ def finish_backtest_run(run_id: int, num_trades: int, win_rate: float,
 
 
 def get_backtest_results(year: Optional[int] = None) -> list[dict]:
+    """Latest completed run per (year, strategy) — what the cards/tables show.
+
+    Reruns accumulate as history (see get_backtest_history); this returns only the
+    most recent finished run for each strategy/year so the headline numbers reflect
+    the current timeframe.
+    """
+    _ensure_tables()
+    with _con() as c:
+        base = (
+            "SELECT * FROM backtest_runs WHERE status='done' AND id IN "
+            "(SELECT MAX(id) FROM backtest_runs WHERE status='done' GROUP BY year, strategy)"
+        )
+        if year:
+            rows = c.execute(base + " AND year=? ORDER BY strategy", (year,)).fetchall()
+        else:
+            rows = c.execute(base + " ORDER BY year DESC, strategy").fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_backtest_history(limit: int = 200, year: Optional[int] = None) -> list[dict]:
+    """Every backtest run, newest first — the full historical log."""
     _ensure_tables()
     with _con() as c:
         if year:
-            rows = c.execute("SELECT * FROM backtest_runs WHERE year=? ORDER BY strategy, id", (year,)).fetchall()
+            rows = c.execute(
+                "SELECT * FROM backtest_runs WHERE year=? ORDER BY id DESC LIMIT ?",
+                (year, limit),
+            ).fetchall()
         else:
-            rows = c.execute("SELECT * FROM backtest_runs ORDER BY year DESC, strategy").fetchall()
+            rows = c.execute(
+                "SELECT * FROM backtest_runs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
