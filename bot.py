@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+import uuid
 from datetime import datetime, date, timezone, timedelta
 from pathlib import Path
 
@@ -29,6 +30,16 @@ import runtime
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
 SERVICE = "bot"  # name used for run/bot.pid, run/bot.meta.json, run/bot.heartbeat
+
+# Every order this bot places carries a client_order_id beginning with this prefix.
+# It is our correlation id with Alpaca and the proof of ownership: the bot will only
+# ever close a position whose originating order carries this prefix.
+CLIENT_ORDER_PREFIX = "swingv2"
+
+
+def _make_client_order_id(strategy: str, ticker: str, kind: str) -> str:
+    """Unique, Alpaca-safe correlation id, e.g. swingv2-entry-ensemble-ARM-9f3a1c2b."""
+    return f"{CLIENT_ORDER_PREFIX}-{kind}-{strategy}-{ticker}-{uuid.uuid4().hex[:8]}"
 
 
 # ── Alpaca client (lazy) ──────────────────────────────────────────────────────
@@ -103,12 +114,19 @@ def run_once(strategy: StrategyType) -> int:
                              sig.take_profit, sig.atr)
                     continue
 
-                # Check if we already have an open position for this ticker
+                # Skip if THIS bot already has an open trade for the ticker.
+                if db_mod.get_open_trade(ticker, strat_name):
+                    log.info("  Bot already holds an open %s trade — skipping", ticker)
+                    continue
+
+                # Also avoid stacking on top of any pre-existing position (e.g. one a
+                # human opened): don't add exposure to a symbol we don't already manage.
                 try:
                     tc = _get_trading()
                     open_pos = tc.get_open_position(ticker)
                     if open_pos:
-                        log.info("  Already in %s (qty %s) — skipping", ticker, open_pos.qty)
+                        log.info("  A %s position already exists (qty %s) not tracked by the bot — skipping",
+                                 ticker, open_pos.qty)
                         continue
                 except Exception:
                     pass  # No position — good to proceed
@@ -132,6 +150,7 @@ def run_once(strategy: StrategyType) -> int:
                     from alpaca.trading.requests import TakeProfitRequest, StopLossRequest
                     tp = TakeProfitRequest(limit_price=round(sig.take_profit, 2))
                     sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
+                    coid = _make_client_order_id(strat_name, ticker, "entry")
                     mkt = MarketOrderRequest(
                         symbol=ticker,
                         qty=qty,
@@ -139,17 +158,24 @@ def run_once(strategy: StrategyType) -> int:
                         time_in_force=TimeInForce.DAY,
                         take_profit=tp,
                         stop_loss=sl,
+                        client_order_id=coid,  # ← correlation id with Alpaca
                     )
-                    tc.submit_order(mkt)
-                    log.info("  Placed OCO bracket: %s x%d @ $%.2f (SL $%.2f / TP $%.2f)",
-                             ticker, qty, sig.entry_price, sig.stop_loss, sig.take_profit)
+                    order = tc.submit_order(mkt)
+                    alpaca_id = str(getattr(order, "id", "") or "")
+                    log.info("  Placed OCO bracket: %s x%d @ $%.2f (SL $%.2f / TP $%.2f) "
+                             "[coid=%s alpaca_id=%s]",
+                             ticker, qty, sig.entry_price, sig.stop_loss, sig.take_profit,
+                             coid, alpaca_id)
 
                     orders_placed += 1
                     db_mod.save_trade(ticker, strat_name, str(sig.date),
-                                      sig.entry_price, sig.stop_loss, sig.take_profit)
+                                      sig.entry_price, sig.stop_loss, sig.take_profit,
+                                      shares=qty, client_order_id=coid,
+                                      alpaca_order_id=alpaca_id)
                     send_notification(
                         f"Bot V2: {ticker} entry ({strat_name})",
-                        f"Entry ${sig.entry_price:.2f}\nSL ${sig.stop_loss:.2f}\nTP ${sig.take_profit:.2f}\nQty {qty}"
+                        f"Entry ${sig.entry_price:.2f}\nSL ${sig.stop_loss:.2f}\n"
+                        f"TP ${sig.take_profit:.2f}\nQty {qty}\nRef {coid}"
                     )
 
                 except Exception as e:
@@ -157,8 +183,8 @@ def run_once(strategy: StrategyType) -> int:
             else:
                 log.info("  No signal for %s", ticker)
 
-        # Check open positions for exit conditions
-        _check_open_positions(df)
+        # Reconcile + apply exits — only on positions THIS bot opened
+        _reconcile_and_exit(strat_name)
 
     except Exception as e:
         error = str(e)
@@ -171,35 +197,170 @@ def run_once(strategy: StrategyType) -> int:
     return 0 if not error else 1
 
 
-def _check_open_positions(df: pd.DataFrame):
-    """Check live positions for stop loss / take profit / time stop exit conditions."""
+def _max_hold_days(strategy: str) -> int:
+    """Per-strategy time-stop horizon (calendar days)."""
+    return {
+        "trend_pullback": PARAMS.max_holding_days,
+        "breakout": PARAMS.breakout_max_holding_days,
+        "mean_reversion": PARAMS.mr_max_holding_days,
+        "momentum_macd": PARAMS.macd_max_holding_days,
+        "ensemble": PARAMS.ensemble_max_holding_days,
+        "regime": PARAMS.max_holding_days,
+    }.get(strategy, PARAMS.max_holding_days)
+
+
+def _days_held(entry_date: str) -> int:
+    try:
+        return (date.today() - pd.to_datetime(entry_date).date()).days
+    except Exception:
+        return 0
+
+
+def _verify_owned(tc, trade: dict) -> bool:
+    """Prove this trade is ours: the Alpaca entry order must carry our correlation id.
+
+    Fails CLOSED — if we cannot positively confirm ownership we return False, so the
+    caller leaves the position untouched. We never close what we cannot prove we own.
+    """
+    coid = trade.get("client_order_id")
+    if not coid or not str(coid).startswith(CLIENT_ORDER_PREFIX):
+        return False
+    try:
+        order = tc.get_order_by_client_id(coid)
+        return order is not None and getattr(order, "symbol", None) == trade["ticker"]
+    except Exception:
+        return False
+
+
+def _reconcile_and_exit(strat_name: str):
+    """Keep DB trades in sync with Alpaca and apply the time-stop — touching ONLY
+    positions this bot opened.
+
+    For each open trade THIS bot recorded:
+      * if its Alpaca position is gone (a bracket SL/TP filled) → record the exit.
+      * else if past max-hold and at breakeven+ → close OUR quantity (after verifying
+        ownership and cancelling our own bracket legs).
+    Positions the bot did not open are never inspected or closed.
+    """
     try:
         tc = _get_trading()
-        positions = tc.get_all_positions()
-        if not positions:
-            return
+    except Exception as e:
+        log.debug("Exit check skipped (no trading client): %s", e)
+        return
 
-        for pos in positions:
-            ticker = pos.symbol
-            if ticker not in TICKERS:
+    for trade in db_mod.get_open_trades_by_strategy(strat_name):
+        ticker = trade["ticker"]
+        try:
+            try:
+                pos = tc.get_open_position(ticker)
+            except Exception:
+                pos = None  # Alpaca raises when there is no position for the symbol
+
+            if pos is None:
+                _reconcile_closed(tc, trade)
                 continue
 
-            entry_price = float(pos.avg_entry_price)
-            current_price = float(pos.current_price)
-            qty = float(pos.qty)
+            held = _days_held(trade["entry_date"])
+            max_hold = _max_hold_days(strat_name)
+            current = float(pos.current_price)
+            entry = float(trade["entry_price"])
+            if held >= max_hold and current >= entry:
+                if not _verify_owned(tc, trade):
+                    log.warning("  %s past max-hold but ownership unverified (coid=%s) — leaving it alone",
+                                ticker, trade.get("client_order_id"))
+                    continue
+                _close_owned(tc, trade, pos, reason="time_stop")
+        except Exception as e:
+            log.error("  Exit check failed for %s: %s", ticker, e)
 
-            # Check SL/TP from price
-            if current_price <= entry_price * 0.9:
-                log.info("  STOP LOSS triggered for %s at $%.2f (entry $%.2f)", ticker, current_price, entry_price)
-                tc.close_position(ticker)
-                pnl = (current_price - entry_price) * qty
-                db_mod.close_trade(
-                    ticker, current_price, entry_price, current_price,
-                    pnl_pct=(current_price - entry_price) / entry_price,
-                )
 
+def _reconcile_closed(tc, trade: dict):
+    """Our tracked position is gone (a bracket leg filled) — record the exit in the DB."""
+    ticker = trade["ticker"]
+    entry = float(trade["entry_price"])
+    shares = float(trade.get("shares") or 0)
+    exit_price = exit_coid = None
+    exit_id = ""
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus, OrderSide
+        req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, symbols=[ticker],
+                               side=OrderSide.SELL, limit=10)
+        for o in (tc.get_orders(filter=req) or []):
+            if getattr(o, "filled_avg_price", None):
+                exit_price = float(o.filled_avg_price)
+                exit_coid = getattr(o, "client_order_id", None)
+                exit_id = str(getattr(o, "id", "") or "")
+                if getattr(o, "filled_qty", None):
+                    shares = float(o.filled_qty) or shares
+                break
     except Exception as e:
-        log.debug("Position check skipped: %s", e)
+        log.debug("  Could not fetch exit fill for %s: %s", ticker, e)
+
+    if exit_price is None:
+        exit_price, reason = entry, "closed_external"  # unknown fill — don't leave it stuck open
+    else:
+        reason = "bracket_filled"
+
+    pnl = (exit_price - entry) * shares
+    pnl_pct = (exit_price - entry) / entry if entry else 0.0
+    db_mod.close_trade(trade["id"], datetime.now(timezone.utc).isoformat(), exit_price,
+                       reason, _days_held(trade["entry_date"]), shares, pnl, pnl_pct,
+                       exit_client_order_id=exit_coid, exit_alpaca_order_id=exit_id)
+    log.info("  Reconciled exit: %s closed @ $%.2f (%s) pnl=$%.2f", ticker, exit_price, reason, pnl)
+
+
+def _close_owned(tc, trade: dict, pos, reason: str):
+    """Close ONLY the quantity this bot opened, after cancelling our own bracket legs."""
+    ticker = trade["ticker"]
+    entry = float(trade["entry_price"])
+    our_qty = float(trade.get("shares") or 0)
+    pos_qty = abs(float(pos.qty))
+    qty_to_close = int(min(our_qty, pos_qty)) if our_qty > 0 else int(pos_qty)
+    if qty_to_close < 1:
+        log.warning("  %s: nothing to close (our_qty=%s pos_qty=%s)", ticker, our_qty, pos_qty)
+        return
+
+    # Free the shares by cancelling the still-open SL/TP legs of OUR entry order only.
+    try:
+        entry_id = trade.get("alpaca_order_id")
+        if entry_id:
+            entry_order = tc.get_order_by_id(entry_id)
+            for leg in (getattr(entry_order, "legs", None) or []):
+                if str(getattr(leg, "status", "")).lower() in (
+                        "new", "accepted", "held", "pending_new", "partially_filled"):
+                    try:
+                        tc.cancel_order_by_id(leg.id)
+                        log.info("  Cancelled bracket leg %s for %s", leg.id, ticker)
+                    except Exception as e:
+                        log.debug("  Could not cancel leg %s: %s", getattr(leg, "id", "?"), e)
+    except Exception as e:
+        log.debug("  Could not inspect bracket legs for %s: %s", ticker, e)
+
+    exit_coid = _make_client_order_id(trade["strategy"], ticker, "exit")
+    exit_id = ""
+    try:
+        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        sell = MarketOrderRequest(symbol=ticker, qty=qty_to_close, side=OrderSide.SELL,
+                                  time_in_force=TimeInForce.DAY, client_order_id=exit_coid)
+        order = tc.submit_order(sell)
+        exit_id = str(getattr(order, "id", "") or "")
+        log.info("  Closed bot position %s x%d (%s) [coid=%s]", ticker, qty_to_close, reason, exit_coid)
+    except Exception as e:
+        log.error("  Failed to close %s: %s", ticker, e)
+        return
+
+    current = float(pos.current_price)
+    pnl = (current - entry) * qty_to_close
+    pnl_pct = (current - entry) / entry if entry else 0.0
+    db_mod.close_trade(trade["id"], datetime.now(timezone.utc).isoformat(), current,
+                       reason, _days_held(trade["entry_date"]), qty_to_close, pnl, pnl_pct,
+                       exit_client_order_id=exit_coid, exit_alpaca_order_id=exit_id)
+    send_notification(
+        f"Bot V2: {ticker} exit ({trade['strategy']})",
+        f"Closed x{qty_to_close} @ ~${current:.2f}\nReason {reason}\nPnL ${pnl:.2f}\nRef {exit_coid}"
+    )
 
 
 def run_loop(strategy: StrategyType, interval_minutes: int = 30):

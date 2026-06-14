@@ -91,6 +91,25 @@ def _ensure_tables():
                 verdict TEXT DEFAULT 'pending'
             );
         """)
+        _migrate(c)
+
+
+def _migrate(c: sqlite3.Connection):
+    """Idempotently add columns introduced after the first release.
+
+    Correlation columns tie each DB trade to the live Alpaca order(s) so the bot
+    can prove a position is its own before ever closing it.
+    """
+    have = {row["name"] for row in c.execute("PRAGMA table_info(trades)")}
+    add = {
+        "client_order_id": "TEXT",       # our correlation id sent to Alpaca on entry
+        "alpaca_order_id": "TEXT",       # Alpaca's order UUID for the entry
+        "exit_client_order_id": "TEXT",  # correlation id of the closing order
+        "exit_alpaca_order_id": "TEXT",  # Alpaca's order UUID for the exit
+    }
+    for col, decl in add.items():
+        if col not in have:
+            c.execute(f"ALTER TABLE trades ADD COLUMN {col} {decl}")
 
 
 def set_tickers(tickers: list[str]):
@@ -130,23 +149,62 @@ def get_recent_runs(limit: int = 50) -> list[dict]:
 # ── Trades ────────────────────────────────────────────────────────────────────
 
 def save_trade(ticker: str, strategy: str, entry_date: str, entry_price: float,
-               stop_loss: float, take_profit: float) -> int:
+               stop_loss: float, take_profit: float, shares: Optional[float] = None,
+               client_order_id: Optional[str] = None,
+               alpaca_order_id: Optional[str] = None) -> int:
+    """Persist a newly opened trade, including its Alpaca correlation ids."""
     _ensure_tables()
     with _con() as c:
         cur = c.execute(
-            "INSERT INTO trades (ticker, strategy, entry_date, entry_price, stop_loss, take_profit, status) VALUES (?,?,?,?,?,?,'open')",
-            (ticker, strategy, entry_date, entry_price, stop_loss, take_profit),
+            "INSERT INTO trades (ticker, strategy, entry_date, entry_price, stop_loss, "
+            "take_profit, shares, client_order_id, alpaca_order_id, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,'open')",
+            (ticker, strategy, entry_date, entry_price, stop_loss, take_profit,
+             shares, client_order_id, alpaca_order_id),
         )
         return cur.lastrowid
 
 
 def close_trade(db_id: int, exit_date: str, exit_price: float, reason: str,
-                bars_held: int, shares: float, pnl_dollars: float, pnl_pct: float):
+                bars_held: int, shares: float, pnl_dollars: float, pnl_pct: float,
+                exit_client_order_id: Optional[str] = None,
+                exit_alpaca_order_id: Optional[str] = None):
     with _con() as c:
         c.execute(
-            "UPDATE trades SET exit_date=?, exit_price=?, exit_reason=?, bars_held=?, shares=?, pnl_dollars=?, pnl_pct=?, status='closed' WHERE id=?",
-            (exit_date, exit_price, reason, bars_held, shares, pnl_dollars, pnl_pct, db_id),
+            "UPDATE trades SET exit_date=?, exit_price=?, exit_reason=?, bars_held=?, "
+            "shares=?, pnl_dollars=?, pnl_pct=?, exit_client_order_id=?, "
+            "exit_alpaca_order_id=?, status='closed' WHERE id=?",
+            (exit_date, exit_price, reason, bars_held, shares, pnl_dollars, pnl_pct,
+             exit_client_order_id, exit_alpaca_order_id, db_id),
         )
+
+
+def get_open_trades_by_strategy(strategy: str) -> list[dict]:
+    """Open trades opened by a given strategy (i.e. by this bot process)."""
+    _ensure_tables()
+    with _con() as c:
+        rows = c.execute(
+            "SELECT * FROM trades WHERE status='open' AND strategy=? ORDER BY id",
+            (strategy,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_open_trade(ticker: str, strategy: Optional[str] = None) -> Optional[dict]:
+    """Most recent open trade for a ticker (optionally scoped to a strategy)."""
+    _ensure_tables()
+    with _con() as c:
+        if strategy:
+            row = c.execute(
+                "SELECT * FROM trades WHERE status='open' AND ticker=? AND strategy=? "
+                "ORDER BY id DESC LIMIT 1", (ticker, strategy),
+            ).fetchone()
+        else:
+            row = c.execute(
+                "SELECT * FROM trades WHERE status='open' AND ticker=? "
+                "ORDER BY id DESC LIMIT 1", (ticker,),
+            ).fetchone()
+        return dict(row) if row else None
 
 
 def get_all_trades(limit: int = 200) -> list[dict]:

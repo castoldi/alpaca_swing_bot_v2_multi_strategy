@@ -16,6 +16,38 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 _Changes landed but not yet released under a new version number go here._
 
+
+## [0.2.0] - 2026-06-13
+
+### Added
+- **Alpaca correlation ids on every trade** — each entry order is submitted with a
+  unique `client_order_id` (`swingv2-entry-<strategy>-<ticker>-<uuid>`). The DB
+  `trades` table now stores `client_order_id` + `alpaca_order_id` for the entry and
+  `exit_client_order_id` + `exit_alpaca_order_id` for the exit, so every position is
+  traceable back to the exact Alpaca order. Entry qty is recorded in `shares`.
+- **Exit reconciliation** — when a bracket SL/TP fills, the bot finds the closing
+  fill and records the exit (price, P&L, exit correlation ids) in the DB, so trades
+  are tracked all the way through to close instead of being stuck `open`.
+- **Bot-scoped time-stop** — positions past their per-strategy `max_holding_days` and
+  at breakeven+ are closed by the bot (only after ownership is verified).
+- DB helpers `get_open_trades_by_strategy`, `get_open_trade`, and an idempotent
+  `_migrate()` that adds the new columns to existing databases.
+
+### Fixed
+- **The bot would close positions it did not open.** The old `_check_open_positions`
+  called `tc.close_position(ticker)` for *any* symbol in `TICKERS`, liquidating the
+  entire position — including shares a human or another strategy opened. It also
+  called `close_trade(...)` with a mismatched signature (ticker passed as the row id).
+
+### Changed
+- **Closing is now strictly bot-owned and partial-safe.** The bot only inspects
+  trades it recorded, verifies ownership via the entry order's `client_order_id`
+  (failing **closed** — if ownership can't be proven, the position is left alone),
+  cancels only its own bracket legs, and sells only the quantity it opened (any
+  non-bot shares of the same symbol are left untouched).
+- Entry de-duplication now keys off this bot's own open DB trade, and the bot will
+  not stack onto a pre-existing untracked position.
+
 ## [0.1.0] - 2026-06-13
 
 First versioned release. Establishes the email/duplicate fixes and the
@@ -47,3 +79,4 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
