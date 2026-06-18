@@ -20,6 +20,12 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.5.1] - 2026-06-18
+
+### Changed
+- Bot loop now enforces trading hours: `run_once` is skipped outside 08:30–17:00 ET; loop continues heartbeating so manage.ps1 health checks pass
+
 ## [0.5.0] - 2026-06-14
 
 ### Added
@@ -161,6 +167,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

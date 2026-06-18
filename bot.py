@@ -13,7 +13,8 @@ import argparse
 import sys
 import time
 import uuid
-from datetime import datetime, date, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta, time as dtime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pandas as pd
@@ -470,13 +471,27 @@ def _close_owned(tc, trade: dict, pos, reason: str):
     )
 
 
+_ET = ZoneInfo("America/New_York")
+_MARKET_OPEN  = dtime(8, 30)
+_MARKET_CLOSE = dtime(17, 0)
+
+
+def _in_trading_hours() -> bool:
+    now_et = datetime.now(_ET).time().replace(second=0, microsecond=0)
+    return _MARKET_OPEN <= now_et < _MARKET_CLOSE
+
+
 def run_loop(strategy: StrategyType, interval_minutes: int = 30):
-    """Run bot in continuous loop."""
+    """Run bot in continuous loop, active only 08:30–17:00 ET."""
     log.info("Starting Bot V2 loop — %s every %d min", strategy.value, interval_minutes)
     while True:
-        runtime.heartbeat(SERVICE)  # mark "alive & looping" for manage.ps1 health checks
-        run_once(strategy)
         runtime.heartbeat(SERVICE)
+        if _in_trading_hours():
+            run_once(strategy)
+            runtime.heartbeat(SERVICE)
+        else:
+            now_et = datetime.now(_ET)
+            log.info("Outside trading hours (%s ET) — skipping run", now_et.strftime("%H:%M"))
         log.info("Sleeping %d minutes...", interval_minutes)
         time.sleep(interval_minutes * 60)
 
