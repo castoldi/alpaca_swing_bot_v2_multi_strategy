@@ -39,14 +39,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root    = Split-Path -Parent $PSScriptRoot
 $RunDir  = Join-Path $Root 'run'
-$Python  = Join-Path $Root '.venv\Scripts\python.exe'
+$Pythonw = Join-Path $Root '.venv\Scripts\pythonw.exe'
+$Python  = if (Test-Path $Pythonw) { $Pythonw } else { Join-Path $Root '.venv\Scripts\python.exe' }
 $LogsDir = Join-Path $Root 'logs'
 $DashUrl = "http://localhost:$Port"
 
 if (-not (Test-Path $RunDir))  { New-Item -ItemType Directory -Path $RunDir  | Out-Null }
 if (-not (Test-Path $LogsDir)) { New-Item -ItemType Directory -Path $LogsDir | Out-Null }
 if (-not (Test-Path $Python)) {
-    Write-Host "WARNING: venv python not found at $Python — falling back to 'python'" -ForegroundColor Yellow
+    Write-Host "WARNING: venv pythonw not found at $Python — falling back to 'python'" -ForegroundColor Yellow
     $Python = 'python'
 }
 
