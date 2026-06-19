@@ -21,7 +21,7 @@ import pandas as pd
 
 from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
-from strategy import add_indicators, get_entry_checker, simulate_exit, is_tp_reachable_in_days, split_qty
+from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days, split_qty
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
@@ -189,7 +189,7 @@ def run_once(strategy: StrategyType) -> int:
     error = None
 
     try:
-        entry_checker = get_entry_checker(strategy)
+        strat_obj = REGISTRY[strat_name]
 
         for ticker in TICKERS:
             log.info("Checking %s...", ticker)
@@ -203,7 +203,7 @@ def run_once(strategy: StrategyType) -> int:
             today = df.index[idx]
 
             # Check for entry signal
-            sig = entry_checker(df, idx, PARAMS)
+            sig = strat_obj.check_entry(df, idx, PARAMS)
             if sig is not None:
                 trades_found += 1
                 log.info("  SIGNAL: %s entry at $%.2f (SL $%.2f / TP $%.2f)",

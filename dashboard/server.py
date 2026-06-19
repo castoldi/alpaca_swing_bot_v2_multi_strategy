@@ -126,6 +126,23 @@ async def strategy_examples(refresh: bool = False):
         return JSONResponse({"error": str(e), "examples": {}}, status_code=500)
 
 
+@app.get("/api/strategies")
+async def get_strategies():
+    """All registered strategies with metadata and latest backtest P&L per year."""
+    from strategies import get_all
+    bt_results = db_mod.get_backtest_results()
+    pnl: dict[str, dict[int, float]] = {}
+    for r in bt_results:
+        pnl.setdefault(r["strategy"], {})[r["year"]] = r["total_pnl"]
+
+    out = []
+    for strat in get_all():
+        m = strat.meta()
+        m["pnl"] = pnl.get(strat.name, {})
+        out.append(m)
+    return {"strategies": out}
+
+
 @app.get("/api/experiments")
 async def experiments(limit: int = Query(50, ge=1, le=200)):
     return {"experiments": db_mod.get_experiments(limit)}

@@ -135,43 +135,27 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 </div>
 
 <script>
-const STRATEGIES = [
-  {
-    id: 'trend_pullback', name: 'Trend Pullback', type: 'V1',
-    entry: 'Price above SMA(50). RSI dipped below 55 in recent bars, then a bounce bar (close > open, close > prev close, rising RSI). Skips entries 3 days before earnings to avoid gap risk.',
-    params: ['SL 10%', 'TP 2×ATR [3%–8%]', 'Time stop 5d if breakeven+', 'Earnings filter'],
-  },
-  {
-    id: 'breakout', name: 'Breakout', type: 'V1',
-    entry: 'Price breaks above the 20-bar high with ≥1.5× average volume. Price above SMA(50). RSI above 50 and rising. Range filter rejects abnormally wide days.',
-    params: ['SL 8%', 'TP 3×ATR [5%–15%]', 'Time stop 7d if breakeven+', 'Volume 1.5×'],
-  },
-  {
-    id: 'mean_reversion', name: 'Mean Reversion', type: 'V1',
-    entry: 'Price above SMA(50) but below SMA(20) (pullback). RSI pulled back below 50. Price near or below Bollinger lower band (2.2σ). Bounce confirmed by close > prev close.',
-    params: ['SL 7%', 'TP 1.5×ATR [1.5%–5%]', 'Time stop 3d if breakeven+', 'Bollinger 2.2σ'],
-  },
-  {
-    id: 'momentum_macd', name: 'MACD Momentum', type: 'V2',
-    entry: 'MACD histogram just crossed above zero (fresh bullish cross). RSI above 50 and rising. Price above both SMA(20) and SMA(50). Not on very low volume (<0.7× avg).',
-    params: ['SL 9%', 'TP 2.5×ATR [4%–12%]', 'Time stop 6d if breakeven+', 'MACD(12,26,9)'],
-  },
-  {
-    id: 'ensemble', name: 'Ensemble', type: 'V2',
-    entry: 'Weighted vote of all 5 base strategies must score ≥ 0.30. Weights: Regime 35%, MACD 25%, Trend 20%, Breakout 15%, Mean Rev 5%. Enters only when multiple strategies agree.',
-    params: ['SL 9%', 'TP 2.5×ATR [4%–12%]', 'Time stop 6d if breakeven+', 'Score ≥ 0.30'],
-  },
-  {
-    id: 'regime', name: 'Regime Adaptive', type: 'V2',
-    entry: 'Detects market regime via EMA(10)/EMA(50) cross. Risk-on: buy dips in strong uptrends. Risk-off: defensive oversold bounces only. Neutral: standard trend-pullback style.',
-    params: ['SL adaptive', 'TP 2×ATR [3%–8%]', 'Time stop 5d if breakeven+', 'EMA(10/50)'],
-  },
-];
-
-const STRAT_COLORS = {
+// Strategy metadata and colors — populated from /api/strategies at boot.
+// Defaults cover the home tab before the async load completes.
+let STRAT_COLORS = {
   trend_pullback:'#60a5fa', breakout:'#f59e0b', mean_reversion:'#a78bfa',
   momentum_macd:'#34d399', ensemble:'#f472b6', regime:'#fb923c',
 };
+let _strategiesCache = null;  // set by loadStrategies()
+
+async function loadStrategies() {
+  if (_strategiesCache) return _strategiesCache;
+  try {
+    const data = await api('/api/strategies');
+    _strategiesCache = data.strategies || [];
+    for (const s of _strategiesCache) STRAT_COLORS[s.name] = s.color;
+  } catch(_) {
+    _strategiesCache = [];
+  }
+  return _strategiesCache;
+}
+// Kick off early so colors are ready when home loads.
+loadStrategies();
 
 // ── Nav tab switching ──────────────────────────────────────────────────────────
 document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -352,38 +336,42 @@ async function loadBacktestHistory() {
 async function renderStrategies() {
   document.getElementById('stratGrid').innerHTML = '<div class="loading">Loading...</div>';
 
-  let pnlByStrat = {}; // { strategy: { 2024: x, 2025: x, 2026: x } }
-  try {
-    const bt = await api('/api/backtest-results');
-    for (const r of (bt.results||[])) {
-      if (!pnlByStrat[r.strategy]) pnlByStrat[r.strategy] = {};
-      pnlByStrat[r.strategy][r.year] = r.total_pnl;
-    }
-  } catch(_) {}
+  const strategies = await loadStrategies();
+  if (!strategies.length) {
+    document.getElementById('stratGrid').innerHTML = '<div class="error">Could not load strategies from /api/strategies</div>';
+    return;
+  }
 
-  // Strategy cards
-  const cards = STRATEGIES.map(s => {
-    const color = STRAT_COLORS[s.id] || '#8892a4';
-    const pnl = pnlByStrat[s.id] || {};
-    const years = [2024, 2025, 2026];
-    const total = years.reduce((sum, y) => sum + (pnl[y]||0), 0);
+  const pnlByStrat = {};
+  for (const s of strategies) pnlByStrat[s.name] = s.pnl || {};
+
+  const years = [2024, 2025, 2026];
+
+  const cards = strategies.map(s => {
+    const color = s.color || '#8892a4';
+    const pnl = pnlByStrat[s.name] || {};
+    const total = years.reduce((sum, y) => sum + (pnl[y] || 0), 0);
 
     const pnlCells = years.map(y => {
       const v = pnl[y];
-      return `<div class="pnl-cell"><div class="yr">${y}</div><div class="amt ${v!=null?pnlClass(v):''}">${v!=null?fmt$(v):'—'}</div></div>`;
+      return `<div class="pnl-cell"><div class="yr">${y}</div><div class="amt ${v != null ? pnlClass(v) : ''}">${v != null ? fmt$(v) : '—'}</div></div>`;
     }).join('');
 
-    const chips = s.params.map(p => `<span class="param-chip">${p}</span>`).join('');
+    const chips = (s.params_display || []).map(p => `<span class="param-chip">${p}</span>`).join('');
+    const disabledBanner = !s.enabled
+      ? `<div style="font-size:11px;color:#ef4444;padding:3px 8px;background:#ef444415;border-radius:5px;margin-bottom:4px">⏸ Disabled — remove from ENABLED_STRATEGIES in config.py to re-enable</div>`
+      : '';
 
     return `
-      <div class="strat-card" style="border-left:3px solid ${color}">
+      <div class="strat-card" style="border-left:3px solid ${color}${!s.enabled ? ';opacity:0.55' : ''}">
+        ${disabledBanner}
         <div class="strat-header">
-          <span class="strat-name">${s.name}</span>
-          <span class="strat-badge ${s.type.toLowerCase()}">${s.type}</span>
+          <span class="strat-name">${s.label}</span>
+          <span class="strat-badge ${(s.version || 'v1').toLowerCase()}">${s.version || 'V1'}</span>
         </div>
-        <div class="strat-entry">${s.entry}</div>
+        <div class="strat-entry">${s.description}</div>
         <div class="strat-params">${chips}</div>
-        <div class="strat-charts" id="charts-${s.id}">
+        <div class="strat-charts" id="charts-${s.name}">
           <div class="strat-charts-title"><span class="tf-label">Recent setups</span>
             <span class="chart-legend">
               <span><i style="border-color:#60a5fa"></i>Entry</span>
@@ -391,40 +379,40 @@ async function renderStrategies() {
               <span><i style="border-color:#ef4444"></i>SL</span>
             </span>
           </div>
-          <div class="strat-chart" id="chart-${s.id}-0"><div class="mini-empty">Loading chart…</div></div>
-          <div class="strat-chart" id="chart-${s.id}-1"><div class="mini-empty">Loading chart…</div></div>
+          <div class="strat-chart" id="chart-${s.name}-0"><div class="mini-empty">Loading chart…</div></div>
+          <div class="strat-chart" id="chart-${s.name}-1"><div class="mini-empty">Loading chart…</div></div>
         </div>
         <div class="strat-pnl">
           ${pnlCells}
           <div class="pnl-cell" style="grid-column:span 3;border-top:1px solid #252830;padding-top:8px;margin-top:4px">
             <div class="yr">3-Year Total</div>
-            <div class="amt" style="font-size:16px" class="${pnlClass(total)}">${fmt$(total)}</div>
+            <div class="amt ${pnlClass(total)}" style="font-size:16px">${fmt$(total)}</div>
           </div>
         </div>
       </div>`;
   }).join('');
-  document.getElementById('stratGrid').innerHTML = cards;
-  loadStrategyCharts();  // fire-and-forget; fills in the per-strategy candlesticks
 
-  // Summary table
-  const sorted = [...STRATEGIES].sort((a, b) => {
-    const totA = [2024,2025,2026].reduce((s,y) => s+(pnlByStrat[a.id]?.[y]||0), 0);
-    const totB = [2024,2025,2026].reduce((s,y) => s+(pnlByStrat[b.id]?.[y]||0), 0);
+  document.getElementById('stratGrid').innerHTML = cards;
+  loadStrategyCharts(strategies);
+
+  // Summary table — sorted by 3-year total
+  const sorted = [...strategies].sort((a, b) => {
+    const totA = years.reduce((s, y) => s + (pnlByStrat[a.name]?.[y] || 0), 0);
+    const totB = years.reduce((s, y) => s + (pnlByStrat[b.name]?.[y] || 0), 0);
     return totB - totA;
   });
   document.getElementById('stratTable').innerHTML = tableHtml(
-    ['Rank','Strategy','Type','2024','2025','2026','3-Year Total'],
+    ['Rank', 'Strategy', 'Type', '2024', '2025', '2026', '3-Year Total'],
     sorted.map((s, i) => {
-      const pnl = pnlByStrat[s.id] || {};
-      const total = [2024,2025,2026].reduce((sum,y) => sum+(pnl[y]||0), 0);
-      const color = STRAT_COLORS[s.id] || '#8892a4';
+      const pnl = pnlByStrat[s.name] || {};
+      const total = years.reduce((sum, y) => sum + (pnl[y] || 0), 0);
       return [
-        `<span style="color:#6b7280">#${i+1}</span>`,
-        `<span style="color:${color};font-weight:600">${s.name}</span>`,
-        `<span class="strat-badge ${s.type.toLowerCase()}">${s.type}</span>`,
-        `<span class="${pnlClass(pnl[2024])}">${pnl[2024]!=null?fmtFull$(pnl[2024]):'—'}</span>`,
-        `<span class="${pnlClass(pnl[2025])}">${pnl[2025]!=null?fmtFull$(pnl[2025]):'—'}</span>`,
-        `<span class="${pnlClass(pnl[2026])}">${pnl[2026]!=null?fmtFull$(pnl[2026]):'—'}</span>`,
+        `<span style="color:#6b7280">#${i + 1}</span>`,
+        `<span style="color:${s.color};font-weight:600">${s.label}</span>`,
+        `<span class="strat-badge ${(s.version || 'v1').toLowerCase()}">${s.version || 'V1'}</span>`,
+        `<span class="${pnlClass(pnl[2024])}">${pnl[2024] != null ? fmtFull$(pnl[2024]) : '—'}</span>`,
+        `<span class="${pnlClass(pnl[2025])}">${pnl[2025] != null ? fmtFull$(pnl[2025]) : '—'}</span>`,
+        `<span class="${pnlClass(pnl[2026])}">${pnl[2026] != null ? fmtFull$(pnl[2026]) : '—'}</span>`,
         `<span class="${pnlClass(total)}" style="font-weight:700">${fmtFull$(total)}</span>`,
       ];
     })
@@ -434,13 +422,13 @@ async function renderStrategies() {
 // ── STRATEGY EXAMPLE CHARTS ────────────────────────────────────────────────────
 let _exCache = null;  // examples are stable for hours; fetch once per page load
 
-async function loadStrategyCharts() {
+async function loadStrategyCharts(strategies) {
   let data;
   try {
     data = _exCache || (_exCache = await api('/api/strategy-examples'));
   } catch (e) {
-    for (const s of STRATEGIES) for (let i = 0; i < 2; i++) {
-      const el = document.getElementById(`chart-${s.id}-${i}`);
+    for (const s of (strategies || [])) for (let i = 0; i < 2; i++) {
+      const el = document.getElementById(`chart-${s.name}-${i}`);
       if (el) el.innerHTML = '<div class="mini-empty">Charts unavailable</div>';
     }
     return;
@@ -448,9 +436,9 @@ async function loadStrategyCharts() {
   const examples = (data && data.examples) || {};
   const tf = (data && data.timeframe) || '4h';
   document.querySelectorAll('.tf-label').forEach(e => { e.textContent = `Recent ${tf} setups`; });
-  for (const s of STRATEGIES) {
-    const list = examples[s.id] || [];
-    for (let i = 0; i < 2; i++) renderMiniChart(`chart-${s.id}-${i}`, list[i]);
+  for (const s of (strategies || [])) {
+    const list = examples[s.name] || [];
+    for (let i = 0; i < 2; i++) renderMiniChart(`chart-${s.name}-${i}`, list[i]);
   }
 }
 

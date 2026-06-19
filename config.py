@@ -135,6 +135,16 @@ class StrategyParams:
 
 PARAMS = StrategyParams()
 
+# Strategies that are active. Remove a name to disable it in the bot and backtests.
+ENABLED_STRATEGIES: set[str] = {
+    "trend_pullback",
+    "breakout",
+    "mean_reversion",
+    "momentum_macd",
+    "regime",
+    "ensemble",
+}
+
 
 # --- Alpaca credentials ------------------------------------------------------
 ALPACA_KEY: str | None = os.getenv("ALPACA_KEY")

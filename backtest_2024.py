@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import PARAMS, TICKERS, StrategyType
+from config import PARAMS, TICKERS, BAR_TIMEFRAME
 from logger_setup import get_logger
-from strategy import Trade, backtest_ticker
+from strategies import REGISTRY, get_enabled, Trade, backtest_ticker
 from dashboard import db as db_mod
 from backtest_2025 import download_history, apply_portfolio_cap, compute_stats, compute_max_drawdown
 from build_report_2025 import build_report_2025
@@ -41,22 +41,15 @@ def run_full_backtest() -> int:
             continue
         ticker_data[tk] = df
 
-    v2_strategies = [
-        StrategyType.TREND_PULLBACK,
-        StrategyType.BREAKOUT,
-        StrategyType.MEAN_REVERSION,
-        StrategyType.MOMENTUM_MACD,
-        StrategyType.ENSEMBLE,
-        StrategyType.REGIME_ADAPTIVE,
-    ]
+    strategies_to_run = get_enabled()
 
     strategy_results = {}
     per_strategy_details = {}
     overall_best = None
     best_pnl = float("-inf")
 
-    for strategy in v2_strategies:
-        strat_name = strategy.value
+    for strategy in strategies_to_run:
+        strat_name = strategy.name
         log.info("=" * 50)
         log.info("Running strategy: %s", strat_name)
         log.info("=" * 50)
@@ -64,7 +57,7 @@ def run_full_backtest() -> int:
         per_ticker: dict[str, tuple[pd.DataFrame, list[Trade]]] = {}
         all_candidate_trades: list[Trade] = []
 
-        bt_id = db_mod.start_backtest_run(2024, strat_name)
+        bt_id = db_mod.start_backtest_run(2024, strat_name, BAR_TIMEFRAME)
 
         for tk in TICKERS:
             df = ticker_data.get(tk)
@@ -112,5 +105,42 @@ def run_full_backtest() -> int:
     return 0
 
 
+def run_single(strategy_name: str) -> int:
+    if strategy_name not in REGISTRY:
+        log.error("Unknown strategy '%s'. Available: %s", strategy_name, list(REGISTRY.keys()))
+        return 1
+    strat = REGISTRY[strategy_name]
+    log.info("Single-strategy backtest: %s (2024)", strat.name)
+    ticker_data: dict[str, pd.DataFrame] = {}
+    for tk in TICKERS:
+        df = download_history(tk, BACKTEST_START, BACKTEST_END)
+        ticker_data[tk] = df if not df.empty and len(df) >= PARAMS.sma_slow + 5 else pd.DataFrame()
+    bt_id = db_mod.start_backtest_run(2024, strat.name, BAR_TIMEFRAME)
+    all_trades: list[Trade] = []
+    per_ticker: dict = {}
+    for tk in TICKERS:
+        df = ticker_data.get(tk)
+        if df is None or df.empty:
+            continue
+        trades = backtest_ticker(df, tk, pd.Timestamp(BACKTEST_START), PARAMS, strat)
+        all_trades.extend(trades)
+        per_ticker[tk] = (df, trades)
+    capped, _ = apply_portfolio_cap(all_trades, PARAMS.dollars_per_trade, PARAMS.max_concurrent_capital)
+    stats = compute_stats(capped)
+    dd = compute_max_drawdown(capped)
+    pf = stats["profit_factor"]
+    db_mod.finish_backtest_run(bt_id, stats["trades"], stats["win_rate"],
+                               stats["total_pnl"], pf if pf != float("inf") else 999.0, dd, 0.0)
+    log.info("%s: %d trades, WR=%.1f%%, P&L=%+.2f",
+             strat.name, stats["trades"], stats["win_rate"] * 100, stats["total_pnl"])
+    return 0
+
+
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="2024 multi-strategy backtest")
+    parser.add_argument("--strategy", type=str, help="Run a single strategy by name")
+    args = parser.parse_args()
+    if args.strategy:
+        sys.exit(run_single(args.strategy))
     sys.exit(run_full_backtest())

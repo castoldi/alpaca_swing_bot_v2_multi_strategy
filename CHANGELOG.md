@@ -21,6 +21,21 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.6.0] - 2026-06-18
+
+### Added
+- **`strategies/` package** — each strategy is now its own file with a `BaseStrategy` ABC interface (`strategies/base.py`). New files: `trend_pullback.py`, `breakout.py`, `mean_reversion.py`, `momentum_macd.py`, `regime_adaptive.py`, `ensemble.py`.
+- **Strategy registry** (`strategies/__init__.py`) — `REGISTRY` dict maps name → instance; `get_enabled()` / `get_all()` / `get_strategy(name)` helpers. `strategy.py` is now a backwards-compat shim re-exporting everything.
+- **`ENABLED_STRATEGIES` in `config.py`** — remove a strategy name from this set to disable it in both the bot and backtests without touching any other code.
+- **`GET /api/strategies`** — returns all registered strategies with metadata (label, version, color, description, params_display, enabled) + latest backtest P&L per year.
+- **`--strategy` flag for all three backtest scripts** — `python backtest_2025.py --strategy breakout` runs and logs only that strategy.
+
+### Changed
+- Dashboard Strategies tab is now driven by `/api/strategies` (no longer hardcoded JS). Disabled strategies render with a banner and reduced opacity.
+- All backtest scripts iterate `get_enabled()` instead of a hardcoded `StrategyType` list.
+- `bot.py` uses `REGISTRY[strat_name].check_entry(...)` instead of `get_entry_checker`.
+
 ## [0.5.1] - 2026-06-18
 
 ### Changed
@@ -167,6 +182,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
