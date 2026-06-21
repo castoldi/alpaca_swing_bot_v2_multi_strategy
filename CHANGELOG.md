@@ -22,6 +22,19 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.7.0] - 2026-06-21
+
+### Added
+- `keep_alive.py`: windowless watchdog (pythonw) that checks bot + dashboard health every 30 min and restarts via `manage.ps1` if either is down. Healthy = no action. Logs to `logs/keepalive.log`.
+- `scripts/setup_keepalive_task.ps1`: one-shot Admin script to register `AlpacaSwingBotKeepAlive` Windows Scheduled Task (every 30 min, `IgnoreNew`, 10-min execution limit).
+- `docs/keepalive.md`: AI instruction doc for the watchdog system.
+- `requirements.txt`: added `psutil>=5.9.0` (used by keep_alive.py).
+
+### Fixed
+
+### Changed
+
 ## [0.6.0] - 2026-06-18
 
 ### Added
@@ -182,6 +195,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
