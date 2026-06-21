@@ -140,6 +140,37 @@ Health model: bot = pid alive AND heartbeat fresh within ~2 intervals; dashboard
 - **Windows venv**: `.venv\Scripts\activate` (not `source .venv/Scripts/activate`).
 - **DB empty**: backtests write results to `dashboard/swing_bot_v2.db` — run them before opening the dashboard.
 
+## Keep-alive watchdog
+
+> Full doc: [docs/keepalive.md](docs/keepalive.md)
+
+`keep_alive.py` runs every 30 minutes via Windows Task Scheduler using `pythonw.exe` (no window). It checks bot + dashboard health and calls `manage.ps1` to restart whichever is down. If both are healthy it exits silently in under one second.
+
+**One-time setup (Admin PowerShell — do this once per machine):**
+
+```powershell
+pwsh scripts\setup_keepalive_task.ps1          # register task
+Start-ScheduledTask -TaskName AlpacaSwingBotKeepAlive   # fire immediately to test
+Get-ScheduledTaskInfo -TaskName AlpacaSwingBotKeepAlive  # confirm LastRunTime + LastTaskResult=0
+```
+
+**Logs** (git-ignored):
+
+```powershell
+Get-Content logs\keepalive.log -Tail 50        # watchdog decisions
+Get-Content logs\keepalive_manage.log -Tail 50 # manage.ps1 output from restarts
+```
+
+**Remove task:**
+
+```powershell
+pwsh scripts\setup_keepalive_task.ps1 -Unregister
+```
+
+**AI rules for this system:**
+- Never edit `keep_alive.py` to start the bot directly — always delegate to `manage.ps1`.
+- The heartbeat max-age formula `(interval * 2 * 60 + 300)` in `keep_alive.py` must match `manage.ps1 Get-BotHealth`. Change both together.
+
 ## Research loop
 
 1. Edit `strategy.py` (new signal or param tweak)
