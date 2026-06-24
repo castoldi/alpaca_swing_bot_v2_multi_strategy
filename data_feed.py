@@ -94,5 +94,69 @@ def fetch_recent_4h(ticker: str, days: int = 120) -> pd.DataFrame:
     return fetch_4h(ticker, start, end)
 
 
+def fetch_snapshots(tickers: list[str]) -> dict:
+    """Live per-ticker market snapshot for the dashboard.
+
+    Uses Alpaca's snapshot endpoint (one request for the whole universe): latest
+    trade price, today's daily bar, and the previous daily bar (for day change %).
+
+    Returns ``{symbol: {price, prev_close, change, change_pct, day_high, day_low,
+    day_open, volume, ts}}``. Missing/failed symbols are simply absent.
+    """
+    if not tickers:
+        return {}
+    try:
+        from alpaca.data.requests import StockSnapshotRequest
+        try:
+            from alpaca.data.enums import DataFeed
+            extra = {"feed": DataFeed.IEX}
+        except Exception:
+            extra = {}
+        req = StockSnapshotRequest(symbol_or_symbols=list(tickers), **extra)
+        snaps = _get_client().get_stock_snapshot(req)
+    except Exception as e:
+        log.warning("fetch_snapshots failed: %s", e)
+        return {}
+
+    out: dict[str, dict] = {}
+    for sym, snap in (snaps or {}).items():
+        if snap is None:
+            continue
+        try:
+            daily = getattr(snap, "daily_bar", None)
+            prev = getattr(snap, "previous_daily_bar", None)
+            trade = getattr(snap, "latest_trade", None)
+
+            price = None
+            if trade is not None and getattr(trade, "price", None):
+                price = float(trade.price)
+            elif daily is not None and getattr(daily, "close", None):
+                price = float(daily.close)
+            if price is None:
+                continue
+
+            prev_close = float(prev.close) if prev is not None and getattr(prev, "close", None) else None
+            change = change_pct = None
+            if prev_close:
+                change = price - prev_close
+                change_pct = change / prev_close * 100.0
+
+            ts = getattr(trade, "timestamp", None) or getattr(daily, "timestamp", None)
+            out[sym] = {
+                "price": round(price, 2),
+                "prev_close": round(prev_close, 2) if prev_close else None,
+                "change": round(change, 2) if change is not None else None,
+                "change_pct": round(change_pct, 2) if change_pct is not None else None,
+                "day_high": round(float(daily.high), 2) if daily and getattr(daily, "high", None) else None,
+                "day_low": round(float(daily.low), 2) if daily and getattr(daily, "low", None) else None,
+                "day_open": round(float(daily.open), 2) if daily and getattr(daily, "open", None) else None,
+                "volume": int(daily.volume) if daily and getattr(daily, "volume", None) else None,
+                "ts": ts.isoformat() if ts is not None else None,
+            }
+        except Exception as e:
+            log.debug("snapshot parse failed for %s: %s", sym, e)
+    return out
+
+
 # Convenience so callers can label what they ran on without importing config.
 TIMEFRAME = BAR_TIMEFRAME

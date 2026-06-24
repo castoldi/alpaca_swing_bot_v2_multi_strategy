@@ -16,12 +16,18 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 _Changes landed but not yet released under a new version number go here._
 
+## [0.8.0] - 2026-06-24
 
+### Added
+- **Dashboard live bot status hero**: RUNNING / HUNG / STOPPED indicator (pulsing dot) with strategy, loop interval, last-loop age, uptime, PID, and whether the bot is inside its 08:30–17:00 ET trading window. Backed by new `/api/bot-status`.
+- **Live account panel**: Alpaca equity, day P&L ($ and %), buying power, and cash via new `/api/account`.
+- **Live Universe board**: per-ticker last price + day change (%) for the watched symbols, with a "held" badge when the bot has an open position. Includes a real Alpaca market-clock pill (open/closed + next open/close). Backed by new `/api/market` (+ `data_feed.fetch_snapshots`).
+- **Bot Orders @ Alpaca table**: only orders the bot placed (filtered by the `swingv2` client-order-id prefix), colour-coded by leg (entry/TP/stop/exit) with fill price and status — proof of opens/closes straight from the broker. Backed by new `/api/bot-orders`.
+- **Open Positions** now render live from Alpaca with unrealized P&L ($ and %) instead of DB entry levels.
+- `runtime.read_status()`: single-source bot health readout (mirrors the `manage.ps1` / `keep_alive.py` heartbeat-freshness formula).
 
-
-
-
-
+### Changed
+- Home dashboard refreshes live status/quotes every 15s (backtest tables stay on 30s).
 
 ## [0.7.0] - 2026-06-21
 
@@ -195,6 +201,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

@@ -80,7 +80,37 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 .strat-chart{width:100%;height:180px;background:#0f1117;border:1px solid #2a2d35;border-radius:8px;overflow:hidden}
 .mini-empty{display:flex;align-items:center;justify-content:center;height:100%;color:#6b7280;font-size:11px}
 
-@media(max-width:768px){.container{padding:12px}.kpis{grid-template-columns:repeat(2,1fr)}td,th{padding:8px 10px;font-size:12px}.strat-grid{grid-template-columns:1fr}}
+/* ── Bot status hero ── */
+.hero{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;margin-bottom:20px}
+.hero-card{background:linear-gradient(135deg,#1a1d27,#13151f);border:1px solid #2a2d35;border-radius:14px;padding:18px 20px}
+.hero-top{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.status-dot{width:12px;height:12px;border-radius:50%;flex:none;position:relative}
+.status-dot.on{background:#22c55e;box-shadow:0 0 0 0 #22c55e99;animation:pulse 2s infinite}
+.status-dot.off{background:#ef4444}
+.status-dot.warn{background:#f59e0b}
+@keyframes pulse{0%{box-shadow:0 0 0 0 #22c55e80}70%{box-shadow:0 0 0 8px #22c55e00}100%{box-shadow:0 0 0 0 #22c55e00}}
+.status-word{font-size:22px;font-weight:800;letter-spacing:.01em}
+.status-meta{font-size:12px;color:#8892a4;margin-left:auto;text-align:right;line-height:1.5}
+.hero-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px}
+.hero-stat .k{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280}
+.hero-stat .v{font-size:15px;font-weight:700;margin-top:2px}
+.clock-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.mkt-pill{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.04em}
+.mkt-open{background:#22c55e20;color:#22c55e;border:1px solid #22c55e40}
+.mkt-closed{background:#6b728020;color:#9aa3b2;border:1px solid #6b728040}
+
+/* ── Live universe board ── */
+.universe{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:8px}
+.tkr{background:#161822;border:1px solid #2a2d35;border-radius:10px;padding:12px 14px;position:relative;overflow:hidden}
+.tkr.held{border-color:#60a5fa55}
+.tkr .sym{font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px}
+.tkr .px{font-size:18px;font-weight:700;margin-top:4px}
+.tkr .chg{font-size:12px;font-weight:600;margin-top:2px}
+.tkr .spark{position:absolute;right:0;bottom:0;opacity:.5}
+.held-tag{font-size:9px;font-weight:700;background:#60a5fa20;color:#60a5fa;border:1px solid #60a5fa40;padding:1px 5px;border-radius:4px;text-transform:uppercase}
+.kind-chip{font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;text-transform:uppercase;letter-spacing:.03em}
+
+@media(max-width:768px){.container{padding:12px}.kpis{grid-template-columns:repeat(2,1fr)}td,th{padding:8px 10px;font-size:12px}.strat-grid{grid-template-columns:1fr}.hero{grid-template-columns:1fr}.universe{grid-template-columns:repeat(2,1fr)}}
 </style>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 </head>
@@ -105,10 +135,35 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
   <!-- ══ HOME ══ -->
   <div id="page-home" class="page active">
 
+    <!-- Bot status + market clock hero -->
+    <div id="hero" class="hero">
+      <div class="hero-card">
+        <div class="hero-top">
+          <span class="status-dot off" id="botDot"></span>
+          <span class="status-word" id="botWord">—</span>
+          <span class="status-meta" id="botMeta"></span>
+        </div>
+        <div class="hero-stats" id="botStats"></div>
+      </div>
+      <div class="hero-card">
+        <div class="clock-row">
+          <span class="mkt-pill mkt-closed" id="mktPill">Market —</span>
+          <span class="status-meta" id="mktMeta" style="margin-left:auto"></span>
+        </div>
+        <div class="hero-stats" id="acctStats"><div class="loading" style="padding:8px">Loading account…</div></div>
+      </div>
+    </div>
+
     <div id="kpis" class="kpis"><div class="loading">Loading...</div></div>
 
-    <div class="section-title">Open Positions</div>
+    <div class="section-title">Live Universe <span class="hint">(what the bot watches)</span></div>
+    <div id="universe" class="universe"><div class="loading">Loading quotes…</div></div>
+
+    <div class="section-title">Open Positions <span class="hint">(live from Alpaca)</span></div>
     <div id="positions"><div class="loading">Loading positions...</div></div>
+
+    <div class="section-title">Bot Orders @ Alpaca <span class="hint">(only orders tagged <code>swingv2</code>)</span></div>
+    <div id="botOrders"><div class="loading">Loading bot orders...</div></div>
 
     <div class="section-title">Recent Trades</div>
     <div id="trades"><div class="loading">Loading trades...</div></div>
@@ -185,6 +240,170 @@ async function api(url) {
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
+function fmtAgo(sec) {
+  if (sec == null) return '—';
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec/60)}m ${sec%60}s ago`;
+  return `${Math.floor(sec/3600)}h ${Math.floor((sec%3600)/60)}m ago`;
+}
+function fmtDur(sec) {
+  if (sec == null) return '—';
+  const d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600), m = Math.floor((sec%3600)/60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+function fmtPct(v) {
+  if (v == null || isNaN(v)) return '—';
+  return (v >= 0 ? '+' : '') + parseFloat(v).toFixed(2) + '%';
+}
+function fmtClock(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' });
+}
+
+// ── LIVE: bot status, account, universe, positions, bot orders ─────────────────
+const KIND_COLORS = { entry:'#60a5fa', tp1:'#22c55e', tp2:'#22c55e', tp3:'#22c55e',
+                      stop:'#ef4444', exit:'#f59e0b' };
+
+async function loadLive() {
+  // Each block is independent — settle them so one failure doesn't blank the rest.
+  const [statusR, acctR, marketR, posR, ordR] = await Promise.allSettled([
+    api('/api/bot-status'),
+    api('/api/account'),
+    api('/api/market'),
+    api('/api/positions'),
+    api('/api/bot-orders?limit=40'),
+  ]);
+
+  // Held tickers (for universe badges + position table) — from live Alpaca positions.
+  const positions = posR.status === 'fulfilled' ? (posR.value.positions || []) : [];
+  const heldSet = new Set(positions.map(p => p.ticker));
+
+  renderBotStatus(statusR.status === 'fulfilled' ? statusR.value : null,
+                  marketR.status === 'fulfilled' ? marketR.value : null);
+  renderAccount(acctR.status === 'fulfilled' ? acctR.value : null);
+  renderUniverse(marketR.status === 'fulfilled' ? marketR.value : null, heldSet);
+  renderPositions(positions);
+  renderBotOrders(ordR.status === 'fulfilled' ? ordR.value : null);
+}
+
+function renderBotStatus(st, market) {
+  const dot = document.getElementById('botDot');
+  const word = document.getElementById('botWord');
+  const meta = document.getElementById('botMeta');
+  const stats = document.getElementById('botStats');
+  if (!st) { word.textContent = 'UNKNOWN'; dot.className = 'status-dot warn'; return; }
+
+  if (st.healthy)      { dot.className = 'status-dot on';   word.textContent = 'RUNNING'; word.style.color = '#22c55e'; }
+  else if (st.running) { dot.className = 'status-dot warn'; word.textContent = 'HUNG';    word.style.color = '#f59e0b'; }
+  else                 { dot.className = 'status-dot off';  word.textContent = 'STOPPED'; word.style.color = '#ef4444'; }
+
+  meta.innerHTML = `${st.reason || ''}${st.bot_window_open ? ' · in trading window' : ' · outside trading window'}`;
+
+  let uptime = '—';
+  if (st.started_at) { const s = Math.floor((Date.now() - new Date(st.started_at)) / 1000); uptime = fmtDur(s); }
+
+  stats.innerHTML = `
+    <div class="hero-stat"><div class="k">Strategy</div><div class="v" style="color:${STRAT_COLORS[st.strategy]||'#e1e7ef'}">${st.strategy||'—'}</div></div>
+    <div class="hero-stat"><div class="k">Interval</div><div class="v">${st.interval||'—'}m</div></div>
+    <div class="hero-stat"><div class="k">Last loop</div><div class="v">${fmtAgo(st.age_sec)}</div></div>
+    <div class="hero-stat"><div class="k">Uptime</div><div class="v">${uptime}</div></div>
+    <div class="hero-stat"><div class="k">PID</div><div class="v">${st.pid||'—'}</div></div>
+  `;
+}
+
+function renderAccount(a) {
+  const pill = document.getElementById('mktPill');
+  const stats = document.getElementById('acctStats');
+  if (!a) { stats.innerHTML = '<div class="empty" style="padding:8px">Account unavailable</div>'; return; }
+  stats.innerHTML = `
+    <div class="hero-stat"><div class="k">Equity</div><div class="v">$${(a.equity||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+    <div class="hero-stat"><div class="k">Day P&L</div><div class="v ${pnlClass(a.day_pl)}">${fmtFull$(a.day_pl)} <span style="font-size:11px">(${fmtPct(a.day_pl_pct)})</span></div></div>
+    <div class="hero-stat"><div class="k">Buying Power</div><div class="v">$${(a.buying_power||0).toLocaleString(undefined,{maximumFractionDigits:0})}</div></div>
+    <div class="hero-stat"><div class="k">Cash</div><div class="v">$${(a.cash||0).toLocaleString(undefined,{maximumFractionDigits:0})}</div></div>
+  `;
+}
+
+function renderUniverse(market, heldSet) {
+  const el = document.getElementById('universe');
+  if (!market) { el.innerHTML = '<p class="empty">Quotes unavailable.</p>'; return; }
+
+  // Market clock pill (uses real Alpaca clock)
+  const pill = document.getElementById('mktPill');
+  const mmeta = document.getElementById('mktMeta');
+  const clk = market.clock;
+  if (clk) {
+    if (clk.is_open) { pill.className = 'mkt-pill mkt-open'; pill.textContent = '● Market Open';
+                       mmeta.textContent = `closes ${fmtClock(clk.next_close)}`; }
+    else             { pill.className = 'mkt-pill mkt-closed'; pill.textContent = '○ Market Closed';
+                       mmeta.textContent = `opens ${fmtClock(clk.next_open)}`; }
+  }
+
+  const snaps = market.snapshots || {};
+  const tickers = market.tickers || Object.keys(snaps);
+  if (!tickers.length) { el.innerHTML = '<p class="empty">No tickers configured.</p>'; return; }
+
+  el.innerHTML = tickers.map(t => {
+    const s = snaps[t];
+    const held = heldSet.has(t);
+    if (!s) return `<div class="tkr${held?' held':''}"><div class="sym">${t} ${held?'<span class="held-tag">held</span>':''}</div><div class="px" style="color:#6b7280">—</div><div class="chg" style="color:#6b7280">no data</div></div>`;
+    const cls = (s.change_pct||0) >= 0 ? 'pos' : 'neg';
+    const arrow = (s.change_pct||0) >= 0 ? '▲' : '▼';
+    return `<div class="tkr${held?' held':''}">
+      <div class="sym">${t} ${held?'<span class="held-tag">held</span>':''}</div>
+      <div class="px">$${(s.price||0).toFixed(2)}</div>
+      <div class="chg ${cls}">${arrow} ${fmtFull$(s.change).replace('+$','$').replace('-$','-$')} (${fmtPct(s.change_pct)})</div>
+    </div>`;
+  }).join('');
+}
+
+function renderPositions(positions) {
+  const el = document.getElementById('positions');
+  if (!positions || !positions.length) { el.innerHTML = '<p class="empty">No open positions on Alpaca.</p>'; return; }
+  el.innerHTML = tableHtml(
+    ['Ticker','Qty','Avg Entry','Current','Mkt Value','Unrealized P&L','%'],
+    positions.map(p => [
+      `<strong>${p.ticker}</strong>`,
+      p.qty,
+      `$${parseFloat(p.avg_entry||0).toFixed(2)}`,
+      `$${parseFloat(p.current_price||0).toFixed(2)}`,
+      `$${parseFloat(p.market_value||0).toFixed(2)}`,
+      `<span class="${pnlClass(p.unrealized_pl)}">${fmtFull$(p.unrealized_pl)}</span>`,
+      `<span class="${pnlClass(p.unrealized_plpc)}">${fmtPct((p.unrealized_plpc||0)*100)}</span>`,
+    ])
+  );
+}
+
+function renderBotOrders(data) {
+  const el = document.getElementById('botOrders');
+  if (!data) { el.innerHTML = '<p class="empty">Bot orders unavailable.</p>'; return; }
+  const orders = data.orders || [];
+  if (!orders.length) { el.innerHTML = '<p class="empty">No bot-placed orders found on Alpaca yet.</p>'; return; }
+  el.innerHTML = tableHtml(
+    ['When','Ticker','Leg','Side','Type','Qty','Filled','Price','Status'],
+    orders.map(o => {
+      const color = KIND_COLORS[o.kind] || '#8892a4';
+      const px = o.filled_avg_price != null ? `$${o.filled_avg_price.toFixed(2)}`
+               : o.limit_price != null ? `<span style="color:#6b7280">lim $${o.limit_price.toFixed(2)}</span>`
+               : o.stop_price != null ? `<span style="color:#6b7280">stop $${o.stop_price.toFixed(2)}</span>` : '—';
+      const stCls = o.status === 'filled' ? 'pos' : (['canceled','rejected','expired'].includes(o.status) ? 'neg' : 'neu');
+      return [
+        fmtWhen(o.submitted_at),
+        `<strong>${o.symbol}</strong>`,
+        `<span class="kind-chip" style="background:${color}20;color:${color};border:1px solid ${color}40">${o.kind}</span>`,
+        o.side,
+        o.type,
+        o.qty,
+        o.filled_qty || '—',
+        px,
+        `<span class="${stCls}">${o.status}</span>`,
+      ];
+    })
+  );
+}
 
 // ── HOME ─────────────────────────────────────────────────────────────────────
 async function loadHome() {
@@ -213,23 +432,7 @@ async function loadHome() {
       <div class="kpi"><div class="label">Strategies</div><div class="value" style="font-size:16px">6</div><div class="sub">V1 + V2 active</div></div>
     `;
 
-    // Positions
-    const openTrades = (trades.trades||[]).filter(t => !t.exit_date);
-    if (openTrades.length) {
-      document.getElementById('positions').innerHTML = tableHtml(
-        ['Ticker','Entry Date','Entry $','Stop','Target','Strategy'],
-        openTrades.map(t => [
-          `<strong>${t.ticker}</strong>`,
-          (t.entry_date||'').split('T')[0],
-          `$${parseFloat(t.entry_price||0).toFixed(2)}`,
-          `$${parseFloat(t.stop_loss||0).toFixed(2)}`,
-          `$${parseFloat(t.take_profit||0).toFixed(2)}`,
-          `<span style="color:${STRAT_COLORS[t.strategy]||'#8892a4'}">${t.strategy}</span>`,
-        ])
-      );
-    } else {
-      document.getElementById('positions').innerHTML = '<p class="empty">No open positions.</p>';
-    }
+    // (Open positions are rendered live from Alpaca by loadLive().)
 
     // Recent trades
     const REASON_LABEL = { tp1:'TP1', tp2:'TP2', tp3:'TP3', take_profit:'TP',
@@ -504,7 +707,9 @@ function renderMiniChart(elId, ex) {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 loadHome();
+loadLive();
 setInterval(loadHome, 30000);
+setInterval(loadLive, 15000);  // live status/quotes refresh faster than backtests
 </script>
 </body>
 </html>

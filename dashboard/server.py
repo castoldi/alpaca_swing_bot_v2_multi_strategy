@@ -25,8 +25,14 @@ if str(_PROJECT) not in sys.path:
 from config import ALPACA_KEY, ALPACA_PAPER, ALPACA_SECRET, PARAMS, TICKERS, BAR_TIMEFRAME
 from dashboard import db as db_mod
 from logger_setup import get_logger
+import data_feed
+import runtime
 
 log = get_logger(__name__)
+
+# Correlation-id prefix the bot stamps on every Alpaca order it places. Mirrors
+# bot.CLIENT_ORDER_PREFIX — it is the proof an order is the bot's own.
+CLIENT_ORDER_PREFIX = "swingv2"
 
 _trading_client = None
 
@@ -89,6 +95,132 @@ async def get_summary():
     stats["is_paper"] = ALPACA_PAPER
     stats["now"] = datetime.now(timezone.utc).isoformat()
     return stats
+
+
+# ── Live bot + market state ───────────────────────────────────────────────────
+
+from zoneinfo import ZoneInfo
+from datetime import time as _dtime
+
+_ET = ZoneInfo("America/New_York")
+_BOT_OPEN = _dtime(8, 30)
+_BOT_CLOSE = _dtime(17, 0)
+
+
+def _bot_window_open() -> bool:
+    """Whether the bot's loop will call run_once now (08:30–17:00 ET)."""
+    now_et = datetime.now(_ET).time().replace(second=0, microsecond=0)
+    return _BOT_OPEN <= now_et < _BOT_CLOSE
+
+
+@app.get("/api/bot-status")
+async def bot_status():
+    """Is the bot looping? Strategy, interval, uptime, last loop age, and whether
+    it's inside its trading window — everything the status hero needs."""
+    st = runtime.read_status("bot")
+    st["bot_window_open"] = _bot_window_open()
+    st["now_et"] = datetime.now(_ET).isoformat()
+    st["now"] = datetime.now(timezone.utc).isoformat()
+    if st.get("healthy") and st.get("age_sec") is not None and st.get("interval"):
+        # Rough estimate of the next loop pass.
+        st["next_run_in_sec"] = max(0, st["interval"] * 60 - st["age_sec"])
+    return st
+
+
+@app.get("/api/account")
+async def get_account():
+    """Live Alpaca account snapshot: equity, day P&L, buying power, cash."""
+    try:
+        tc = _get_trading()
+        acct = await run_in_threadpool(tc.get_account)
+        equity = float(acct.equity)
+        last_equity = float(acct.last_equity) if acct.last_equity else equity
+        day_pl = equity - last_equity
+        return {
+            "equity": round(equity, 2),
+            "last_equity": round(last_equity, 2),
+            "day_pl": round(day_pl, 2),
+            "day_pl_pct": round(day_pl / last_equity * 100, 2) if last_equity else 0.0,
+            "buying_power": round(float(acct.buying_power), 2),
+            "cash": round(float(acct.cash), 2),
+            "portfolio_value": round(float(acct.portfolio_value), 2),
+            "currency": acct.currency,
+            "status": str(acct.status),
+            "is_paper": ALPACA_PAPER,
+        }
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/market")
+async def get_market():
+    """Universe snapshots (last price + day change) plus the Alpaca market clock."""
+    result: dict = {"tickers": TICKERS}
+    try:
+        result["snapshots"] = await run_in_threadpool(data_feed.fetch_snapshots, TICKERS)
+    except Exception as e:
+        result["snapshots"] = {}
+        result["snapshot_error"] = str(e)
+
+    try:
+        tc = _get_trading()
+        clock = await run_in_threadpool(tc.get_clock)
+        result["clock"] = {
+            "is_open": bool(clock.is_open),
+            "next_open": clock.next_open.isoformat() if clock.next_open else None,
+            "next_close": clock.next_close.isoformat() if clock.next_close else None,
+            "timestamp": clock.timestamp.isoformat() if clock.timestamp else None,
+        }
+    except Exception as e:
+        result["clock"] = None
+        result["clock_error"] = str(e)
+
+    result["bot_window_open"] = _bot_window_open()
+    return result
+
+
+@app.get("/api/bot-orders")
+async def bot_orders(limit: int = Query(50, ge=1, le=200)):
+    """Recent Alpaca orders THIS bot placed — filtered by the swingv2 correlation
+    id prefix. Proves opens/closes are the bot's own, straight from the broker."""
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+
+        def _fetch():
+            tc = _get_trading()
+            req = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=300, nested=False)
+            return tc.get_orders(filter=req) or []
+
+        raw = await run_in_threadpool(_fetch)
+        orders = []
+        for o in raw:
+            coid = str(getattr(o, "client_order_id", "") or "")
+            if not coid.startswith(CLIENT_ORDER_PREFIX):
+                continue
+            # coid shape: swingv2-<kind>-<strategy>-<ticker>-<hex>
+            parts = coid.split("-")
+            kind = parts[1] if len(parts) > 1 else "?"
+            submitted = getattr(o, "submitted_at", None) or getattr(o, "created_at", None)
+            filled_qty = getattr(o, "filled_qty", None)
+            orders.append({
+                "symbol": getattr(o, "symbol", None),
+                "kind": kind,                       # entry / tp1 / tp2 / tp3 / stop / exit
+                "side": str(getattr(o, "side", "")).split(".")[-1].lower(),
+                "type": str(getattr(o, "order_type", getattr(o, "type", ""))).split(".")[-1].lower(),
+                "qty": float(getattr(o, "qty", 0) or 0),
+                "filled_qty": float(filled_qty) if filled_qty else 0.0,
+                "filled_avg_price": float(o.filled_avg_price) if getattr(o, "filled_avg_price", None) else None,
+                "limit_price": float(o.limit_price) if getattr(o, "limit_price", None) else None,
+                "stop_price": float(o.stop_price) if getattr(o, "stop_price", None) else None,
+                "status": str(getattr(o, "status", "")).split(".")[-1].lower(),
+                "submitted_at": submitted.isoformat() if submitted else None,
+                "client_order_id": coid,
+            })
+        orders.sort(key=lambda x: x["submitted_at"] or "", reverse=True)
+        return {"orders": orders[:limit], "prefix": CLIENT_ORDER_PREFIX}
+    except Exception as e:
+        return JSONResponse({"error": str(e), "orders": []}, status_code=500)
 
 
 @app.get("/api/runs")
