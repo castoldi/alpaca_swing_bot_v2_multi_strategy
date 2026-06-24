@@ -99,6 +99,16 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 .mkt-open{background:#22c55e20;color:#22c55e;border:1px solid #22c55e40}
 .mkt-closed{background:#6b728020;color:#9aa3b2;border:1px solid #6b728040}
 
+/* ── Strategy status pills ── */
+.strat-status{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
+.spill{display:flex;align-items:center;gap:9px;background:#161822;border:1px solid #2a2d35;border-radius:10px;padding:9px 13px;min-width:150px}
+.spill .sdot{width:9px;height:9px;border-radius:50%;flex:none}
+.spill .sname{font-size:13px;font-weight:600}
+.spill .smeta{font-size:10px;color:#6b7280;margin-left:auto;text-transform:uppercase;letter-spacing:.04em}
+.spill.off{opacity:.45}
+.spill.running{box-shadow:0 0 0 1px #22c55e55;border-color:#22c55e55}
+.spill .runtag{font-size:9px;font-weight:700;color:#22c55e;margin-left:auto}
+
 /* ── Live universe board ── */
 .universe{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:8px}
 .tkr{background:#161822;border:1px solid #2a2d35;border-radius:10px;padding:12px 14px;position:relative;overflow:hidden}
@@ -156,6 +166,9 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 
     <div id="kpis" class="kpis"><div class="loading">Loading...</div></div>
 
+    <div class="section-title">Strategies <span class="hint">(enabled for bot &amp; backtests · ● = bot currently running)</span></div>
+    <div id="stratStatus" class="strat-status"><div class="loading">Loading strategies…</div></div>
+
     <div class="section-title">Live Universe <span class="hint">(what the bot watches)</span></div>
     <div id="universe" class="universe"><div class="loading">Loading quotes…</div></div>
 
@@ -197,6 +210,7 @@ let STRAT_COLORS = {
   momentum_macd:'#34d399', ensemble:'#f472b6', regime:'#fb923c',
 };
 let _strategiesCache = null;  // set by loadStrategies()
+let _runningStrategy = null;  // name of the strategy the live bot loop is running
 
 async function loadStrategies() {
   if (_strategiesCache) return _strategiesCache;
@@ -209,8 +223,30 @@ async function loadStrategies() {
   }
   return _strategiesCache;
 }
+
+// "Active Strategies" card on Home — which strategies are enabled (config
+// ENABLED_STRATEGIES) and which one the live bot is currently looping.
+async function renderStrategyStatus() {
+  const el = document.getElementById('stratStatus');
+  if (!el) return;
+  const strategies = await loadStrategies();
+  if (!strategies.length) { el.innerHTML = '<p class="empty">Could not load strategies.</p>'; return; }
+  // Enabled first, then alphabetical.
+  const sorted = [...strategies].sort((a,b) =>
+    (b.enabled - a.enabled) || a.label.localeCompare(b.label));
+  el.innerHTML = sorted.map(s => {
+    const running = _runningStrategy && s.name === _runningStrategy;
+    return `<div class="spill${s.enabled ? '' : ' off'}${running ? ' running' : ''}" title="${s.enabled ? 'Enabled' : 'Disabled'}${running ? ' · bot running this now' : ''}">
+      <span class="sdot" style="background:${s.color || '#8892a4'}"></span>
+      <span class="sname">${s.label}</span>
+      ${running ? '<span class="runtag">● RUNNING</span>'
+                : `<span class="smeta">${s.enabled ? 'on' : 'off'}</span>`}
+    </div>`;
+  }).join('');
+}
+
 // Kick off early so colors are ready when home loads.
-loadStrategies();
+loadStrategies().then(renderStrategyStatus);
 
 // ── Nav tab switching ──────────────────────────────────────────────────────────
 document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -300,6 +336,10 @@ function renderBotStatus(st, market) {
   if (st.healthy)      { dot.className = 'status-dot on';   word.textContent = 'RUNNING'; word.style.color = '#22c55e'; }
   else if (st.running) { dot.className = 'status-dot warn'; word.textContent = 'HUNG';    word.style.color = '#f59e0b'; }
   else                 { dot.className = 'status-dot off';  word.textContent = 'STOPPED'; word.style.color = '#ef4444'; }
+
+  // Mark the running strategy in the Active Strategies card (only while looping).
+  const nowRunning = st.healthy ? st.strategy : null;
+  if (nowRunning !== _runningStrategy) { _runningStrategy = nowRunning; renderStrategyStatus(); }
 
   meta.innerHTML = `${st.reason || ''}${st.bot_window_open ? ' · in trading window' : ' · outside trading window'}`;
 

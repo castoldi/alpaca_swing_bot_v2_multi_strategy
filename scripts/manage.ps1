@@ -66,13 +66,15 @@ function Get-LiveProc($procId) {
 
 function Get-BotProcesses {
     # Any python running THIS project's bot.py loop (scoped by --strategy invocation).
-    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    # Match both python.exe AND pythonw.exe — manage.ps1 launches with pythonw.exe
+    # (no console window), so a python.exe-only filter never catches the real process.
+    Get-CimInstance Win32_Process -Filter "(Name='python.exe' OR Name='pythonw.exe')" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like '*bot.py*--strategy*' }
 }
 
 function Get-DashboardProcesses {
-    # uvicorn serving this project's dashboard on the chosen port.
-    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    # uvicorn serving this project's dashboard on the chosen port (python.exe or pythonw.exe).
+    Get-CimInstance Win32_Process -Filter "(Name='python.exe' OR Name='pythonw.exe')" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like "*uvicorn*dashboard.server:app*$Port*" }
 }
 
@@ -126,6 +128,24 @@ function Get-BotHealth {
 function Stop-Tree($procId) {
     if (-not $procId) { return }
     & taskkill /PID $procId /T /F 2>$null | Out-Null
+    # taskkill can return before the process is gone (or silently no-op on some
+    # pythonw children). Verify and fall back to Stop-Process so a "stop" that
+    # claims success can be trusted by the follow-up "start".
+    for ($i = 0; $i -lt 10; $i++) {
+        if (-not (Get-LiveProc $procId)) { return }
+        Start-Sleep -Milliseconds 300
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Wait-PortFree($port, $timeoutSec = 8) {
+    # Block until nothing is LISTENing on $port (or timeout). Returns $true if freed.
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-PortOwnerPid $port)) { return $true }
+        Start-Sleep -Milliseconds 300
+    }
+    return (-not (Get-PortOwnerPid $port))
 }
 
 # ── bot ──────────────────────────────────────────────────────────────────────
@@ -182,11 +202,30 @@ function Stop-Dashboard {
     if ($procId) { Write-Host "Stopping dashboard (pidfile PID $procId)..."; Stop-Tree $procId }
     $owner = Get-PortOwnerPid $Port
     if ($owner) { Write-Host "Stopping process on port $Port (PID $owner)..."; Stop-Tree $owner }
-    foreach ($p in Get-DashboardProcesses) { Stop-Tree $p.ProcessId }
+    # Sweep any uvicorn (python.exe OR pythonw.exe) bound to this port that slipped
+    # past the pidfile/port-owner kills.
+    foreach ($p in Get-DashboardProcesses) {
+        Write-Host "Stopping straggler dashboard PID $($p.ProcessId)..."
+        Stop-Tree $p.ProcessId
+    }
+    # Don't return "stopped" until the port is actually free — otherwise a follow-up
+    # Start-Dashboard probes the dying process, sees it healthy, and refuses to replace it.
+    if (-not (Wait-PortFree $Port)) {
+        $owner = Get-PortOwnerPid $Port
+        if ($owner) {
+            Write-Host "Port $Port still held by PID $owner — force-killing." -ForegroundColor Yellow
+            Stop-Tree $owner
+            Wait-PortFree $Port | Out-Null
+        }
+    }
     foreach ($f in 'dashboard.pid','dashboard.meta.json') {
         Remove-Item (Join-Path $RunDir $f) -ErrorAction SilentlyContinue
     }
-    Write-Host "Dashboard stopped." -ForegroundColor Green
+    if (Get-PortOwnerPid $Port) {
+        Write-Host "WARNING: port $Port is still in use after stop." -ForegroundColor Red
+    } else {
+        Write-Host "Dashboard stopped." -ForegroundColor Green
+    }
 }
 
 function Start-Dashboard {

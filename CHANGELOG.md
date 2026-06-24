@@ -16,6 +16,20 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 _Changes landed but not yet released under a new version number go here._
 
+
+## [0.8.1] - 2026-06-24
+
+### Added
+- **Active Strategies card** on the dashboard Home tab: a row of pills showing every strategy, which are enabled (config `ENABLED_STRATEGIES`) vs. disabled, with the one the live bot is currently looping marked **● RUNNING**.
+
+### Fixed
+- `manage.ps1` `Stop-Dashboard` could return "stopped" while the old `pythonw.exe` uvicorn process was still alive, so the follow-up start probed it, saw it healthy, and refused to replace it — leaving stale code serving. Now:
+  - process sweeps (`Get-DashboardProcesses` / `Get-BotProcesses`) match **both `python.exe` and `pythonw.exe`** (the script launches with `pythonw.exe`);
+  - `Stop-Tree` verifies the kill and falls back to `Stop-Process -Force`;
+  - `Stop-Dashboard` waits for the port to actually free (and re-kills the holder) before reporting success.
+
+### Changed
+
 ## [0.8.0] - 2026-06-24
 
 ### Added
@@ -201,6 +215,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
