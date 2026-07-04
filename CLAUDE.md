@@ -177,3 +177,8 @@ pwsh scripts\setup_keepalive_task.ps1 -Unregister
 2. Run `python backtest_2025.py` and `python backtest_2026.py`
 3. Compare in dashboard or DB; keep if both years improve
 4. Log via `db_mod.log_experiment(...)` or `program.md`
+## Process Idempotency
+- Before creating or modifying any startup, scheduler, watchdog, keepalive, dashboard, bot, strategy, or other long-running process script, make it idempotent: repeated manual, scheduled, Startup-folder, Hermes, or agent-monitor invocations must adopt the existing healthy process instead of starting a duplicate.
+- Use a single-instance lock plus a real process identity check such as command line, port owner, and health endpoint; verify PID files against that identity and never rely on a PID file alone.
+- Windows Scheduled Tasks for this project must use `MultipleInstances IgnoreNew`; avoid overlapping scheduled tasks for the same service unless every launch path shares the same guard.
+- When replacing an unhealthy process, kill or adopt only matching project command lines/ports so unrelated processes are not touched and phantom processes are not left behind.

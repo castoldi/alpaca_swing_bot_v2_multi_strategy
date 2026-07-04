@@ -201,3 +201,8 @@ All strategies share: TP reachability filter (must be reachable in ≤2 ATR-days
 - **Never start duplicates**: start the bot/dashboard only via `scripts/manage.ps1` — two `--loop` bots email the user twice over. PIDs live in `run/`.
 - **DB population**: backtests write to `dashboard/swing_bot_v2.db` — run both backtest scripts before opening the dashboard or it will appear empty
 - **simulate_exit uses signal prices directly**: SL/TP on the signal object are authoritative — do not recalculate from params in `simulate_exit` (bug fixed 2026-05-31)
+## Process Idempotency
+- Before creating or modifying any startup, scheduler, watchdog, keepalive, dashboard, bot, strategy, or other long-running process script, make it idempotent: repeated manual, scheduled, Startup-folder, Hermes, or agent-monitor invocations must adopt the existing healthy process instead of starting a duplicate.
+- Use a single-instance lock plus a real process identity check such as command line, port owner, and health endpoint; verify PID files against that identity and never rely on a PID file alone.
+- Windows Scheduled Tasks for this project must use `MultipleInstances IgnoreNew`; avoid overlapping scheduled tasks for the same service unless every launch path shares the same guard.
+- When replacing an unhealthy process, kill or adopt only matching project command lines/ports so unrelated processes are not touched and phantom processes are not left behind.
