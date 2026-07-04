@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pandas as pd
+from alpaca.trading.requests import GetCalendarRequest
 
 from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
@@ -387,28 +388,18 @@ def _reconcile_closed(tc, trade: dict):
     ticker = trade["ticker"]
     entry = float(trade["entry_price"])
     shares = float(trade.get("shares") or 0)
-    exit_price = exit_coid = None
-    exit_id = ""
-    try:
-        from alpaca.trading.requests import GetOrdersRequest
-        from alpaca.trading.enums import QueryOrderStatus, OrderSide
-        req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, symbols=[ticker],
-                               side=OrderSide.SELL, limit=10)
-        for o in (tc.get_orders(filter=req) or []):
-            if getattr(o, "filled_avg_price", None):
-                exit_price = float(o.filled_avg_price)
-                exit_coid = getattr(o, "client_order_id", None)
-                exit_id = str(getattr(o, "id", "") or "")
-                if getattr(o, "filled_qty", None):
-                    shares = float(o.filled_qty) or shares
-                break
-    except Exception as e:
-        log.debug("  Could not fetch exit fill for %s: %s", ticker, e)
+    exit_fill = _confirmed_exit_fill(tc, trade)
+    if exit_fill is None:
+        log.warning("  %s position missing but no confirmed exit fill for trade %s (coid=%s) — leaving open",
+                    ticker, trade.get("id"), trade.get("client_order_id"))
+        return False
 
-    if exit_price is None:
-        exit_price, reason = entry, "closed_external"  # unknown fill — don't leave it stuck open
-    else:
-        reason = "bracket_filled"
+    exit_price = exit_fill["price"]
+    exit_coid = exit_fill["client_order_id"]
+    exit_id = exit_fill["alpaca_order_id"]
+    if exit_fill.get("shares"):
+        shares = exit_fill["shares"] or shares
+    reason = "bracket_filled"
 
     pnl = (exit_price - entry) * shares
     pnl_pct = (exit_price - entry) / entry if entry else 0.0
@@ -416,6 +407,92 @@ def _reconcile_closed(tc, trade: dict):
                        reason, _days_held(trade["entry_date"]), shares, pnl, pnl_pct,
                        exit_client_order_id=exit_coid, exit_alpaca_order_id=exit_id)
     log.info("  Reconciled exit: %s closed @ $%.2f (%s) pnl=$%.2f", ticker, exit_price, reason, pnl)
+    return True
+
+
+def _confirmed_exit_fill(tc, trade: dict) -> dict | None:
+    """Return a filled sell tied to this DB trade, never an arbitrary old sell.
+
+    For single-share bracket orders, Alpaca keeps the stop/TP children under the
+    parent entry order's legs. Scaled entries use independent bot-owned sell
+    orders, so those must carry our client-order prefix and belong to this
+    strategy/ticker after the DB trade was created.
+    """
+    for order in _entry_order_candidates(tc, trade):
+        for leg in (getattr(order, "legs", None) or []):
+            fill = _exit_fill_from_order(leg, require_prefix=False)
+            if fill:
+                return fill
+
+    marker = f"-{trade['strategy']}-{trade['ticker']}-"
+    for order in _our_sell_orders(tc, trade["ticker"]):
+        coid = str(getattr(order, "client_order_id", "") or "")
+        if marker not in coid:
+            continue
+        if not _order_is_after_trade(order, trade):
+            continue
+        fill = _exit_fill_from_order(order, require_prefix=True)
+        if fill:
+            return fill
+
+    return None
+
+
+def _entry_order_candidates(tc, trade: dict) -> list:
+    out = []
+    entry_id = trade.get("alpaca_order_id")
+    if entry_id:
+        try:
+            out.append(tc.get_order_by_id(entry_id))
+        except Exception:
+            pass
+
+    coid = trade.get("client_order_id")
+    if coid:
+        try:
+            out.append(tc.get_order_by_client_id(coid))
+        except Exception:
+            pass
+    return [o for o in out if o is not None]
+
+
+def _exit_fill_from_order(order, require_prefix: bool) -> dict | None:
+    coid = str(getattr(order, "client_order_id", "") or "")
+    if require_prefix and not coid.startswith(CLIENT_ORDER_PREFIX):
+        return None
+    status = str(getattr(order, "status", "") or "").lower()
+    if status not in ("filled", "closed"):
+        return None
+    if getattr(order, "filled_avg_price", None) is None:
+        return None
+    return {
+        "price": float(order.filled_avg_price),
+        "client_order_id": getattr(order, "client_order_id", None),
+        "alpaca_order_id": str(getattr(order, "id", "") or ""),
+        "shares": float(getattr(order, "filled_qty", 0) or 0),
+    }
+
+
+def _order_is_after_trade(order, trade: dict) -> bool:
+    trade_ts = _parse_timestamp(trade.get("created_at")) or _parse_timestamp(trade.get("entry_date"))
+    order_ts = (
+        _parse_timestamp(getattr(order, "filled_at", None))
+        or _parse_timestamp(getattr(order, "updated_at", None))
+        or _parse_timestamp(getattr(order, "submitted_at", None))
+    )
+    if trade_ts is None or order_ts is None:
+        return False
+    return order_ts >= trade_ts - timedelta(minutes=5)
+
+
+def _parse_timestamp(value):
+    if not value:
+        return None
+    try:
+        ts = pd.to_datetime(value, utc=True)
+        return ts.to_pydatetime()
+    except Exception:
+        return None
 
 
 def _close_owned(tc, trade: dict, pos, reason: str):
@@ -477,8 +554,20 @@ _MARKET_CLOSE = dtime(17, 0)
 
 
 def _in_trading_hours() -> bool:
-    now_et = datetime.now(_ET).time().replace(second=0, microsecond=0)
-    return _MARKET_OPEN <= now_et < _MARKET_CLOSE
+    now_et = datetime.now(_ET)
+    now_time = now_et.time().replace(second=0, microsecond=0)
+    if now_et.weekday() >= 5:
+        return False
+    if not (_MARKET_OPEN <= now_time < _MARKET_CLOSE):
+        return False
+    try:
+        return bool(_get_trading().get_calendar(GetCalendarRequest(
+            start=now_et.date(),
+            end=now_et.date(),
+        )))
+    except Exception as e:
+        log.debug("Market calendar unavailable; using weekday/time fallback: %s", e)
+        return True
 
 
 def run_loop(strategy: StrategyType, interval_minutes: int = 30):

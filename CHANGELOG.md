@@ -17,6 +17,17 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 
+
+## [0.8.2] - 2026-07-04
+
+### Added
+
+### Fixed
+- Bot no longer treats weekends or exchange holidays as tradable just because the time is between 08:30 and 17:00 ET; the loop now checks the Alpaca market calendar before running.
+- Live reconciliation no longer closes a newly opened trade by matching an unrelated historical sell fill. Missing-position reconciliation now requires a confirmed filled exit leg tied to the trade's entry order, preventing repeated NVDA entry emails/orders from one persistent signal.
+
+### Changed
+
 ## [0.8.1] - 2026-06-24
 
 ### Added
@@ -215,12 +226,5 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
-
-
-
-
-
-
-
 
 
