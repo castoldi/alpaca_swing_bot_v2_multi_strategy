@@ -185,6 +185,21 @@ def close_trade(db_id: int, exit_date: str, exit_price: float, reason: str,
         )
 
 
+def exit_order_already_used(exit_alpaca_order_id: Optional[str]) -> bool:
+    """True if some other trade already claims this Alpaca order as its exit fill.
+
+    Guards against reconciliation attributing one broker fill to several DB rows.
+    """
+    if not exit_alpaca_order_id:
+        return False
+    with _con() as c:
+        row = c.execute(
+            "SELECT 1 FROM trades WHERE exit_alpaca_order_id=? LIMIT 1",
+            (exit_alpaca_order_id,),
+        ).fetchone()
+        return row is not None
+
+
 def get_open_trades_by_strategy(strategy: str) -> list[dict]:
     """Open trades opened by a given strategy (i.e. by this bot process)."""
     _ensure_tables()

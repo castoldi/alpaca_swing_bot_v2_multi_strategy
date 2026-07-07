@@ -90,6 +90,18 @@ def _position_qty(tc, ticker: str) -> float:
         return 0.0
 
 
+def _status_str(obj) -> str:
+    """Lowercase status value off an Alpaca order/leg.
+
+    alpaca-py's OrderStatus is a (str, Enum): str(OrderStatus.FILLED) renders as
+    "OrderStatus.FILLED", not "filled", because Enum.__str__ wins over the str
+    mixin. Comparing that against plain-value strings never matches, so anything
+    gating on order status must go through .value first.
+    """
+    status = getattr(obj, "status", "") or ""
+    return str(getattr(status, "value", status)).lower()
+
+
 def _our_sell_orders(tc, ticker: str):
     """Open + recently-closed SELL orders for the symbol that we own."""
     from alpaca.trading.requests import GetOrdersRequest
@@ -108,7 +120,7 @@ def _count_filled_tp_legs(tc, trade: dict) -> int:
     n = 0
     for o in _our_sell_orders(tc, trade["ticker"]):
         coid = str(getattr(o, "client_order_id", "") or "")
-        if "-tp" in coid and str(getattr(o, "status", "")).lower() in ("filled", "done_for_day", "closed"):
+        if "-tp" in coid and _status_str(o) in ("filled", "done_for_day", "closed"):
             n += 1
     return n
 
@@ -116,7 +128,7 @@ def _count_filled_tp_legs(tc, trade: dict) -> int:
 def _open_stop_order(tc, trade: dict):
     for o in _our_sell_orders(tc, trade["ticker"]):
         coid = str(getattr(o, "client_order_id", "") or "")
-        if "-stop-" in coid and str(getattr(o, "status", "")).lower() in ("new", "accepted", "held", "pending_new"):
+        if "-stop-" in coid and _status_str(o) in ("new", "accepted", "held", "pending_new"):
             return o
     return None
 
@@ -257,12 +269,14 @@ def run_once(strategy: StrategyType) -> int:
                         # qty 1-2: too few shares to scale out — single OCO bracket at TP3
                         from alpaca.trading.requests import (MarketOrderRequest,
                                                              TakeProfitRequest, StopLossRequest)
-                        from alpaca.trading.enums import OrderSide, TimeInForce
+                        from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
                         tp = TakeProfitRequest(limit_price=round(sig.tp3, 2))
                         sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
                         mkt = MarketOrderRequest(symbol=ticker, qty=qty, side=OrderSide.BUY,
-                                                 time_in_force=TimeInForce.DAY, take_profit=tp,
-                                                 stop_loss=sl, client_order_id=coid)
+                                                 time_in_force=TimeInForce.DAY,
+                                                 order_class=OrderClass.BRACKET,
+                                                 take_profit=tp, stop_loss=sl,
+                                                 client_order_id=coid)
                         order = tc.submit_order(mkt)
                         alpaca_id = str(getattr(order, "id", "") or "")
                         log.info("  Single bracket (qty<3): %s x%d @ $%.2f (SL $%.2f / TP $%.2f) [coid=%s]",
@@ -384,10 +398,21 @@ def _reconcile_and_exit(strat_name: str):
 
 
 def _reconcile_closed(tc, trade: dict):
-    """Our tracked position is gone (a bracket leg filled) — record the exit in the DB."""
+    """Our tracked position is gone — either a bracket leg filled, or the entry
+    order itself never filled and was later canceled/expired by the broker."""
     ticker = trade["ticker"]
     entry = float(trade["entry_price"])
     shares = float(trade.get("shares") or 0)
+
+    if _entry_never_filled(tc, trade):
+        db_mod.close_trade(trade["id"], datetime.now(timezone.utc).isoformat(), entry,
+                           "entry_not_filled", _days_held(trade["entry_date"]), 0.0, 0.0, 0.0,
+                           exit_client_order_id=trade.get("client_order_id"),
+                           exit_alpaca_order_id=trade.get("alpaca_order_id"))
+        log.info("  Reconciled: %s entry order never filled for trade %s (coid=%s) — closing, no position taken",
+                 ticker, trade.get("id"), trade.get("client_order_id"))
+        return True
+
     exit_fill = _confirmed_exit_fill(tc, trade)
     if exit_fill is None:
         log.warning("  %s position missing but no confirmed exit fill for trade %s (coid=%s) — leaving open",
@@ -410,18 +435,30 @@ def _reconcile_closed(tc, trade: dict):
     return True
 
 
+def _entry_never_filled(tc, trade: dict) -> bool:
+    """True if the order meant to open this trade was canceled/expired/rejected
+    without ever filling any shares — i.e. no position was ever taken."""
+    for order in _entry_order_candidates(tc, trade):
+        filled_qty = float(getattr(order, "filled_qty", 0) or 0)
+        if _status_str(order) in ("canceled", "expired", "rejected") and filled_qty == 0:
+            return True
+    return False
+
+
 def _confirmed_exit_fill(tc, trade: dict) -> dict | None:
     """Return a filled sell tied to this DB trade, never an arbitrary old sell.
 
     For single-share bracket orders, Alpaca keeps the stop/TP children under the
     parent entry order's legs. Scaled entries use independent bot-owned sell
     orders, so those must carry our client-order prefix and belong to this
-    strategy/ticker after the DB trade was created.
+    strategy/ticker after the DB trade was created. Either way, a fill already
+    claimed as another trade's exit is skipped — one broker fill can only close
+    one DB trade.
     """
     for order in _entry_order_candidates(tc, trade):
         for leg in (getattr(order, "legs", None) or []):
             fill = _exit_fill_from_order(leg, require_prefix=False)
-            if fill:
+            if fill and not db_mod.exit_order_already_used(fill["alpaca_order_id"]):
                 return fill
 
     marker = f"-{trade['strategy']}-{trade['ticker']}-"
@@ -432,18 +469,20 @@ def _confirmed_exit_fill(tc, trade: dict) -> dict | None:
         if not _order_is_after_trade(order, trade):
             continue
         fill = _exit_fill_from_order(order, require_prefix=True)
-        if fill:
+        if fill and not db_mod.exit_order_already_used(fill["alpaca_order_id"]):
             return fill
 
     return None
 
 
 def _entry_order_candidates(tc, trade: dict) -> list:
+    from alpaca.trading.requests import GetOrderByIdRequest
     out = []
     entry_id = trade.get("alpaca_order_id")
     if entry_id:
         try:
-            out.append(tc.get_order_by_id(entry_id))
+            # nested=True is required or Alpaca omits bracket child legs entirely.
+            out.append(tc.get_order_by_id(entry_id, filter=GetOrderByIdRequest(nested=True)))
         except Exception:
             pass
 
@@ -460,8 +499,7 @@ def _exit_fill_from_order(order, require_prefix: bool) -> dict | None:
     coid = str(getattr(order, "client_order_id", "") or "")
     if require_prefix and not coid.startswith(CLIENT_ORDER_PREFIX):
         return None
-    status = str(getattr(order, "status", "") or "").lower()
-    if status not in ("filled", "closed"):
+    if _status_str(order) not in ("filled", "closed"):
         return None
     if getattr(order, "filled_avg_price", None) is None:
         return None
@@ -508,11 +546,12 @@ def _close_owned(tc, trade: dict, pos, reason: str):
 
     # Free the shares by cancelling the still-open SL/TP legs of OUR entry order only.
     try:
+        from alpaca.trading.requests import GetOrderByIdRequest
         entry_id = trade.get("alpaca_order_id")
         if entry_id:
-            entry_order = tc.get_order_by_id(entry_id)
+            entry_order = tc.get_order_by_id(entry_id, filter=GetOrderByIdRequest(nested=True))
             for leg in (getattr(entry_order, "legs", None) or []):
-                if str(getattr(leg, "status", "")).lower() in (
+                if _status_str(leg) in (
                         "new", "accepted", "held", "pending_new", "partially_filled"):
                     try:
                         tc.cancel_order_by_id(leg.id)

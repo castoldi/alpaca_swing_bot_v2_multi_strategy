@@ -18,6 +18,15 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+## [0.8.3] - 2026-07-07
+
+### Fixed
+- **Single-share entries (qty<3, the common case at $200/trade) were never getting broker-side stop-loss/take-profit protection.** The bracket order request omitted `order_class=OrderClass.BRACKET`, so Alpaca silently accepted it as a plain market order and dropped the `take_profit`/`stop_loss` legs entirely — confirmed via order history that zero LIMIT/STOP orders were ever placed for these entries. Now sets `order_class=OrderClass.BRACKET` explicitly.
+- Order-status comparisons across `bot.py` (`_status_str`) were checking `str(order.status)` against plain values like `"filled"`, but alpaca-py's `OrderStatus` renders as `"OrderStatus.FILLED"` via `Enum.__str__`, so the comparison silently never matched anything. This broke TP-leg counting, stepped-stop sync, and exit-fill reconciliation across the board. Fixed by comparing `.value` instead.
+- Reconciliation now recognizes when an entry order never filled and was canceled/expired/rejected by the broker (0 shares filled) — it closes the DB trade as `entry_not_filled` instead of logging the same "position missing" warning on every loop forever.
+- `_entry_order_candidates` now requests `nested=True` when fetching the entry order by id, so bracket child legs (TP/SL) are actually returned — previously always empty, so exit-fill matching for single-share entries never worked via the intended path.
+- Exit-fill matching now refuses to attribute the same broker fill to more than one DB trade (`db.exit_order_already_used`), closing the remaining gap behind the 0.8.2 duplicate-entry fix.
+
 ## [0.8.2] - 2026-07-04
 
 ### Added
@@ -226,5 +235,6 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
