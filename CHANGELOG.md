@@ -17,6 +17,8 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- Added the test-first implementation plan for live 20%-of-equity sizing and
+  whole-share annual-reset backtest compounding.
 - Designed 20%-of-equity live position sizing and whole-share annual backtest
   compounding, with each calendar year resetting to a fresh $1,000 portfolio.
 - Designed a persistent Alpaca SIP market-data cache and a cumulative
