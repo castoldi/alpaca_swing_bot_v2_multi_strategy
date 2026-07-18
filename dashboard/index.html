@@ -208,6 +208,7 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 let STRAT_COLORS = {
   trend_pullback:'#60a5fa', breakout:'#f59e0b', mean_reversion:'#a78bfa',
   momentum_macd:'#34d399', ensemble:'#f472b6', regime:'#fb923c',
+  sma_50_cross:'#38bdf8',
 };
 let _strategiesCache = null;  // set by loadStrategies()
 let _runningStrategy = null;  // name of the strategy the live bot loop is running
@@ -476,7 +477,8 @@ async function loadHome() {
 
     // Recent trades
     const REASON_LABEL = { tp1:'TP1', tp2:'TP2', tp3:'TP3', take_profit:'TP',
-                           stop_loss:'Stop', time_stop:'Time', end_of_data:'Open' };
+                           stop_loss:'Stop', gap_stop:'Gap stop',
+                           sma_cross_down:'SMA cross', time_stop:'Time', end_of_data:'Open' };
     const closed = (trades.trades||[]).filter(t => t.exit_date).slice(0,12);
     if (closed.length) {
       document.getElementById('trades').innerHTML = tableHtml(
@@ -615,10 +617,10 @@ async function renderStrategies() {
         <div class="strat-entry">${s.description}</div>
         <div class="strat-params">${chips}</div>
         <div class="strat-charts" id="charts-${s.name}">
-          <div class="strat-charts-title"><span class="tf-label">Recent setups</span>
+          <div class="strat-charts-title"><span class="tf-label">Recent ${s.timeframe || '4h'} setups</span>
             <span class="chart-legend">
               <span><i style="border-color:#60a5fa"></i>Entry</span>
-              <span><i style="border-color:#22c55e"></i>TP</span>
+              ${s.has_take_profit ? '<span><i style="border-color:#22c55e"></i>TP</span>' : ''}
               <span><i style="border-color:#ef4444"></i>SL</span>
             </span>
           </div>
@@ -677,9 +679,10 @@ async function loadStrategyCharts(strategies) {
     return;
   }
   const examples = (data && data.examples) || {};
-  const tf = (data && data.timeframe) || '4h';
-  document.querySelectorAll('.tf-label').forEach(e => { e.textContent = `Recent ${tf} setups`; });
+  const timeframes = (data && data.timeframes) || {};
   for (const s of (strategies || [])) {
+    const label = document.querySelector(`#charts-${s.name} .tf-label`);
+    if (label) label.textContent = `Recent ${timeframes[s.name] || s.timeframe || '4h'} setups`;
     const list = examples[s.name] || [];
     for (let i = 0; i < 2; i++) renderMiniChart(`chart-${s.name}-${i}`, list[i]);
   }
@@ -724,6 +727,13 @@ function renderMiniChart(elId, ex) {
   };
   const reason = (ex.exitReason || '').replace(/_/g, ' ');
   const sign = ex.pnlPct > 0 ? '+' : '';
+  const shapes = [_hline(ex.entry, '#60a5fa'), _hline(ex.sl, '#ef4444', 'dot')];
+  const annotations = [_hlabel(ex.entry, '#60a5fa', 'Entry $' + ex.entry),
+                       _hlabel(ex.sl, '#ef4444', 'SL $' + ex.sl)];
+  if (ex.tp != null) {
+    shapes.push(_hline(ex.tp, '#22c55e', 'dot'));
+    annotations.push(_hlabel(ex.tp, '#22c55e', 'TP $' + ex.tp));
+  }
   const layout = {
     height: 180, margin: { l: 44, r: 10, t: 18, b: 18 },
     paper_bgcolor: '#0f1117', plot_bgcolor: '#0f1117',
@@ -737,10 +747,8 @@ function renderMiniChart(elId, ex) {
              tickangle: 0, rangeslider: { visible: false }, fixedrange: true },
     yaxis: { showgrid: true, gridcolor: '#1d2029', color: '#4b5563',
              tickprefix: '$', fixedrange: true, nticks: 5 },
-    shapes: [_hline(ex.entry, '#60a5fa'), _hline(ex.tp, '#22c55e', 'dot'), _hline(ex.sl, '#ef4444', 'dot')],
-    annotations: [_hlabel(ex.entry, '#60a5fa', 'Entry $' + ex.entry),
-                  _hlabel(ex.tp, '#22c55e', 'TP $' + ex.tp),
-                  _hlabel(ex.sl, '#ef4444', 'SL $' + ex.sl)],
+    shapes: shapes,
+    annotations: annotations,
   };
   Plotly.newPlot(el, [candle, markers], layout, { displayModeBar: false, responsive: true });
 }
