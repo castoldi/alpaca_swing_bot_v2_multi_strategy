@@ -16,6 +16,10 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 _Changes landed but not yet released under a new version number go here._
 
+### Added
+- Designed a persistent Alpaca SIP market-data cache and a cumulative
+  2016–present backtest workflow with incremental refreshes, IPO-aware ticker
+  coverage, and yearly result summaries.
 
 
 
