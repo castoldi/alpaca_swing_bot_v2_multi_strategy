@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import pytest
 
 import data_feed
 
@@ -26,3 +27,28 @@ def test_completed_bars_does_not_trim_four_hour_data():
 def test_alpaca_timeframe_accepts_only_supported_values():
     assert data_feed._timeframe_parts("4h") == (4, "Hour")
     assert data_feed._timeframe_parts("1d") == (1, "Day")
+
+
+def test_feed_options_select_requested_alpaca_feed():
+    from alpaca.data.enums import DataFeed
+
+    assert data_feed._feed_options("iex")["feed"] == DataFeed.IEX
+    assert data_feed._feed_options("sip")["feed"] == DataFeed.SIP
+
+
+def test_fetch_bars_strict_mode_propagates_client_failure(monkeypatch):
+    class BrokenClient:
+        def get_stock_bars(self, _request):
+            raise RuntimeError("download failed")
+
+    monkeypatch.setattr(data_feed, "_get_client", lambda: BrokenClient())
+
+    with pytest.raises(RuntimeError, match="download failed"):
+        data_feed.fetch_bars(
+            "AMD",
+            date(2024, 1, 1),
+            date(2024, 1, 2),
+            "4h",
+            feed="sip",
+            strict=True,
+        )

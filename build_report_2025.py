@@ -295,8 +295,15 @@ def params_html_for_strategy(strat: StrategyType) -> str:
                 f"[{p.mr_tp_floor_pct*100:.0f}%, {p.mr_tp_cap_pct*100:.0f}%] · time stop if breakeven+")
 
 
-def build_report_2025(strategy_results: dict, per_strategy_details: dict, overall_best: str) -> str:
-    """Build the full HTML report for 2025 backtest."""
+def build_report_2025(
+    strategy_results: dict,
+    per_strategy_details: dict,
+    overall_best: str | None,
+    *,
+    report_label: str = "2025 Backtest",
+    data_source: str = "Alpaca SIP historical data",
+) -> str:
+    """Build a full HTML report with a caller-supplied range label."""
     strat_sections = []
     for sname, sdata in sorted(strategy_results.items(), key=lambda x: x[1]["total_pnl"], reverse=True):
         sdata["max_drawdown_pct"] = compute_max_drawdown(sdata.get("_trades", []))
@@ -381,8 +388,8 @@ def build_report_2025(strategy_results: dict, per_strategy_details: dict, overal
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-<style>{CSS}</style><title>Alpaca Swing Bot V2 — 2025 Backtest</title></head><body>
-<div class="header"><h1>📊 Alpaca Swing Bot V2<span class="badge">2025 Backtest</span></h1>
+<style>{CSS}</style><title>Alpaca Swing Bot V2 — {report_label}</title></head><body>
+<div class="header"><h1>📊 Alpaca Swing Bot V2<span class="badge">{report_label}</span></h1>
 <div class="subtitle">{len(strategy_results)} strategies · {len(TICKERS)} tickers · real market data</div></div>
 <div class="container">
   <h2>Strategy Comparison</h2>
@@ -398,7 +405,7 @@ def build_report_2025(strategy_results: dict, per_strategy_details: dict, overal
   <h2>Ticker Detail</h2>
   {"".join(ticker_sections) if ticker_sections else "<p class='muted'>No trades for any ticker.</p>"}
   <div class="params" style="margin-top:20px">
-    <strong>System:</strong> ALIENWARE 16 · RTX 5050 4GB · yfinance live data · Generated {now_str}
+    <strong>System:</strong> ALIENWARE 16 · RTX 5050 4GB · {data_source} · Generated {now_str}
   </div>
 </div></body></html>"""
     return html

@@ -22,7 +22,23 @@ def test_sma_cross_report_metadata():
     assert "No take profit" in text
 
 
-def test_daily_backtest_history_drops_the_still_forming_session(monkeypatch):
+def test_report_accepts_history_label_and_source():
+    from build_report_2025 import build_report_2025
+
+    html = build_report_2025(
+        {},
+        {},
+        None,
+        report_label="2016–Present Backtest",
+        data_source="Alpaca SIP historical data",
+    )
+
+    assert "2016–Present Backtest" in html
+    assert "Alpaca SIP historical data" in html
+    assert "yfinance live data" not in html
+
+
+def test_backtest_history_uses_sip_cache_and_drops_current_daily(monkeypatch):
     import backtest_2025
 
     today = pd.Timestamp.now(tz="America/New_York").date()
@@ -37,10 +53,19 @@ def test_daily_backtest_history_drops_the_still_forming_session(monkeypatch):
         },
         index=index,
     )
-    monkeypatch.setattr(backtest_2025.data_feed, "fetch_bars", lambda *_args: bars)
+
+    calls = []
+
+    class FakeCache:
+        def get_bars(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return bars
+
+    monkeypatch.setattr(backtest_2025, "_MARKET_CACHE", FakeCache())
 
     result = backtest_2025.download_history(
         "AMD", date(2026, 1, 1), date(2026, 12, 31), timeframe="1d"
     )
 
+    assert calls[0][1]["feed"] == "sip"
     assert list(result.index.date) == [today - pd.Timedelta(days=1)]

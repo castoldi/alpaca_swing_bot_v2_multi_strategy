@@ -25,6 +25,7 @@ from logger_setup import get_logger
 from strategies import REGISTRY, get_enabled, Trade, add_indicators, backtest_ticker
 from dashboard import db as db_mod
 import data_feed
+from market_cache import MarketDataCache
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
@@ -47,14 +48,20 @@ STRATEGY_COLORS = OrderedDict([
     ("sma_50_cross", "#38bdf8"),
 ])
 
+_MARKET_CACHE = MarketDataCache()
+
 
 def download_history(
     ticker: str, start: date, end: date, timeframe: str = BAR_TIMEFRAME
 ) -> pd.DataFrame:
     """Fetch strategy-timeframe bars with a warmup window for indicators."""
     warmup_start = start - timedelta(days=HISTORY_WARMUP_DAYS)
-    bars = data_feed.fetch_bars(
-        ticker, warmup_start, end + timedelta(days=1), timeframe
+    bars = _MARKET_CACHE.get_bars(
+        ticker,
+        warmup_start,
+        end + timedelta(days=1),
+        timeframe,
+        feed="sip",
     )
     return data_feed.completed_bars(bars, timeframe)
 

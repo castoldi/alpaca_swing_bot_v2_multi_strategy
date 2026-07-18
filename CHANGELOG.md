@@ -21,13 +21,31 @@ _Changes landed but not yet released under a new version number go here._
   whole-share annual-reset backtest compounding.
 - Designed 20%-of-equity live position sizing and whole-share annual backtest
   compounding, with each calendar year resetting to a fresh $1,000 portfolio.
-- Designed a persistent Alpaca SIP market-data cache and a cumulative
-  2016–present backtest workflow with incremental refreshes, IPO-aware ticker
-  coverage, and yearly result summaries.
-- Added the test-first implementation plan for the historical cache and
-  2016–present backtest runner.
 
 
+
+
+## [0.10.0] - 2026-07-18
+
+### Added
+- Added a transactional SQLite cache for Alpaca SIP bars with incremental
+  prefix/suffix refreshes, IPO-aware empty-range coverage, and idempotent
+  OHLCV upserts.
+- Added a cumulative 2016–present historical backtest runner with HTML and JSON
+  outputs, yearly strategy summaries, cached data coverage metadata, and
+  optional date/strategy selection.
+- Added the approved design and test-first implementation plan for persistent
+  historical market data and the range backtest workflow.
+
+### Fixed
+- Historical download failures now propagate in strict mode instead of being
+  recorded as successfully cached empty data.
+
+### Changed
+- Historical backtests now use consolidated Alpaca SIP data through the local
+  cache, while live bot market data remains on IEX.
+- Long-running bot, dashboard, backtest, and pytest processes now use separate
+  rotating log files to avoid Windows file-handler conflicts.
 
 ## [0.9.0] - 2026-07-18
 
@@ -266,3 +284,4 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+

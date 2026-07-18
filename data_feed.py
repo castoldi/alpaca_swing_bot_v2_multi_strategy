@@ -73,12 +73,16 @@ def _timeframe_parts(timeframe: str) -> tuple[int, str]:
     raise ValueError(f"Unsupported timeframe: {timeframe}")
 
 
-def _feed_options() -> dict:
+def _feed_options(feed: str = "iex") -> dict:
     try:
         from alpaca.data.enums import Adjustment, DataFeed
-        return {"feed": DataFeed.IEX, "adjustment": Adjustment.ALL}
     except Exception:
         return {}
+    feeds = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
+    normalized = feed.lower()
+    if normalized not in feeds:
+        raise ValueError(f"Unsupported stock feed: {feed}")
+    return {"feed": feeds[normalized], "adjustment": Adjustment.ALL}
 
 
 def fetch_bars(
@@ -86,6 +90,9 @@ def fetch_bars(
     start: Union[date, datetime],
     end: Union[date, datetime],
     timeframe: str = BAR_TIMEFRAME,
+    *,
+    feed: str = "iex",
+    strict: bool = False,
 ) -> pd.DataFrame:
     """Bars for ``ticker`` in [start, end]. Empty DataFrame on failure."""
     try:
@@ -98,12 +105,14 @@ def fetch_bars(
             timeframe=TimeFrame(amount, getattr(TimeFrameUnit, unit_name)),
             start=_as_dt(start),
             end=_as_dt(end),
-            **_feed_options(),
+            **_feed_options(feed),
         )
         bars = _get_client().get_stock_bars(req)
         return _normalize(bars.df, ticker)
     except Exception as e:
-        log.warning("fetch_bars(%s, %s) failed: %s", ticker, timeframe, e)
+        if strict:
+            raise
+        log.warning("fetch_bars(%s, %s, %s) failed: %s", ticker, timeframe, feed, e)
         return pd.DataFrame(columns=_OHLCV)
 
 

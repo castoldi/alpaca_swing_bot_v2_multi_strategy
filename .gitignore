@@ -26,6 +26,7 @@ ENV/
 # Logs and reports
 logs/
 reports/
+cache/
 
 # Runtime PID / heartbeat state (scripts/manage.ps1, runtime.py)
 run/
