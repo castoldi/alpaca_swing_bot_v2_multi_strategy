@@ -461,8 +461,9 @@ async function loadHome() {
     Object.assign(badge.style, summary.is_paper
       ? {background:'#22c55e20',color:'#22c55e',borderColor:'#22c55e40'}
       : {background:'#ef444420',color:'#ef4444',borderColor:'#ef444440'});
+    const timeframeLabel = (summary.timeframes || [summary.timeframe || '4h']).join(' + ');
     document.getElementById('subtitle').textContent =
-      `${(summary.tickers||[]).join(' · ')}  ·  ${(summary.timeframe||'4h')} candles  ·  $${summary.dollars_per_trade||200}/trade  ·  $${summary.max_capital||1000} cap`;
+      `${(summary.tickers||[]).join(' · ')}  ·  ${timeframeLabel} candles  ·  $${summary.dollars_per_trade||200}/trade  ·  $${summary.max_capital||1000} cap`;
 
     // KPIs
     document.getElementById('kpis').innerHTML = `
@@ -470,7 +471,7 @@ async function loadHome() {
       <div class="kpi"><div class="label">Win Rate</div><div class="value">${summary.win_rate||0}%</div><div class="sub">${summary.wins||0}W / ${summary.losses||0}L</div></div>
       <div class="kpi"><div class="label">Profit Factor</div><div class="value">${summary.profit_factor||0}</div><div class="sub">Gross P&L ratio</div></div>
       <div class="kpi"><div class="label">Open Positions</div><div class="value">${summary.open_positions||0}</div><div class="sub">Deployed $${summary.deployed||0}</div></div>
-      <div class="kpi"><div class="label">Strategies</div><div class="value" style="font-size:16px">6</div><div class="sub">V1 + V2 active</div></div>
+      <div class="kpi"><div class="label">Strategies</div><div class="value" style="font-size:16px">${summary.strategy_count||0}</div><div class="sub">configured</div></div>
     `;
 
     // (Open positions are rendered live from Alpaca by loadLive().)

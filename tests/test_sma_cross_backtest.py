@@ -49,3 +49,21 @@ def test_signal_exit_backtest_honors_gap_through_stop_without_time_exit():
     )[0]
     assert trade.exit_price == 90
     assert trade.exit_reason == "gap_stop"
+
+
+def test_signal_exit_backtest_honors_intraday_emergency_stop():
+    rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100}
+        for _ in range(50)
+    ]
+    rows += [
+        {"open": 101, "high": 103, "low": 100, "close": 102},
+        {"open": 103, "high": 104, "low": 102, "close": 103},
+        {"open": 100, "high": 101, "low": 92, "close": 100},
+    ]
+    trade = backtest_ticker(
+        bars(rows), "TEST", pd.Timestamp("2026-01-01"),
+        PARAMS, REGISTRY["sma_50_cross"],
+    )[0]
+    assert trade.exit_price == 92.7
+    assert trade.exit_reason == "stop_loss"

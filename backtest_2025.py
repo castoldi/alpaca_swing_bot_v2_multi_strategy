@@ -1,4 +1,4 @@
-"""Full-year 2025 backtest — all 6 strategies on real market data.
+"""Full-year 2025 backtest — all registered strategies on real market data.
 
 Downloads ~2 years of history from yfinance, runs every strategy on every
 trading day of 2025, applies per-strategy portfolio caps, and writes a
@@ -53,9 +53,10 @@ def download_history(
 ) -> pd.DataFrame:
     """Fetch strategy-timeframe bars with a warmup window for indicators."""
     warmup_start = start - timedelta(days=HISTORY_WARMUP_DAYS)
-    return data_feed.fetch_bars(
+    bars = data_feed.fetch_bars(
         ticker, warmup_start, end + timedelta(days=1), timeframe
     )
+    return data_feed.completed_bars(bars, timeframe)
 
 
 def apply_portfolio_cap(trades: list[Trade], dollars_per_trade: float, cap: float) -> tuple[list[Trade], int]:

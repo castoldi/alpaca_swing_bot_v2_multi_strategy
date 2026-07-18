@@ -89,7 +89,7 @@ notifier.py        Gmail SMTP alerts
 
 ## Strategy architecture
 
-All 6 strategies live in `strategy.py`. The shared exit engine (`simulate_exit_scaleout`) handles the 3-leg TP ladder and stepped stop for all of them.
+All 7 strategies live in `strategies/`. The six 4-hour strategies share the 3-leg TP ladder and stepped-stop exit engine; `sma_50_cross` uses its dedicated daily cross exit with an emergency stop.
 
 | Strategy | Key entry condition | SL | TP | Max hold |
 |----------|--------------------|----|-----|---------|

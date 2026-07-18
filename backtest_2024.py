@@ -1,4 +1,4 @@
-"""Full-year 2024 backtest — all 6 strategies on real market data.
+"""Full-year 2024 backtest — all registered strategies on real market data.
 
 Usage:
     python backtest_2024.py                         # all strategies

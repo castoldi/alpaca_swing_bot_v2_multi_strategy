@@ -431,8 +431,29 @@ def _reconcile_and_exit(
             except Exception:
                 pos = None  # Alpaca raises when there is no position for the symbol
 
+            # A previously submitted market exit owns this trade until Alpaca
+            # confirms that it filled or reached a terminal unfilled state.
+            # Never place a second sell while the first is still live/unknown.
+            if trade.get("exit_alpaca_order_id") and _reconcile_pending_exit(tc, trade):
+                continue
+
             if pos is None:
+                if trade.get("exit_intent_reason") and _finalize_accumulated_exit(
+                    trade, trade["exit_intent_reason"]
+                ):
+                    continue
                 _reconcile_closed(tc, trade)
+                continue
+
+            # Durable intent survives a crash or ambiguous submit failure even
+            # after the protective stop has already been canceled.
+            if trade.get("exit_intent_reason"):
+                _resume_exit_intent(tc, trade, pos)
+                continue
+
+            # Recover older crash-window orders created before intent persistence
+            # existed. Owned client ids make those exits safely adoptable.
+            if _adopt_untracked_exit(tc, trade):
                 continue
 
             if strat_obj.exit_mode == "signal_with_stop":
@@ -475,7 +496,6 @@ def _reconcile_closed(tc, trade: dict):
     order itself never filled and was later canceled/expired by the broker."""
     ticker = trade["ticker"]
     entry = float(trade["entry_price"])
-    shares = float(trade.get("shares") or 0)
 
     if _entry_never_filled(tc, trade):
         db_mod.close_trade(trade["id"], datetime.now(timezone.utc).isoformat(), entry,
@@ -492,25 +512,9 @@ def _reconcile_closed(tc, trade: dict):
                     ticker, trade.get("id"), trade.get("client_order_id"))
         return False
 
-    exit_price = exit_fill["price"]
-    exit_coid = exit_fill["client_order_id"]
-    exit_id = exit_fill["alpaca_order_id"]
-    if exit_fill.get("shares"):
-        shares = exit_fill["shares"] or shares
-    strat_obj = REGISTRY.get(trade.get("strategy", ""))
-    reason = (
-        "stop_loss"
-        if strat_obj is not None and strat_obj.exit_mode == "signal_with_stop"
-        else "bracket_filled"
+    return _record_confirmed_exit(
+        trade, exit_fill, _exit_reason_for_fill(trade, exit_fill)
     )
-
-    pnl = (exit_price - entry) * shares
-    pnl_pct = (exit_price - entry) / entry if entry else 0.0
-    db_mod.close_trade(trade["id"], datetime.now(timezone.utc).isoformat(), exit_price,
-                       reason, _days_held(trade["entry_date"]), shares, pnl, pnl_pct,
-                       exit_client_order_id=exit_coid, exit_alpaca_order_id=exit_id)
-    log.info("  Reconciled exit: %s closed @ $%.2f (%s) pnl=$%.2f", ticker, exit_price, reason, pnl)
-    return True
 
 
 def _entry_never_filled(tc, trade: dict) -> bool:
@@ -589,6 +593,219 @@ def _exit_fill_from_order(order, require_prefix: bool) -> dict | None:
     }
 
 
+def _exit_progress_from_order(order, require_prefix: bool = False) -> dict | None:
+    """Cumulative fill progress, including terminal partially-filled orders."""
+    coid = str(getattr(order, "client_order_id", "") or "")
+    if require_prefix and not coid.startswith(CLIENT_ORDER_PREFIX):
+        return None
+    order_id = str(getattr(order, "id", "") or "")
+    qty = float(getattr(order, "filled_qty", 0) or 0)
+    avg = getattr(order, "filled_avg_price", None)
+    if not order_id or qty <= 0 or avg is None:
+        return None
+    price = float(avg)
+    return {
+        "price": price,
+        "client_order_id": getattr(order, "client_order_id", None),
+        "alpaca_order_id": order_id,
+        "shares": qty,
+        "notional": qty * price,
+    }
+
+
+def _exit_reason_for_fill(trade: dict, fill: dict) -> str:
+    """Infer why a broker fill closed the trade from the owned order id."""
+    coid = str(fill.get("client_order_id") or "")
+    strat_obj = REGISTRY.get(trade.get("strategy", ""))
+    if "-exit-" in coid:
+        return (
+            "sma_cross_down"
+            if strat_obj is not None and strat_obj.exit_mode == "signal_with_stop"
+            else "time_stop"
+        )
+    return (
+        "stop_loss"
+        if strat_obj is not None and strat_obj.exit_mode == "signal_with_stop"
+        else "bracket_filled"
+    )
+
+
+def _finalize_accumulated_exit(
+    trade: dict, reason: str, reference_fill: dict | None = None
+) -> bool:
+    """Close once durable broker fills cover the bot-owned share quantity."""
+    ticker = trade["ticker"]
+    entry = float(trade["entry_price"])
+    try:
+        total_shares, total_notional = db_mod.get_exit_fill_totals(trade["id"])
+        if total_shares <= 0:
+            return False
+        owned_shares = float(trade.get("shares") or 0)
+        if owned_shares > 0 and total_shares < owned_shares - 1e-9:
+            return False
+        exit_price = total_notional / total_shares
+        pnl = total_notional - entry * total_shares
+        pnl_pct = (exit_price - entry) / entry if entry else 0.0
+        reference_fill = reference_fill or {}
+        db_mod.close_trade(
+            trade["id"],
+            datetime.now(timezone.utc).isoformat(),
+            exit_price,
+            reason,
+            _days_held(trade["entry_date"]),
+            total_shares,
+            pnl,
+            pnl_pct,
+            exit_client_order_id=(
+                reference_fill.get("client_order_id")
+                or trade.get("exit_client_order_id")
+            ),
+            exit_alpaca_order_id=(
+                reference_fill.get("alpaca_order_id")
+                or trade.get("exit_alpaca_order_id")
+            ),
+        )
+    except Exception as e:
+        log.error("  Confirmed %s exit could not be recorded: %s", ticker, e)
+        return False
+
+    log.info(
+        "  Reconciled exit: %s closed @ $%.2f (%s) pnl=$%.2f",
+        ticker,
+        exit_price,
+        reason,
+        pnl,
+    )
+    send_notification(
+        f"Bot V2: {ticker} exit ({trade['strategy']})",
+        f"Filled x{total_shares:g} @ ${exit_price:.2f}\nReason {reason}\n"
+        f"PnL ${pnl:.2f}\nRef "
+        f"{reference_fill.get('client_order_id') or trade.get('exit_client_order_id') or 'n/a'}",
+    )
+    return True
+
+
+def _record_confirmed_exit(trade: dict, fill: dict, reason: str) -> bool:
+    """Idempotently record a broker fill, then finalize if owned shares are done."""
+    try:
+        shares = float(fill.get("shares") or 0)
+        db_mod.record_exit_order_progress(
+            trade["id"],
+            fill.get("alpaca_order_id") or "",
+            fill.get("client_order_id"),
+            shares,
+            float(fill.get("notional") or shares * float(fill["price"])),
+        )
+    except Exception as e:
+        log.error("  Confirmed %s exit fill could not be recorded: %s", trade["ticker"], e)
+        return False
+    return _finalize_accumulated_exit(trade, reason, fill)
+
+
+def _reconcile_pending_exit(tc, trade: dict) -> bool:
+    """Reconcile a submitted exit; True means no new exit may be placed now."""
+    exit_id = trade.get("exit_alpaca_order_id")
+    exit_coid = trade.get("exit_client_order_id")
+    if not exit_id:
+        return False
+
+    try:
+        order = tc.get_order_by_id(exit_id)
+    except Exception as e:
+        log.warning(
+            "  %s pending exit status unavailable (%s) — blocking duplicate sell",
+            trade["ticker"],
+            e,
+        )
+        return True
+
+    progress = _exit_progress_from_order(order, require_prefix=True)
+    if progress is not None:
+        db_mod.record_exit_order_progress(
+            trade["id"],
+            progress["alpaca_order_id"],
+            progress["client_order_id"],
+            progress["shares"],
+            progress["notional"],
+        )
+
+    status = _status_str(order)
+    if status in ("filled", "closed"):
+        if progress is None:
+            log.warning("  %s exit reports %s without fill details", trade["ticker"], status)
+            return True
+        completed = _record_confirmed_exit(
+            trade, progress, trade.get("exit_intent_reason") or _exit_reason_for_fill(trade, progress)
+        )
+        if not completed:
+            db_mod.clear_exit_pending(trade["id"])
+            log.warning(
+                "  %s filled exit covered only part of the owned quantity; retained intent",
+                trade["ticker"],
+            )
+        return True
+
+    if status in ("canceled", "expired", "rejected"):
+        reason = trade.get("exit_intent_reason") or _exit_reason_for_fill(
+            trade,
+            progress or {"client_order_id": exit_coid},
+        )
+        if _finalize_accumulated_exit(trade, reason, progress):
+            return True
+        db_mod.clear_exit_pending(trade["id"])
+        log.warning(
+            "  %s exit order %s ended %s; recorded any partial fill and retained intent",
+            trade["ticker"],
+            exit_id or exit_coid,
+            status,
+        )
+        return True
+
+    return True
+
+
+def _adopt_untracked_exit(tc, trade: dict) -> bool:
+    """Adopt an owned exit submitted before its DB pending write completed."""
+    if trade.get("exit_alpaca_order_id") or trade.get("exit_client_order_id"):
+        return False
+
+    marker = f"{CLIENT_ORDER_PREFIX}-exit-{trade['strategy']}-{trade['ticker']}-"
+    for order in _our_sell_orders(tc, trade["ticker"]):
+        coid = str(getattr(order, "client_order_id", "") or "")
+        if not coid.startswith(marker) or not _order_is_after_trade(order, trade):
+            continue
+
+        fill = _exit_fill_from_order(order, require_prefix=True)
+        if fill is not None:
+            if not db_mod.exit_order_already_used(fill["alpaca_order_id"]):
+                _record_confirmed_exit(
+                    trade, fill, _exit_reason_for_fill(trade, fill)
+                )
+                return True
+            continue
+
+        if _status_str(order) in ("canceled", "expired", "rejected"):
+            continue
+
+        exit_id = str(getattr(order, "id", "") or "")
+        try:
+            db_mod.set_exit_pending(trade["id"], coid, exit_id)
+            log.warning(
+                "  Adopted untracked pending exit %s for %s after restart",
+                exit_id or coid,
+                trade["ticker"],
+            )
+        except Exception as e:
+            log.error(
+                "  %s owned exit found but pending DB state still failed: %s",
+                trade["ticker"],
+                e,
+            )
+        return True
+
+    return False
+
+
 def _order_is_after_trade(order, trade: dict) -> bool:
     trade_ts = _parse_timestamp(trade.get("created_at")) or _parse_timestamp(trade.get("entry_date"))
     order_ts = (
@@ -611,58 +828,315 @@ def _parse_timestamp(value):
         return None
 
 
-def _close_owned(tc, trade: dict, pos, reason: str):
-    """Close ONLY the quantity this bot opened, after cancelling our own bracket legs."""
-    ticker = trade["ticker"]
-    entry = float(trade["entry_price"])
-    our_qty = float(trade.get("shares") or 0)
-    pos_qty = abs(float(pos.qty))
-    qty_to_close = int(min(our_qty, pos_qty)) if our_qty > 0 else int(pos_qty)
-    if qty_to_close < 1:
-        log.warning("  %s: nothing to close (our_qty=%s pos_qty=%s)", ticker, our_qty, pos_qty)
-        return
+def _cancel_attached_signal_stop(tc, trade: dict) -> tuple[bool, list]:
+    """Cancel and confirm the stop attached to a signal-exit OTO entry.
 
-    # Free the shares by cancelling the still-open SL/TP legs of OUR entry order only.
+    This is deliberately fail-closed: an unconfirmed stop can still reserve or
+    sell the shares, so the crossover market sell must not race it.
+    """
+    from alpaca.trading.requests import GetOrderByIdRequest
+
+    active = {"new", "accepted", "held", "pending_new", "partially_filled"}
+    canceling = {"pending_cancel"}
+    safely_inactive = {"canceled", "expired", "rejected"}
+    entry_id = trade.get("alpaca_order_id")
+    if not entry_id:
+        log.error("  %s cross exit blocked: entry order id is missing", trade["ticker"])
+        return False, []
+
+    def nested_entry():
+        return tc.get_order_by_id(
+            entry_id, filter=GetOrderByIdRequest(nested=True)
+        )
+
+    try:
+        entry_order = nested_entry()
+    except Exception as e:
+        log.error(
+            "  %s cross exit blocked: attached stop could not be inspected: %s",
+            trade["ticker"],
+            e,
+        )
+        return False, []
+
+    legs = list(getattr(entry_order, "legs", None) or [])
+    if not legs:
+        log.error(
+            "  %s cross exit blocked: OTO entry has no visible attached stop",
+            trade["ticker"],
+        )
+        return False, []
+
+    leg_ids = {str(getattr(leg, "id", "") or "") for leg in legs}
+    if "" in leg_ids:
+        log.error("  %s cross exit blocked: attached stop id is missing", trade["ticker"])
+        return False, []
+
+    for leg in legs:
+        status = _status_str(leg)
+        if status in ("filled", "closed"):
+            log.warning(
+                "  %s cross exit blocked: attached stop %s is already %s",
+                trade["ticker"],
+                leg.id,
+                status,
+            )
+            return False, [leg]
+        if status in safely_inactive:
+            continue
+        if status in canceling:
+            continue
+        if status not in active:
+            log.error(
+                "  %s cross exit blocked: attached stop %s has unknown status %s",
+                trade["ticker"],
+                leg.id,
+                status,
+            )
+            return False, legs
+        try:
+            tc.cancel_order_by_id(leg.id)
+            log.info("  Requested cancellation of attached stop %s for %s", leg.id, trade["ticker"])
+        except Exception as e:
+            log.error(
+                "  %s cross exit blocked: attached stop %s could not be canceled: %s",
+                trade["ticker"],
+                leg.id,
+                e,
+            )
+            return False, legs
+
+    # Alpaca cancellation is asynchronous. Refetch the nested parent until every
+    # leg is terminal, with a short bounded wait; otherwise leave the position alone.
+    confirmed_legs = legs
+    for attempt in range(5):
+        try:
+            confirmed_legs = [tc.get_order_by_id(leg_id) for leg_id in leg_ids]
+            statuses = {
+                str(getattr(leg, "id", "") or ""): _status_str(leg)
+                for leg in confirmed_legs
+            }
+        except Exception as e:
+            log.error(
+                "  %s cross exit blocked: stop cancellation could not be confirmed: %s",
+                trade["ticker"],
+                e,
+            )
+            return False, []
+
+        if all(statuses.get(leg_id) in safely_inactive for leg_id in leg_ids):
+            return True, confirmed_legs
+        if any(statuses.get(leg_id) in ("filled", "closed") for leg_id in leg_ids):
+            return False, confirmed_legs
+        if attempt < 4:
+            time.sleep(0.2)
+
+    log.error(
+        "  %s cross exit blocked: attached stop cancellation was not confirmed",
+        trade["ticker"],
+    )
+    return False, confirmed_legs
+
+
+def _cancel_owned_legs_best_effort(tc, trade: dict):
+    """Release legacy bracket shares without weakening their existing behavior."""
     try:
         from alpaca.trading.requests import GetOrderByIdRequest
         entry_id = trade.get("alpaca_order_id")
-        if entry_id:
-            entry_order = tc.get_order_by_id(entry_id, filter=GetOrderByIdRequest(nested=True))
-            for leg in (getattr(entry_order, "legs", None) or []):
-                if _status_str(leg) in (
-                        "new", "accepted", "held", "pending_new", "partially_filled"):
-                    try:
-                        tc.cancel_order_by_id(leg.id)
-                        log.info("  Cancelled bracket leg %s for %s", leg.id, ticker)
-                    except Exception as e:
-                        log.debug("  Could not cancel leg %s: %s", getattr(leg, "id", "?"), e)
+        if not entry_id:
+            return
+        entry_order = tc.get_order_by_id(
+            entry_id, filter=GetOrderByIdRequest(nested=True)
+        )
+        for leg in (getattr(entry_order, "legs", None) or []):
+            if _status_str(leg) in (
+                "new", "accepted", "held", "pending_new", "partially_filled"
+            ):
+                try:
+                    tc.cancel_order_by_id(leg.id)
+                    log.info("  Cancelled bracket leg %s for %s", leg.id, trade["ticker"])
+                except Exception as e:
+                    log.debug("  Could not cancel leg %s: %s", getattr(leg, "id", "?"), e)
     except Exception as e:
-        log.debug("  Could not inspect bracket legs for %s: %s", ticker, e)
+        log.debug("  Could not inspect bracket legs for %s: %s", trade["ticker"], e)
 
-    exit_coid = _make_client_order_id(trade["strategy"], ticker, "exit")
-    exit_id = ""
+
+def _account_order_progress(trade: dict, order, require_prefix: bool = False) -> dict | None:
+    progress = _exit_progress_from_order(order, require_prefix=require_prefix)
+    if progress is not None:
+        db_mod.record_exit_order_progress(
+            trade["id"],
+            progress["alpaca_order_id"],
+            progress["client_order_id"],
+            progress["shares"],
+            progress["notional"],
+        )
+    return progress
+
+
+def _execute_exit_intent(
+    tc, trade: dict, pos, reason: str, exit_coid: str
+) -> bool:
+    """Cancel protection, refresh quantity, and submit the persisted intent."""
+    ticker = trade["ticker"]
+    strat_obj = REGISTRY.get(trade.get("strategy", ""))
+    stop_progress: list[dict] = []
+
+    if strat_obj is not None and strat_obj.exit_mode == "signal_with_stop":
+        safe_to_sell, stop_orders = _cancel_attached_signal_stop(tc, trade)
+        for stop_order in stop_orders:
+            progress = _account_order_progress(trade, stop_order)
+            if progress is not None:
+                stop_progress.append(progress)
+        if stop_progress and _finalize_accumulated_exit(
+            trade, "stop_loss", stop_progress[-1]
+        ):
+            return False
+        if not safe_to_sell:
+            # A fully filled stop may have finished the exit while cancellation
+            # was being attempted. Record it, but never race it with a market sell.
+            try:
+                tc.get_open_position(ticker)
+            except Exception:
+                if stop_progress:
+                    _record_confirmed_exit(trade, stop_progress[-1], "stop_loss")
+            return False
+    else:
+        _cancel_owned_legs_best_effort(tc, trade)
+
+    # Cancellation is asynchronous, so the position used to decide the exit may
+    # now be stale. Refetch and subtract every durable partial fill before sizing.
+    try:
+        live_pos = tc.get_open_position(ticker)
+    except Exception:
+        live_pos = None
+
+    filled_shares, _filled_notional = db_mod.get_exit_fill_totals(trade["id"])
+    our_qty = float(trade.get("shares") or 0)
+    remaining_ours = max(0.0, our_qty - filled_shares) if our_qty > 0 else 0.0
+    if live_pos is None:
+        if _finalize_accumulated_exit(
+            trade, reason, stop_progress[-1] if stop_progress else None
+        ):
+            return False
+        _reconcile_closed(tc, trade)
+        return False
+
+    pos_qty = abs(float(live_pos.qty))
+    qty_to_close = int(min(remaining_ours, pos_qty)) if our_qty > 0 else int(pos_qty)
+    if qty_to_close < 1:
+        if _finalize_accumulated_exit(
+            trade, reason, stop_progress[-1] if stop_progress else None
+        ):
+            return False
+        log.warning(
+            "  %s: no remaining owned shares to close (filled=%s pos=%s)",
+            ticker,
+            filled_shares,
+            pos_qty,
+        )
+        return False
+
     try:
         from alpaca.trading.requests import MarketOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
-        sell = MarketOrderRequest(symbol=ticker, qty=qty_to_close, side=OrderSide.SELL,
-                                  time_in_force=TimeInForce.DAY, client_order_id=exit_coid)
+        sell = MarketOrderRequest(
+            symbol=ticker,
+            qty=qty_to_close,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+            client_order_id=exit_coid,
+        )
         order = tc.submit_order(sell)
         exit_id = str(getattr(order, "id", "") or "")
-        log.info("  Closed bot position %s x%d (%s) [coid=%s]", ticker, qty_to_close, reason, exit_coid)
+        log.info(
+            "  Submitted bot exit %s x%d (%s) [coid=%s]",
+            ticker,
+            qty_to_close,
+            reason,
+            exit_coid,
+        )
     except Exception as e:
-        log.error("  Failed to close %s: %s", ticker, e)
-        return
+        # Intent and client id were persisted before protection was removed.
+        # The same unique client id is retried, so an ambiguous broker response
+        # cannot create two exit orders.
+        log.error("  Failed to submit %s exit; durable intent retained: %s", ticker, e)
+        return False
 
-    current = float(pos.current_price)
-    pnl = (current - entry) * qty_to_close
-    pnl_pct = (current - entry) / entry if entry else 0.0
-    db_mod.close_trade(trade["id"], datetime.now(timezone.utc).isoformat(), current,
-                       reason, _days_held(trade["entry_date"]), qty_to_close, pnl, pnl_pct,
-                       exit_client_order_id=exit_coid, exit_alpaca_order_id=exit_id)
-    send_notification(
-        f"Bot V2: {ticker} exit ({trade['strategy']})",
-        f"Closed x{qty_to_close} @ ~${current:.2f}\nReason {reason}\nPnL ${pnl:.2f}\nRef {exit_coid}"
+    try:
+        db_mod.set_exit_pending(trade["id"], exit_coid, exit_id)
+    except Exception as e:
+        log.error("  %s exit submitted but pending DB state failed: %s", ticker, e)
+
+    progress = _account_order_progress(trade, order, require_prefix=True)
+    if _status_str(order) in ("filled", "closed") and progress is not None:
+        _record_confirmed_exit(trade, progress, reason)
+    return True
+
+
+def _resume_exit_intent(tc, trade: dict, pos) -> bool:
+    """Resume a durable exit regardless of whether the latest bars still cross."""
+    reason = trade.get("exit_intent_reason")
+    if not reason:
+        return False
+    exit_coid = trade.get("exit_client_order_id")
+    if not exit_coid:
+        exit_coid = _make_client_order_id(trade["strategy"], trade["ticker"], "exit")
+        try:
+            db_mod.set_exit_intent(trade["id"], reason, exit_coid)
+        except Exception as e:
+            log.error("  %s exit intent could not be refreshed: %s", trade["ticker"], e)
+            return True
+
+    # A submit may have succeeded just before the process lost its response or
+    # before SQLite stored the Alpaca id. Adopt it by the persisted unique id.
+    try:
+        existing = tc.get_order_by_client_id(exit_coid)
+    except Exception:
+        existing = None
+    if existing is not None:
+        exit_id = str(getattr(existing, "id", "") or "")
+        db_mod.set_exit_pending(trade["id"], exit_coid, exit_id)
+        pending_trade = dict(
+            trade,
+            exit_client_order_id=exit_coid,
+            exit_alpaca_order_id=exit_id,
+        )
+        _reconcile_pending_exit(tc, pending_trade)
+        return True
+
+    intent_trade = dict(
+        trade,
+        exit_client_order_id=exit_coid,
+        exit_intent_reason=reason,
     )
+    return _execute_exit_intent(tc, intent_trade, pos, reason, exit_coid)
+
+
+def _close_owned(tc, trade: dict, pos, reason: str) -> bool:
+    """Persist exit intent before changing protection, then execute it."""
+    ticker = trade["ticker"]
+    if (
+        trade.get("exit_intent_reason")
+        or trade.get("exit_alpaca_order_id")
+        or trade.get("exit_client_order_id")
+    ):
+        log.warning("  %s already has an exit lifecycle — duplicate sell blocked", ticker)
+        return False
+
+    exit_coid = _make_client_order_id(trade["strategy"], ticker, "exit")
+    try:
+        db_mod.set_exit_intent(trade["id"], reason, exit_coid)
+    except Exception as e:
+        log.error("  %s exit blocked: intent could not be persisted: %s", ticker, e)
+        return False
+
+    intent_trade = dict(
+        trade,
+        exit_client_order_id=exit_coid,
+        exit_intent_reason=reason,
+    )
+    return _execute_exit_intent(tc, intent_trade, pos, reason, exit_coid)
 
 
 _ET = ZoneInfo("America/New_York")

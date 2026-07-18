@@ -31,6 +31,10 @@ _Changes landed but not yet released under a new version number go here._
 - Dashboard strategy examples and cards now respect per-strategy timeframes, label SMA exits, and omit take-profit visuals for strategies without a target; README, agent guidance, and research logs document the seventh strategy and its evaluation.
 
 ### Fixed
+- Dashboard Home metadata now reports both configured timeframes (`4h + 1d`) instead of implying that the new daily strategy also runs on 4-hour candles.
+- Dashboard and generated reports now derive the strategy count from the registry/results instead of retaining the old hardcoded count of six.
+- Current-year daily backtests now discard the still-forming session candle before evaluating SMA crosses.
+- Live crossover exits now persist durable intent before changing protection, fail closed unless Alpaca confirms the attached OTO stop is canceled, refresh the remaining position quantity after cancellation, and remain pending until broker fills are confirmed. Partial stop/market fills are accumulated idempotently for correct weighted exit P&L, while restarts and failed submissions resume the exit even after the one-bar cross condition has passed.
 
 ### Changed
 - Added `.worktrees/` to `.gitignore` so isolated feature checkouts cannot be staged as project content.

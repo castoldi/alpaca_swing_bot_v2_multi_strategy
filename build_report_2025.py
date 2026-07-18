@@ -383,7 +383,7 @@ def build_report_2025(strategy_results: dict, per_strategy_details: dict, overal
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>{CSS}</style><title>Alpaca Swing Bot V2 — 2025 Backtest</title></head><body>
 <div class="header"><h1>📊 Alpaca Swing Bot V2<span class="badge">2025 Backtest</span></h1>
-<div class="subtitle">6 strategies · {len(TICKERS)} tickers · real market data</div></div>
+<div class="subtitle">{len(strategy_results)} strategies · {len(TICKERS)} tickers · real market data</div></div>
 <div class="container">
   <h2>Strategy Comparison</h2>
   {comparison_table}
