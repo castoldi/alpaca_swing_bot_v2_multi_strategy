@@ -44,7 +44,7 @@ An exit signal exists only when:
 
 The exact-cross requirement prevents repeated orders on every day that price remains on one side of the average. After an emergency stop, the strategy waits for a new down-cross followed by a new up-cross before re-entering.
 
-The entry signal price is the completed daily close. Live execution is the next eligible market order, so the fill may differ. The protective stop submitted with the entry is 10% below the signal close. A cross-down exit cancels the remaining stop leg before selling only the quantity proven to belong to this bot.
+The entry signal price is the completed daily close. Live execution is the next eligible market order, so the fill may differ. Immediately before submission, a fresh market snapshot supplies the sizing reference and places the protective stop 10% below that reference; a missing or invalid snapshot causes a safe skip. A cross-down exit cancels the remaining stop leg before selling only the quantity proven to belong to this bot.
 
 ## Architecture
 
@@ -74,7 +74,7 @@ This path emits one `Trade` per position and bypasses TP reachability, scale-out
 
 ### Live orders and reconciliation
 
-The entry uses an Alpaca OTO market order with only a stop-loss leg. OTO is the broker-supported way to activate a stop after an entry fills without adding a take-profit. The existing whole-share sizing and `$200/trade` skip behavior remain unchanged.
+The entry uses an Alpaca OTO market order with only a stop-loss leg. OTO is the broker-supported way to activate a stop after an entry fills without adding a take-profit. A fresh market snapshot determines whole-share sizing and the 10% stop reference. The existing `$200/trade` skip behavior remains unchanged.
 
 The live loop retains the indicator-enriched daily frames it fetched. During reconciliation, an open SMA 50 Cross trade is closed with reason `sma_cross_down` when its latest completed frame reports an exit cross. The normal ownership proof, stop cancellation, order correlation IDs, database recording, and notifications remain mandatory. Existing strategies continue through stepped-stop and time-stop reconciliation.
 
@@ -91,7 +91,7 @@ README, AGENTS, research log, CLI choices, colors, and strategy counts are updat
 - Fewer than 51 completed daily bars produces no signal.
 - Missing or non-finite SMA/price data produces no signal.
 - The live bot never acts on an incomplete daily candle.
-- A stop price invalidated by an extreme opening gap causes the entry to be skipped rather than submitted without protection.
+- A missing, non-finite, or non-positive live snapshot causes the entry to be skipped rather than submitted without protection.
 - Failed ownership verification blocks a crossover sale.
 - Existing singleton process controls remain unchanged; dashboard and bot restarts use `scripts/manage.ps1` only.
 - Paper trading remains hardcoded.
