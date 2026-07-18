@@ -1,4 +1,4 @@
-"""Market data feed — 4h OHLCV bars from Alpaca.
+"""Market data feed — 4h and daily OHLCV bars from Alpaca.
 
 yfinance has no native 4h interval and only serves intraday history for the last
 ~730 days (so 2024 is unavailable). Alpaca's historical data API serves 4h bars
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Union
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -23,6 +24,7 @@ log = get_logger(__name__)
 
 _client = None
 _OHLCV = ["open", "high", "low", "close", "volume"]
+_ET = ZoneInfo("America/New_York")
 
 
 def _get_client():
@@ -63,35 +65,80 @@ def _normalize(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return df
 
 
-def fetch_4h(ticker: str, start: Union[date, datetime], end: Union[date, datetime]) -> pd.DataFrame:
-    """4h bars for ``ticker`` in [start, end]. Empty DataFrame on failure."""
+def _timeframe_parts(timeframe: str) -> tuple[int, str]:
+    if timeframe == "4h":
+        return 4, "Hour"
+    if timeframe == "1d":
+        return 1, "Day"
+    raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+
+def _feed_options() -> dict:
     try:
+        from alpaca.data.enums import Adjustment, DataFeed
+        return {"feed": DataFeed.IEX, "adjustment": Adjustment.ALL}
+    except Exception:
+        return {}
+
+
+def fetch_bars(
+    ticker: str,
+    start: Union[date, datetime],
+    end: Union[date, datetime],
+    timeframe: str = BAR_TIMEFRAME,
+) -> pd.DataFrame:
+    """Bars for ``ticker`` in [start, end]. Empty DataFrame on failure."""
+    try:
+        amount, unit_name = _timeframe_parts(timeframe)
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-        try:
-            from alpaca.data.enums import DataFeed, Adjustment
-            extra = {"feed": DataFeed.IEX, "adjustment": Adjustment.ALL}
-        except Exception:
-            extra = {}
+
         req = StockBarsRequest(
             symbol_or_symbols=ticker,
-            timeframe=TimeFrame(4, TimeFrameUnit.Hour),
+            timeframe=TimeFrame(amount, getattr(TimeFrameUnit, unit_name)),
             start=_as_dt(start),
             end=_as_dt(end),
-            **extra,
+            **_feed_options(),
         )
         bars = _get_client().get_stock_bars(req)
         return _normalize(bars.df, ticker)
     except Exception as e:
-        log.warning("fetch_4h(%s) failed: %s", ticker, e)
+        log.warning("fetch_bars(%s, %s) failed: %s", ticker, timeframe, e)
         return pd.DataFrame(columns=_OHLCV)
 
 
-def fetch_recent_4h(ticker: str, days: int = 120) -> pd.DataFrame:
-    """Most recent ~``days`` of 4h bars (for the live bot and dashboard charts)."""
+def fetch_recent(
+    ticker: str, days: int = 120, timeframe: str = BAR_TIMEFRAME
+) -> pd.DataFrame:
+    """Most recent bars for live trading and dashboard charts."""
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-    return fetch_4h(ticker, start, end)
+    return fetch_bars(ticker, start, end, timeframe)
+
+
+def completed_bars(
+    df: pd.DataFrame, timeframe: str, as_of: datetime | None = None
+) -> pd.DataFrame:
+    """Remove the still-forming current daily candle from live evaluations."""
+    if timeframe != "1d" or df.empty:
+        return df
+    current = as_of or datetime.now(_ET)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=_ET)
+    session_date = current.astimezone(_ET).date()
+    return df[pd.Index(df.index.date) < session_date].copy()
+
+
+def fetch_4h(
+    ticker: str, start: Union[date, datetime], end: Union[date, datetime]
+) -> pd.DataFrame:
+    """Compatibility wrapper for 4h bars."""
+    return fetch_bars(ticker, start, end, "4h")
+
+
+def fetch_recent_4h(ticker: str, days: int = 120) -> pd.DataFrame:
+    """Compatibility wrapper for recent 4h bars."""
+    return fetch_recent(ticker, days, "4h")
 
 
 def fetch_snapshots(tickers: list[str]) -> dict:

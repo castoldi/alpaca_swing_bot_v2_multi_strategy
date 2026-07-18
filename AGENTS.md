@@ -4,10 +4,10 @@
 
 V2 is an **autoresearch-inspired** swing trading bot with autonomous strategy experimentation. Built on the foundation of V1 but with:
 
-- **6 strategies** (3 V1 + 3 V2): Trend Pullback, Breakout, Mean Reversion, **MACD Momentum**, **Ensemble** (weighted vote), **Regime Adaptive**
+- **7 strategies** (3 V1 + 4 V2): Trend Pullback, Breakout, Mean Reversion, **MACD Momentum**, **Ensemble** (weighted vote), **Regime Adaptive**, **SMA 50 Cross** (daily)
 - **Autonomous research loop** via `program.md` — agents can propose, backtest, evaluate, and log experiments
 - **SQLite database** tracking: trades, signals, bot runs, backtest runs, and research experiments
-- **Dashboard on port 8004** (`http://localhost:8004`) — multi-tab SPA with Home (live positions, trades, backtest DB), Strategies (all 6 with entry rules + 3-year P&L), and per-year Plotly reports (2024/2025/2026)
+- **Dashboard on port 8004** (`http://localhost:8004`) — multi-tab SPA with Home (live positions, trades, backtest DB), Strategies (all 7 with entry rules + 3-year P&L), and per-year Plotly reports (2024/2025/2026)
 - **Research modules**: `research/optimizer.py` (param search), `research/regime_detector.py` (market regime classifier)
 
 ## Quick start
@@ -18,7 +18,7 @@ cd C:\Data\ai_projects\alpaca_swing_bot_v2_multi_strategy
 .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Backtest all 6 strategies (writes to dashboard/swing_bot_v2.db)
+# Backtest all 7 strategies (writes to dashboard/swing_bot_v2.db)
 python backtest_2024.py
 python backtest_2025.py
 python backtest_2026.py
@@ -82,7 +82,8 @@ The bot runs **one strategy per process**. `--strategy` selects which one (defau
 ```
 alpaca_swing_bot_v2_multi_strategy/
 ├── config.py                  # Enhanced config with V2 strategy params
-├── strategy.py                # 6 strategies + indicators + backtest engine
+├── strategy.py                # Compatibility shim for the strategy package
+├── strategies/                # 7 strategies + shared indicators/backtest engines
 ├── bot.py                     # Live Alpaca paper trader
 ├── backtest_2024.py           # 2024 full-year multi-strategy backtest
 ├── backtest_2025.py           # 2025 full-year multi-strategy backtest
@@ -157,7 +158,7 @@ the one-time install command above after a fresh clone (otherwise no auto tag/pu
 5. **LOG** — Call `db_mod.log_experiment(...)` or add to `research/experiments.md`
 6. **REPEAT**
 
-## All 6 strategies — entry rules and performance
+## All 7 strategies — entry rules and performance
 
 | Strategy | Entry conditions | SL | TP | Max hold | 2025 P&L | 2026 P&L |
 |----------|-----------------|----|----|----------|----------|----------|
@@ -167,8 +168,9 @@ the one-time install command above after a fresh clone (otherwise no auto tag/pu
 | **momentum_macd** | MACD histogram just crossed above 0, RSI > 50 rising, price > SMA(20) and SMA(50) | 9% | 2.5×ATR [4%, 12%] | 6d | +$13.31 | +$35.99 |
 | **ensemble** | Weighted vote ≥ 0.30: regime(0.35) + MACD(0.25) + trend(0.20) + breakout(0.15) + MR(0.05) | 9% | 2.5×ATR [4%, 12%] | 6d | +$199.92 | +$331.78 |
 | **regime** | EMA(10)/EMA(50) cross: risk-on = buy dips in uptrend, risk-off = oversold bounces only, neutral = trend-pullback-like | adaptive | ATR-based [3%, 8%] | 5d | +$85.69 | +$239.86 |
+| **sma_50_cross** | Completed daily close crosses from ≤ SMA(50) to > SMA(50); exit on the opposite daily cross | 10% emergency | none | until cross | +$262.87 | +$392.68 |
 
-All strategies share: TP reachability filter (must be reachable in ≤2 ATR-days), one position per ticker, $200/trade, $1,000 max concurrent capital.
+All strategies share one position per ticker, $200/trade, and $1,000 max concurrent capital. The six bracket strategies use the TP reachability filter; `sma_50_cross` has no TP and bypasses it.
 
 ## Research ideas — status
 
@@ -197,6 +199,7 @@ All strategies share: TP reachability filter (must be reachable in ≤2 ATR-days
 - **Alpaca paper only**: `paper=True` is hardcoded in `bot.py` regardless of `.env` — this is intentional
 - **Ensemble threshold**: currently 0.30 (tightened from 0.25 on 2026-05-28) — check `strategy.py:467` if tuning
 - **Ensemble warmup**: requires 60+ bars before first signal; regime needs 50+ bars for EMA(50)
+- **SMA 50 Cross timeframe**: this strategy alone uses completed daily candles (`1d`). It needs 51 completed daily bars, enters on a fresh cross above SMA(50), exits on a fresh cross below, and never acts on the current incomplete session.
 - **OCO brackets / high-priced stocks**: Alpaca requires whole shares for bracket (SL/TP) orders. With `dollars_per_trade=$200`, a stock priced >$200 gives `qty=0`, so the bot now **skips it entirely** (no order, no email). This replaced the old notional-buy fallback, which placed unprotected positions and spammed "Qty 0" emails every loop. Raise `dollars_per_trade` in `config.py` to trade those names.
 - **Never start duplicates**: start the bot/dashboard only via `scripts/manage.ps1` — two `--loop` bots email the user twice over. PIDs live in `run/`.
 - **DB population**: backtests write to `dashboard/swing_bot_v2.db` — run both backtest scripts before opening the dashboard or it will appear empty

@@ -21,7 +21,8 @@ from backtest_2025 import (
     STRATEGY_COLORS, compute_stats, per_ticker_stats, compute_max_drawdown,
     apply_portfolio_cap, download_history,
 )
-from strategy import add_indicators, Trade, StrategyType
+from config import StrategyType
+from strategy import add_indicators, Trade
 
 
 def dark_template():
@@ -85,13 +86,14 @@ def monthly_pnl_figure(all_trades: list[Trade]) -> str:
 def exit_reason_pie(all_trades: list[Trade]) -> str:
     if not all_trades:
         return "<p class='muted'>No trades.</p>"
-    tp = sum(1 for t in all_trades if t.exit_reason == "take_profit")
-    sl = sum(1 for t in all_trades if t.exit_reason == "stop_loss")
+    tp = sum(1 for t in all_trades if t.exit_reason in {"take_profit", "tp1", "tp2", "tp3"})
+    sl = sum(1 for t in all_trades if t.exit_reason in {"stop_loss", "gap_stop"})
     ts = sum(1 for t in all_trades if t.exit_reason == "time_stop")
+    cross = sum(1 for t in all_trades if t.exit_reason == "sma_cross_down")
     fig = go.Figure()
-    fig.add_trace(go.Pie(labels=["Take Profit", "Stop Loss", "Time Stop"],
-                         values=[tp, sl, ts],
-                         marker_colors=[PROFIT_COLOR, LOSS_COLOR, "#f59e0b"],
+    fig.add_trace(go.Pie(labels=["Take Profit", "Stop Loss", "SMA Cross", "Time Stop"],
+                         values=[tp, sl, cross, ts],
+                         marker_colors=[PROFIT_COLOR, LOSS_COLOR, "#38bdf8", "#f59e0b"],
                          textinfo="label+percent", hole=0.4))
     fig.update_layout(title="Exit Reason Distribution", height=320,
                       template=dark_template(), margin=dict(l=20, r=20, t=50, b=20))
@@ -115,9 +117,10 @@ def ticker_chart(ticker: str, df: pd.DataFrame, trades: list[Trade]) -> str:
 
     strategy_colors_map = {"trend_pullback": "#3b82f6", "breakout": "#f59e0b",
                            "mean_reversion": "#8b5cf6", "momentum_macd": "#34d399",
-                           "ensemble": "#f472b6", "regime": "#fb923c"}
+                           "ensemble": "#f472b6", "regime": "#fb923c",
+                           "sma_50_cross": "#38bdf8"}
     for t in trades:
-        color = strategy_colors_map.get(t.strategy.split("_")[0], PROFIT_COLOR if t.pnl_dollars > 0 else LOSS_COLOR)
+        color = strategy_colors_map.get(t.strategy, PROFIT_COLOR if t.pnl_dollars > 0 else LOSS_COLOR)
         fig.add_trace(go.Scatter(x=[t.entry_date], y=[t.entry_price], mode="markers",
                                  marker=dict(symbol="triangle-up", size=10, color=color,
                                              line=dict(color="white", width=0.8)),
@@ -214,9 +217,10 @@ def render_trades_table(trades: list[Trade]) -> str:
     rows = []
     for t in sorted(trades, key=lambda x: x.entry_date):
         cls = "pos" if t.pnl_dollars > 0 else "neg"
+        target = f"${t.take_profit:.2f}" if t.take_profit > 0 else "—"
         rows.append(f"<tr><td>{t.entry_date.strftime('%Y-%m-%d')}</td><td>{t.exit_date.strftime('%Y-%m-%d')}</td>"
                     f"<td>${t.entry_price:.2f}</td><td>${t.exit_price:.2f}</td><td>${t.stop_loss:.2f}</td>"
-                    f"<td>${t.take_profit:.2f}</td><td>{t.bars_held}d</td>"
+                    f"<td>{target}</td><td>{t.bars_held}d</td>"
                     f"<td>{t.exit_reason.replace('_', ' ')}</td><td style='font-size:11px'>{t.strategy}</td>"
                     f"<td class='{cls}'>{fmt_money(t.pnl_dollars)}</td><td class='{cls}'>{fmt_pct(t.pnl_pct)}</td></tr>")
     return ("<div class='table-wrap'><table><thead><tr><th>Entry</th><th>Exit</th><th>Entry $</th><th>Exit $</th>"
@@ -254,7 +258,7 @@ def strategy_kpi_cards(strat_name: str, s: dict) -> str:
         <div class="strategy-kpi"><div class="label">Win Rate</div><div class="value">{s['win_rate']*100:.1f}%</div><div class="sub">Avg win {s['avg_win_pct']:.1f}% · Avg loss {s['avg_loss_pct']:.1f}%</div></div>
         <div class="strategy-kpi"><div class="label">Total P&amp;L</div><div class="value {pnl_cls}">{fmt_money(s['total_pnl'])}</div><div class="sub">Avg {fmt_pct(s['avg_pnl_pct'])} per trade</div></div>
         <div class="strategy-kpi"><div class="label">Profit Factor</div><div class="value">{pf_str}</div><div class="sub">Avg held {s['avg_bars_held']:.1f}d</div></div>
-        <div class="strategy-kpi"><div class="label">Exit Split</div><div class="value" style="font-size:14px">TP {s['tp_count']} · SL {s['sl_count']} · Time {s['time_count']}</div></div>
+        <div class="strategy-kpi"><div class="label">Exit Split</div><div class="value" style="font-size:14px">TP {s['tp_count']} · SL {s['sl_count']} · Cross {s.get('signal_count', 0)} · Time {s['time_count']}</div></div>
         <div class="strategy-kpi"><div class="label">Best / Worst</div><div class="value" style="font-size:16px">{fmt_pct(s['best_pct'])} / {fmt_pct(s['worst_pct'])}</div><div class="sub">Max DD {fmt_pct(s.get('max_drawdown_pct', 0))}</div></div>
       </div></div>"""
 
@@ -281,6 +285,10 @@ def params_html_for_strategy(strat: StrategyType) -> str:
         return (f"<strong>Regime Adaptive:</strong> ${p.dollars_per_trade:.0f}/trade · "
                 f"SL {p.stop_loss_pct*100:.0f}% · TP {p.atr_tp_multiple}×ATR · "
                 f"Risk-on/off via EMA cross")
+    elif strat == StrategyType.SMA_50_CROSS:
+        return (f"<strong>SMA 50 Cross:</strong> ${p.dollars_per_trade:.0f}/trade · "
+                f"Daily close vs SMA(50) · SL {p.sma_cross_stop_loss_pct*100:.0f}% · "
+                "No take profit · exit on cross below")
     else:
         return (f"<strong>Mean Reversion:</strong> ${p.dollars_per_trade:.0f}/trade · "
                 f"SL {p.mr_stop_loss_pct*100:.0f}% · TP {p.mr_atr_multiple}×ATR "
@@ -375,7 +383,7 @@ def build_report_2025(strategy_results: dict, per_strategy_details: dict, overal
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>{CSS}</style><title>Alpaca Swing Bot V2 — 2025 Backtest</title></head><body>
 <div class="header"><h1>📊 Alpaca Swing Bot V2<span class="badge">2025 Backtest</span></h1>
-<div class="subtitle">6 strategies · {len(TICKERS)} tickers · real market data</div></div>
+<div class="subtitle">{len(strategy_results)} strategies · {len(TICKERS)} tickers · real market data</div></div>
 <div class="container">
   <h2>Strategy Comparison</h2>
   {comparison_table}

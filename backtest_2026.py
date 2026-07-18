@@ -1,4 +1,4 @@
-"""Full-year 2026 backtest — all 6 strategies on real market data.
+"""Full-year 2026 backtest — all registered strategies on real market data.
 
 Usage:
     python backtest_2026.py                         # all strategies
@@ -39,19 +39,19 @@ from build_report_2025 import (
 
 def run_full_backtest() -> int:
     log.info("=== 2026 Multi-Strategy Backtest (V2) ===")
-    log.info("Downloading history for %d tickers from yfinance...", len(TICKERS))
-
-    ticker_data: dict[str, pd.DataFrame] = {}
-    for tk in TICKERS:
-        log.info("Downloading %s...", tk)
-        df = download_history(tk, BACKTEST_START, BACKTEST_END)
-        if df.empty or len(df) < PARAMS.sma_slow + 5:
-            log.warning("%s: insufficient data — skipping", tk)
-            ticker_data[tk] = pd.DataFrame()
-            continue
-        ticker_data[tk] = df
-
     strategies_to_run = get_enabled()
+    timeframes = sorted({strategy.timeframe for strategy in strategies_to_run})
+    log.info("Downloading %d tickers for timeframes %s...", len(TICKERS), timeframes)
+
+    ticker_data: dict[tuple[str, str], pd.DataFrame] = {}
+    for timeframe in timeframes:
+        for tk in TICKERS:
+            log.info("Downloading %s (%s)...", tk, timeframe)
+            df = download_history(tk, BACKTEST_START, BACKTEST_END, timeframe)
+            if df.empty or len(df) < PARAMS.sma_slow + 5:
+                log.warning("%s (%s): insufficient data — skipping", tk, timeframe)
+                df = pd.DataFrame()
+            ticker_data[(tk, timeframe)] = df
 
     strategy_results = {}
     per_strategy_details = {}
@@ -67,10 +67,10 @@ def run_full_backtest() -> int:
         per_ticker: dict[str, tuple[pd.DataFrame, list[Trade]]] = {}
         all_candidate_trades: list[Trade] = []
 
-        bt_id = db_mod.start_backtest_run(2026, strat_name, BAR_TIMEFRAME)
+        bt_id = db_mod.start_backtest_run(2026, strat_name, strategy.timeframe)
 
         for tk in TICKERS:
-            df = ticker_data.get(tk)
+            df = ticker_data.get((tk, strategy.timeframe))
             if df is None or df.empty:
                 continue
             window_start = pd.Timestamp(BACKTEST_START)
@@ -125,9 +125,9 @@ def run_single(strategy_name: str) -> int:
     log.info("Single-strategy backtest: %s (2026)", strat.name)
     ticker_data: dict[str, pd.DataFrame] = {}
     for tk in TICKERS:
-        df = download_history(tk, BACKTEST_START, BACKTEST_END)
+        df = download_history(tk, BACKTEST_START, BACKTEST_END, strat.timeframe)
         ticker_data[tk] = df if not df.empty and len(df) >= PARAMS.sma_slow + 5 else pd.DataFrame()
-    bt_id = db_mod.start_backtest_run(2026, strat.name, BAR_TIMEFRAME)
+    bt_id = db_mod.start_backtest_run(2026, strat.name, strat.timeframe)
     all_trades: list[Trade] = []
     per_ticker: dict = {}
     for tk in TICKERS:

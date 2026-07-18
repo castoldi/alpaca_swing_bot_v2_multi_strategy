@@ -18,8 +18,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import PARAMS, TICKERS, StrategyType, BAR_TIMEFRAME
-from strategy import add_indicators, get_entry_checker, simulate_exit
+from config import PARAMS, TICKERS, BAR_TIMEFRAME
+from strategy import add_indicators, simulate_exit
+from strategies import get_all
+from strategies.base import backtest_signal_exit_ticker
 from logger_setup import get_logger
 import data_feed
 
@@ -38,20 +40,51 @@ _mem: dict = {"ts": 0.0, "data": None}
 
 # ── data ──────────────────────────────────────────────────────────────────────
 
-def _fetch_bars(ticker: str, days: int = _HISTORY_DAYS) -> pd.DataFrame:
-    """Recent 4h bars (Alpaca via data_feed) for building chart examples."""
-    return data_feed.fetch_recent_4h(ticker, days=days)
+def _fetch_bars(
+    ticker: str, timeframe: str, days: int = _HISTORY_DAYS
+) -> pd.DataFrame:
+    """Recent strategy-timeframe bars for building chart examples."""
+    df = data_feed.fetch_recent(ticker, days=days, timeframe=timeframe)
+    return data_feed.completed_bars(df, timeframe)
 
 
-def _build_example(ticker: str, idx: int, sig, df: pd.DataFrame) -> dict:
-    exit_date, exit_price, reason, bars_held = simulate_exit(df, idx, sig, PARAMS)
+def _target_value(strategy, value: float):
+    return round(float(value), 2) if strategy.has_take_profit else None
+
+
+def _build_example(ticker: str, idx: int, sig, df: pd.DataFrame, strategy) -> dict | None:
+    entry_idx = idx
+    entry_price = float(sig.entry_price)
+    stop_loss = float(sig.stop_loss)
+    take_profit = float(sig.take_profit)
+
+    if strategy.exit_mode == "signal_with_stop":
+        trades = backtest_signal_exit_ticker(
+            df, ticker, pd.Timestamp(sig.date), PARAMS, strategy
+        )
+        if not trades:
+            return None
+        trade = trades[0]
+        entry_idx = df.index.get_loc(trade.entry_date)
+        entry_price = float(trade.entry_price)
+        stop_loss = float(trade.stop_loss)
+        take_profit = float(trade.take_profit)
+        exit_date = trade.exit_date
+        exit_price = trade.exit_price
+        reason = trade.exit_reason
+        bars_held = trade.bars_held
+    else:
+        exit_date, exit_price, reason, bars_held = simulate_exit(
+            df, idx, sig, PARAMS
+        )
+
     try:
         exit_pos = df.index.get_loc(exit_date)
     except Exception:
-        exit_pos = min(idx + bars_held, len(df) - 1)
+        exit_pos = min(entry_idx + bars_held, len(df) - 1)
 
-    start = max(0, idx - _BARS_BEFORE)
-    end = min(len(df), max(exit_pos, idx) + _BARS_AFTER + 1)
+    start = max(0, entry_idx - _BARS_BEFORE)
+    end = min(len(df), max(exit_pos, entry_idx) + _BARS_AFTER + 1)
     win = df.iloc[start:end]
 
     bars = [{
@@ -62,15 +95,14 @@ def _build_example(ticker: str, idx: int, sig, df: pd.DataFrame) -> dict:
         "c": round(float(r["close"]), 2),
     } for d, r in win.iterrows()]
 
-    entry_price = float(sig.entry_price)
     pnl_pct = round((float(exit_price) / entry_price - 1.0) * 100, 2) if entry_price else 0.0
     return {
         "ticker": ticker,
         "bars": bars,
         "entry": round(entry_price, 2),
-        "sl": round(float(sig.stop_loss), 2),
-        "tp": round(float(sig.take_profit), 2),
-        "entryDate": df.index[idx].strftime("%Y-%m-%d"),
+        "sl": round(stop_loss, 2),
+        "tp": _target_value(strategy, take_profit),
+        "entryDate": df.index[entry_idx].strftime("%Y-%m-%d"),
         "exitDate": pd.Timestamp(exit_date).strftime("%Y-%m-%d"),
         "exitPrice": round(float(exit_price), 2),
         "exitReason": reason,
@@ -80,8 +112,8 @@ def _build_example(ticker: str, idx: int, sig, df: pd.DataFrame) -> dict:
     }
 
 
-def _examples_for_strategy(strategy_value: str, frames: dict[str, pd.DataFrame]) -> list[dict]:
-    checker = get_entry_checker(StrategyType(strategy_value))
+def _examples_for_strategy(strategy, frames: dict[str, pd.DataFrame]) -> list[dict]:
+    checker = strategy.check_entry
 
     # Collect every signal across the universe, newest first.
     hits: list[tuple[pd.Timestamp, str, int, object]] = []
@@ -97,8 +129,11 @@ def _examples_for_strategy(strategy_value: str, frames: dict[str, pd.DataFrame])
     hits.sort(key=lambda h: h[0], reverse=True)
     hits = hits[:80]  # only ever need the most recent handful
 
-    built = [(ticker, idx, _build_example(ticker, idx, sig, frames[ticker]))
-             for _d, ticker, idx, sig in hits]
+    built = []
+    for _date, ticker, idx, sig in hits:
+        example = _build_example(ticker, idx, sig, frames[ticker], strategy)
+        if example is not None:
+            built.append((ticker, idx, example))
 
     picked: list[dict] = []
     chosen: list[tuple[str, int]] = []  # (ticker, idx) already used
@@ -129,28 +164,38 @@ def _examples_for_strategy(strategy_value: str, frames: dict[str, pd.DataFrame])
 # ── public API ────────────────────────────────────────────────────────────────
 
 def _compute() -> dict:
-    frames: dict[str, pd.DataFrame] = {}
-    for ticker in TICKERS:
-        try:
-            df = _fetch_bars(ticker)
-            if df.empty or len(df) < _WARMUP + 5:
-                continue
-            frames[ticker] = add_indicators(df, PARAMS)
-        except Exception as e:
-            log.warning("strategy_examples: failed to fetch %s: %s", ticker, e)
+    strategies = get_all()
+    timeframes = sorted({strategy.timeframe for strategy in strategies})
+    frames_by_timeframe: dict[str, dict[str, pd.DataFrame]] = {}
+    universe: set[str] = set()
+    for timeframe in timeframes:
+        frames: dict[str, pd.DataFrame] = {}
+        for ticker in TICKERS:
+            try:
+                df = _fetch_bars(ticker, timeframe)
+                if df.empty or len(df) < _WARMUP + 5:
+                    continue
+                frames[ticker] = add_indicators(df, PARAMS)
+                universe.add(ticker)
+            except Exception as e:
+                log.warning("strategy_examples: failed to fetch %s (%s): %s",
+                            ticker, timeframe, e)
+        frames_by_timeframe[timeframe] = frames
 
     examples: dict[str, list[dict]] = {}
-    for strat in StrategyType:
+    for strategy in strategies:
         try:
-            examples[strat.value] = _examples_for_strategy(strat.value, frames)
+            frames = frames_by_timeframe.get(strategy.timeframe, {})
+            examples[strategy.name] = _examples_for_strategy(strategy, frames)
         except Exception as e:
-            log.error("strategy_examples: failed for %s: %s", strat.value, e)
-            examples[strat.value] = []
+            log.error("strategy_examples: failed for %s: %s", strategy.name, e)
+            examples[strategy.name] = []
 
     return {
         "generated_at": pd.Timestamp.now("UTC").isoformat(),
         "timeframe": BAR_TIMEFRAME,
-        "universe": list(frames.keys()),
+        "timeframes": {strategy.name: strategy.timeframe for strategy in strategies},
+        "universe": sorted(universe),
         "examples": examples,
     }
 
@@ -158,7 +203,10 @@ def _compute() -> dict:
 def _load_disk_cache() -> dict | None:
     try:
         if _CACHE_FILE.exists() and (time.time() - _CACHE_FILE.stat().st_mtime) < _TTL_SECONDS:
-            return json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+            data = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+            expected = {strategy.name for strategy in get_all()}
+            if set(data.get("examples", {})) == expected and data.get("timeframes"):
+                return data
     except Exception as e:
         log.debug("strategy_examples: disk cache read failed: %s", e)
     return None

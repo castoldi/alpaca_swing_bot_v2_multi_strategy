@@ -54,6 +54,17 @@ app = FastAPI(title="Alpaca Swing Bot V2 Dashboard")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+def _configured_timeframes() -> list[str]:
+    """Distinct strategy timeframes in display order."""
+    from strategies import get_all
+    return list(dict.fromkeys(strategy.timeframe for strategy in get_all()))
+
+
+def _configured_strategy_count() -> int:
+    from strategies import get_all
+    return len(get_all())
+
+
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
 @app.get("/api/positions")
@@ -92,6 +103,8 @@ async def get_summary():
     stats["dollars_per_trade"] = PARAMS.dollars_per_trade
     stats["tickers"] = TICKERS
     stats["timeframe"] = BAR_TIMEFRAME
+    stats["timeframes"] = _configured_timeframes()
+    stats["strategy_count"] = _configured_strategy_count()
     stats["is_paper"] = ALPACA_PAPER
     stats["now"] = datetime.now(timezone.utc).isoformat()
     return stats
@@ -235,7 +248,11 @@ async def get_signals(limit: int = Query(100, ge=1, le=500)):
 
 @app.get("/api/backtest-results")
 async def backtest_results(year: Optional[int] = None):
-    return {"results": db_mod.get_backtest_results(year), "timeframe": BAR_TIMEFRAME}
+    return {
+        "results": db_mod.get_backtest_results(year),
+        "timeframe": BAR_TIMEFRAME,
+        "timeframes": _configured_timeframes(),
+    }
 
 
 @app.get("/api/backtest-history")

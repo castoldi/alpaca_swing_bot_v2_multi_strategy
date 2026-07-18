@@ -90,6 +90,16 @@ def _ensure_tables():
                 combined_pnl REAL,
                 verdict TEXT DEFAULT 'pending'
             );
+            CREATE TABLE IF NOT EXISTS trade_exit_fills (
+                trade_id INTEGER NOT NULL,
+                alpaca_order_id TEXT NOT NULL,
+                client_order_id TEXT,
+                filled_qty REAL NOT NULL DEFAULT 0,
+                filled_notional REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (trade_id, alpaca_order_id),
+                FOREIGN KEY (trade_id) REFERENCES trades(id)
+            );
         """)
         _migrate(c)
 
@@ -106,6 +116,7 @@ def _migrate(c: sqlite3.Connection):
         "alpaca_order_id": "TEXT",       # Alpaca's order UUID for the entry
         "exit_client_order_id": "TEXT",  # correlation id of the closing order
         "exit_alpaca_order_id": "TEXT",  # Alpaca's order UUID for the exit
+        "exit_intent_reason": "TEXT",     # durable intent before protection is canceled
     }
     for col, decl in add.items():
         if col not in have:
@@ -179,22 +190,105 @@ def close_trade(db_id: int, exit_date: str, exit_price: float, reason: str,
         c.execute(
             "UPDATE trades SET exit_date=?, exit_price=?, exit_reason=?, bars_held=?, "
             "shares=?, pnl_dollars=?, pnl_pct=?, exit_client_order_id=?, "
-            "exit_alpaca_order_id=?, status='closed' WHERE id=?",
+            "exit_alpaca_order_id=?, exit_intent_reason=NULL, status='closed' WHERE id=?",
             (exit_date, exit_price, reason, bars_held, shares, pnl_dollars, pnl_pct,
              exit_client_order_id, exit_alpaca_order_id, db_id),
         )
 
 
-def exit_order_already_used(exit_alpaca_order_id: Optional[str]) -> bool:
-    """True if some other trade already claims this Alpaca order as its exit fill.
+def set_exit_intent(db_id: int, reason: str, exit_client_order_id: str):
+    """Persist why/how to exit before canceling any broker-side protection."""
+    with _con() as c:
+        c.execute(
+            "UPDATE trades SET exit_intent_reason=?, exit_client_order_id=?, "
+            "exit_alpaca_order_id=NULL WHERE id=? AND status='open'",
+            (reason, exit_client_order_id, db_id),
+        )
 
-    Guards against reconciliation attributing one broker fill to several DB rows.
+
+def set_exit_pending(
+    db_id: int,
+    exit_client_order_id: Optional[str],
+    exit_alpaca_order_id: Optional[str],
+):
+    """Attach a submitted exit order while leaving the trade open until it fills."""
+    with _con() as c:
+        c.execute(
+            "UPDATE trades SET exit_client_order_id=?, exit_alpaca_order_id=? "
+            "WHERE id=? AND status='open'",
+            (exit_client_order_id, exit_alpaca_order_id, db_id),
+        )
+
+
+def clear_exit_pending(db_id: int):
+    """Clear one terminal order but retain durable intent for a later retry."""
+    with _con() as c:
+        c.execute(
+            "UPDATE trades SET exit_client_order_id=NULL, exit_alpaca_order_id=NULL "
+            "WHERE id=? AND status='open'",
+            (db_id,),
+        )
+
+
+def record_exit_order_progress(
+    db_id: int,
+    alpaca_order_id: str,
+    client_order_id: Optional[str],
+    filled_qty: float,
+    filled_notional: float,
+):
+    """Idempotently retain cumulative fill progress for one broker order."""
+    if not alpaca_order_id or filled_qty <= 0:
+        return
+    with _con() as c:
+        c.execute(
+            """
+            INSERT INTO trade_exit_fills
+                (trade_id, alpaca_order_id, client_order_id, filled_qty,
+                 filled_notional, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trade_id, alpaca_order_id) DO UPDATE SET
+                client_order_id=COALESCE(excluded.client_order_id, client_order_id),
+                filled_notional=CASE
+                    WHEN excluded.filled_qty >= filled_qty
+                    THEN excluded.filled_notional ELSE filled_notional END,
+                filled_qty=MAX(filled_qty, excluded.filled_qty),
+                updated_at=excluded.updated_at
+            """,
+            (
+                db_id,
+                alpaca_order_id,
+                client_order_id,
+                float(filled_qty),
+                float(filled_notional),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+def get_exit_fill_totals(db_id: int) -> tuple[float, float]:
+    """Cumulative (shares, notional) across stop and market exit orders."""
+    with _con() as c:
+        row = c.execute(
+            "SELECT COALESCE(SUM(filled_qty), 0) AS qty, "
+            "COALESCE(SUM(filled_notional), 0) AS notional "
+            "FROM trade_exit_fills WHERE trade_id=?",
+            (db_id,),
+        ).fetchone()
+        return float(row["qty"]), float(row["notional"])
+
+
+def exit_order_already_used(exit_alpaca_order_id: Optional[str]) -> bool:
+    """True if a closed trade already claims this Alpaca order as its exit fill.
+
+    An open trade may carry the id while the order is pending, so open rows must
+    not hide their own eventual fill from reconciliation.
     """
     if not exit_alpaca_order_id:
         return False
     with _con() as c:
         row = c.execute(
-            "SELECT 1 FROM trades WHERE exit_alpaca_order_id=? LIMIT 1",
+            "SELECT 1 FROM trades WHERE exit_alpaca_order_id=? AND status='closed' LIMIT 1",
             (exit_alpaca_order_id,),
         ).fetchone()
         return row is not None

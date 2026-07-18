@@ -24,7 +24,7 @@ The agent follows this cycle autonomously:
 4. **Win rate > 55%** — Consistency matters
 5. **At least 20 trades/year** — Statistical significance
 
-## Current baseline (all 6 strategies, as of 2026-06-02):
+## Current baseline (all 7 strategies; SMA 50 Cross added 2026-07-18):
 
 Changes since last baseline: breakeven-gated time stop (no hard time stop — only exits at time stop if position is profitable), TP reachability filter raised from days=2 to days=4 (fixed breakout and momentum_macd being blocked by miscalibrated filter).
 
@@ -36,6 +36,7 @@ Changes since last baseline: breakeven-gated time stop (no hard time stop — on
 | MACD Momentum | +$55.59 | +$19.81 | +$16.92 | +$92.32 |
 | **Ensemble** | **+$340.02** | **+$180.87** | **+$308.00** | **+$828.89** 🏆 |
 | **Regime Adaptive** | **+$335.67** | **+$173.75** | **+$233.92** | **+$743.34** |
+| **SMA 50 Cross (daily)** | **+$8.15** | **+$262.87** | **+$392.68** | **+$663.70** |
 
 ## Research ideas to explore:
 
@@ -47,6 +48,7 @@ Changes since last baseline: breakeven-gated time stop (no hard time stop — on
 - [ ] Multi-timeframe confirmation (1h + daily)
 - [ ] Sector rotation overlay
 - [x] Earnings-date avoidance filter — ✅ **2026-06-02: +$65.22 combined for Trend Pullback** (+126% 2025, +22% 2026). Skip entries 3 trading days before earnings to avoid gap risk. First *new signal source* (not parameter tweak) to pass cross-year test. Applied to Trend Pullback only — Breakout didn't benefit.
+- [x] Daily SMA 50 price cross — ✅ **2026-07-18: +$655.55 across 2025–2026** on Alpaca daily bars. Long-only with a 10% emergency stop beat pure long-only, long/short reversal, and the shared TP/time-stop overlay in the option test. Added as an independent strategy without changing the six 4-hour strategies.
 - [ ] Correlation-based drawdown protection
 
 ## Fixed experiments:

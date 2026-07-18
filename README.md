@@ -14,13 +14,13 @@
 
 ---
 
-An automated swing trading bot that trades a focused universe of high-momentum US equities using six independently-tuned strategies. All execution is through the Alpaca brokerage API (paper trading by default) with a live FastAPI dashboard.
+An automated swing trading bot that trades a focused universe of high-momentum US equities using seven strategies. Six strategies use 4-hour candles; SMA 50 Cross uses completed daily candles. All execution is through the Alpaca brokerage API (paper trading by default) with a live FastAPI dashboard.
 
 ---
 
 ## What Is Swing Trading?
 
-Swing trading sits between day trading and long-term investing. Positions are held for **2–7 trading days**, aiming to capture short-term price "swings" — the natural ebb and flow of a stock's price over days rather than hours or months.
+Swing trading sits between day trading and long-term investing. Most positions are held for **2–7 trading days**; SMA 50 Cross holds until the daily trend crosses back below its average or its emergency stop fills.
 
 Each trade has three pre-defined levels set at entry:
 
@@ -28,9 +28,9 @@ Each trade has three pre-defined levels set at entry:
 |-------|---------|
 | **Entry price** | The price at which the position opens |
 | **Stop loss** | The maximum loss accepted — trade exits automatically if price falls here |
-| **Take profit** | The target where the position is closed for a gain |
+| **Take profit** | An optional target used by the six bracket-exit strategies |
 
-This means every trade's risk and reward are locked in the moment it opens — there is no holding and hoping.
+Every trade has a broker-held stop. SMA 50 Cross deliberately has no fixed profit target because its exit is the opposite moving-average cross.
 
 ---
 
@@ -57,10 +57,10 @@ Each stock is traded independently. The bot holds at most one position per ticke
 | Capital per trade | $200 |
 | Max concurrent capital | $1,000 (5 trades max) |
 | Default stop loss | 7–10% below entry (strategy-dependent) |
-| Default take profit | 3–12% above entry (capped by ATR) |
-| Max holding period | 3–7 days (strategy-dependent) |
+| Default take profit | 3–12% above entry for bracket strategies; none for SMA 50 Cross |
+| Max holding period | 3–7 days for bracket strategies; cross-driven for SMA 50 Cross |
 
-The take-profit target is **dynamically sized** using the Average True Range (ATR) — a measure of how much a stock typically moves each day. If the target is too far away to be hit within ~4 days based on recent daily ranges, the trade is skipped entirely (TP reachability filter).
+For the six bracket strategies, take-profit targets are **dynamically sized** using Average True Range (ATR). SMA 50 Cross bypasses that filter because it has no profit target.
 
 ---
 
@@ -147,7 +147,24 @@ The take-profit target is **dynamically sized** using the Average True Range (AT
 
 ---
 
-### 6. Ensemble (V2) — Recommended
+### 6. SMA 50 Cross (V2)
+
+**The idea:** Follow the simplest possible daily trend rule: buy a fresh close above the 50-day simple moving average and sell a fresh close below it.
+
+**Business logic:**
+- Use completed daily candles only; the current session never generates a signal
+- Buy when the previous close was at or below its SMA(50) and the latest close is above its SMA(50)
+- Sell when the previous close was at or above its SMA(50) and the latest close is below its SMA(50)
+- Attach a broker-held stop 10% below the live entry reference
+- Stay long-only; do not open short positions
+
+**In plain terms:** Enter once when the daily trend turns up, stay in while price remains above its 50-day average, and leave when that trend turns down. Exact-cross checks prevent a new order every day price remains above the line.
+
+**Exit:** 10% emergency stop · daily cross below SMA(50) · no take profit · no time stop
+
+---
+
+### 7. Ensemble (V2) — Recommended
 
 **The idea:** Instead of picking one strategy, run all five simultaneously and only trade when multiple strategies agree — reducing false signals and improving confidence.
 
@@ -170,14 +187,16 @@ A trade only opens when the weighted agreement score reaches **≥ 0.30** (30%).
 
 ---
 
-## Exit Framework (All Strategies)
+## Exit Framework
 
-All strategies share the same exit logic, checked in priority order each bar:
+The six bracket strategies share this exit logic, checked in priority order each 4-hour bar:
 
 1. **Stop Loss** — If the bar's *low* touches the stop level, exit at the stop price (loss capped)
 2. **Take Profit** — If the bar's *high* reaches the target, exit at the take-profit price (gain locked)
 3. **Time Stop** — After the max holding period, exit at close *only if the position is breakeven or better* (avoids locking in losses; the trade keeps running until SL or TP is hit if still underwater)
 4. **End of Data** — Exit at the final bar's close (backtest only)
+
+SMA 50 Cross uses a separate daily lifecycle: a 10% emergency stop has priority, then a confirmed daily cross below exits at the next session. It has no take-profit or time-stop exit.
 
 ---
 
@@ -185,10 +204,10 @@ All strategies share the same exit logic, checked in priority order each bar:
 
 | Indicator | What It Measures | Used By |
 |-----------|-----------------|---------|
-| **SMA(20/50)** | 20-day and 50-day Simple Moving Average — trend direction | All strategies |
+| **SMA(20/50)** | Simple Moving Averages — trend direction and daily price cross | All strategies; SMA 50 Cross uses SMA(50) directly |
 | **EMA(10/50)** | Exponential Moving Average — faster trend signals | Regime, Ensemble |
-| **RSI(14)** | Relative Strength Index — momentum and overbought/oversold | All strategies |
-| **ATR(14)** | Average True Range — daily volatility, used to size take-profit targets | All strategies |
+| **RSI(14)** | Relative Strength Index — momentum and overbought/oversold | Six bracket strategies |
+| **ATR(14)** | Average True Range — volatility used to size take-profit targets | Six bracket strategies |
 | **MACD(12,26,9)** | Moving Average Convergence Divergence — momentum crossover | MACD Momentum, Ensemble |
 | **Bollinger Bands(20)** | Price channel around moving average — deviation measure | Mean Reversion |
 | **Volume SMA(20)** | Average volume baseline | Breakout, MACD Momentum |
@@ -207,8 +226,9 @@ Backtested on NVDA, AMZN, META, AMD, ARM. $200 per trade, max $1,000 deployed at
 | MACD Momentum | +$13.31 | +$35.99 | +$49.30 |
 | **Ensemble** | **+$199.92** | **+$331.78** | **+$531.70** |
 | Regime Adaptive | +$85.69 | +$239.86 | **+$325.55** |
+| **SMA 50 Cross (daily)** | **+$262.87** | **+$392.68** | **+$655.55** |
 
-*Results as of 2026-06-02. Run the backtest scripts to regenerate with latest data.*
+*Legacy strategy results are the 2026-06-02 baseline. SMA 50 Cross results were generated from Alpaca daily bars on 2026-07-18. Run the backtest scripts to regenerate every row with current data.*
 
 ---
 
@@ -217,7 +237,8 @@ Backtested on NVDA, AMZN, META, AMD, ARM. $200 per trade, max $1,000 deployed at
 ```
 alpaca_swing_bot_v2_multi_strategy/
 ├── bot.py                  # Entry point — paper trades one strategy per run
-├── strategy.py             # All 6 strategy engines + shared exit framework
+├── strategy.py             # Compatibility shim for all 7 registered strategies
+├── strategies/             # One module per strategy + shared exit framework
 ├── config.py               # Parameters, universe, position sizing
 ├── backtest_2024.py        # Backtest runner for 2024 data
 ├── backtest_2025.py        # Backtest runner for 2025 data
@@ -274,6 +295,7 @@ python bot.py                                    # trend_pullback (default)
 python bot.py --strategy ensemble                # recommended
 python bot.py --strategy regime
 python bot.py --strategy breakout
+python bot.py --strategy sma_50_cross              # completed daily candles
 python bot.py --strategy momentum_macd
 python bot.py --strategy mean_reversion
 
@@ -290,7 +312,7 @@ python -c "from research.optimizer import random_search; from config import Stra
 | Route | Content |
 |-------|---------|
 | `/` | Home — KPIs, open positions, recent trades, all backtest results |
-| `/` → Strategies tab | All 6 strategy cards with entry rules and 3-year P&L |
+| `/` → Strategies tab | All 7 strategy cards with entry rules, timeframe, and 3-year P&L |
 | `/backtest-2024` | Full Plotly interactive report for 2024 |
 | `/backtest-2025` | Full Plotly interactive report for 2025 |
 | `/backtest-2026` | Full Plotly interactive report for 2026 |

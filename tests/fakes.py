@@ -13,6 +13,10 @@ class FakeOrder:
         self.side = getattr(req, "side", None)
         self.limit_price = getattr(req, "limit_price", None)
         self.stop_price = getattr(req, "stop_price", None)
+        order_class = getattr(req, "order_class", None)
+        self.order_class = getattr(order_class, "value", order_class)
+        self.stop_loss = getattr(req, "stop_loss", None)
+        self.take_profit = getattr(req, "take_profit", None)
         self.type = type(req).__name__
         self.status = "new"
         self.legs = []

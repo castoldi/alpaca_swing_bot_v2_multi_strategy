@@ -17,6 +17,7 @@ class StrategyType(str, Enum):
     TREND_PULLBACK = "trend_pullback"
     BREAKOUT = "breakout"
     MEAN_REVERSION = "mean_reversion"
+    SMA_50_CROSS = "sma_50_cross"   # V2: daily price/SMA(50) cross
     ENSEMBLE = "ensemble"           # V2: ML-weighted signal combiner
     REGIME_ADAPTIVE = "regime"      # V2: market-regime-aware strategy
     MOMENTUM_MACD = "momentum_macd" # V2: MACD + momentum
@@ -132,6 +133,10 @@ class StrategyParams:
     # ── Earnings avoidance filter ─────────────────────────────────────────
     earnings_avoid_days: int = 3  # skip entries N trading days before earnings
 
+    # ── V2: Daily SMA 50 Cross ───────────────────────────────────────────
+    sma_cross_period: int = 50
+    sma_cross_stop_loss_pct: float = 0.10
+
 
 PARAMS = StrategyParams()
 
@@ -142,6 +147,7 @@ ENABLED_STRATEGIES: set[str] = {
     "mean_reversion",
     "momentum_macd",
     "regime",
+    "sma_50_cross",
     "ensemble",
 }
 

@@ -23,8 +23,18 @@ _Changes landed but not yet released under a new version number go here._
 
 ### Added
 - Design and implementation specifications for the daily **SMA 50 Cross** strategy, including empirical comparison of long-only, stop-protected, long/short, and existing-risk-overlay variants. The selected design is long-only with a broker-held 10% emergency stop and a close-on-cross-below exit.
+- Registered the `sma_50_cross` strategy with exact completed-daily-close entry/exit cross rules, a 50-day SMA, and a 10% emergency-stop parameter.
+- Added strategy-specific Alpaca bar fetching for `4h` and `1d`, with a guard that removes the still-forming current daily candle from live signal evaluation.
+- Added a dedicated next-session backtest lifecycle for signal-exit strategies: enter at the next open, prioritize the 10% stop (including gap-through fills), and exit at the next open after a daily cross below.
+- Live SMA 50 Cross entries now use Alpaca stop-only OTO orders sized from a fresh snapshot; cross-down exits reuse the bot's ownership proof and cancel only the attached stop before closing the bot-owned quantity.
+- Annual backtests now cache bars by ticker and strategy timeframe, record the SMA strategy as `1d`, and render its no-target trades, cross exits, parameters, and color correctly in Plotly reports.
+- Dashboard strategy examples and cards now respect per-strategy timeframes, label SMA exits, and omit take-profit visuals for strategies without a target; README, agent guidance, and research logs document the seventh strategy and its evaluation.
 
 ### Fixed
+- Dashboard Home metadata now reports both configured timeframes (`4h + 1d`) instead of implying that the new daily strategy also runs on 4-hour candles.
+- Dashboard and generated reports now derive the strategy count from the registry/results instead of retaining the old hardcoded count of six.
+- Current-year daily backtests now discard the still-forming session candle before evaluating SMA crosses.
+- Live crossover exits now persist durable intent before changing protection, fail closed unless Alpaca confirms the attached OTO stop is canceled, refresh the remaining position quantity after cancellation, and remain pending until broker fills are confirmed. Partial stop/market fills are accumulated idempotently for correct weighted exit P&L, while restarts and failed submissions resume the exit even after the one-bar cross condition has passed.
 
 ### Changed
 - Added `.worktrees/` to `.gitignore` so isolated feature checkouts cannot be staged as project content.
