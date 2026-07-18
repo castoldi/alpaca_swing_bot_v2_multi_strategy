@@ -18,6 +18,16 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.9.0] - 2026-07-18
+
+### Added
+- Design specification for the daily **SMA 50 Cross** strategy, including empirical comparison of long-only, stop-protected, long/short, and existing-risk-overlay variants. The selected design is long-only with a broker-held 10% emergency stop and a close-on-cross-below exit.
+
+### Fixed
+
+### Changed
+
 ## [0.8.3] - 2026-07-07
 
 ### Fixed
@@ -235,6 +245,3 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
-
-
-
