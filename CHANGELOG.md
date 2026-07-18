@@ -25,6 +25,7 @@ _Changes landed but not yet released under a new version number go here._
 - Design and implementation specifications for the daily **SMA 50 Cross** strategy, including empirical comparison of long-only, stop-protected, long/short, and existing-risk-overlay variants. The selected design is long-only with a broker-held 10% emergency stop and a close-on-cross-below exit.
 - Registered the `sma_50_cross` strategy with exact completed-daily-close entry/exit cross rules, a 50-day SMA, and a 10% emergency-stop parameter.
 - Added strategy-specific Alpaca bar fetching for `4h` and `1d`, with a guard that removes the still-forming current daily candle from live signal evaluation.
+- Added a dedicated next-session backtest lifecycle for signal-exit strategies: enter at the next open, prioritize the 10% stop (including gap-through fills), and exit at the next open after a daily cross below.
 
 ### Fixed
 

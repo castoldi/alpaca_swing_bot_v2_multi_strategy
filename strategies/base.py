@@ -318,6 +318,82 @@ def simulate_exit_scaleout(
 
 # ── Backtest (per-ticker) ─────────────────────────────────────────────────────
 
+def backtest_signal_exit_ticker(
+    df: pd.DataFrame,
+    ticker: str,
+    window_start: pd.Timestamp,
+    p: StrategyParams,
+    strategy: BaseStrategy,
+) -> list[Trade]:
+    """Backtest a close-confirmed signal strategy with next-session fills."""
+    trades: list[Trade] = []
+    signal_idx = 0
+    final_idx = len(df) - 1
+
+    while signal_idx < final_idx:
+        if df.index[signal_idx] < window_start:
+            signal_idx += 1
+            continue
+
+        signal = strategy.check_entry(df, signal_idx, p)
+        if signal is None:
+            signal_idx += 1
+            continue
+
+        entry_idx = signal_idx + 1
+        entry_bar = df.iloc[entry_idx]
+        entry_price = float(entry_bar["open"])
+        stop = entry_price * (1.0 - p.sma_cross_stop_loss_pct)
+        shares = p.dollars_per_trade / entry_price
+
+        exit_idx = final_idx
+        exit_price = float(df.iloc[final_idx]["close"])
+        exit_reason = "end_of_data"
+
+        for idx in range(entry_idx, len(df)):
+            bar = df.iloc[idx]
+            bar_open = float(bar["open"])
+            if bar_open <= stop:
+                exit_idx = idx
+                exit_price = bar_open
+                exit_reason = "gap_stop"
+                break
+            if float(bar["low"]) <= stop:
+                exit_idx = idx
+                exit_price = stop
+                exit_reason = "stop_loss"
+                break
+
+            reason = strategy.check_exit(df, idx, p)
+            if reason and idx + 1 < len(df):
+                exit_idx = idx + 1
+                exit_price = float(df.iloc[exit_idx]["open"])
+                exit_reason = reason
+                break
+
+        pnl_pct = (exit_price - entry_price) / entry_price
+        trades.append(Trade(
+            ticker=ticker,
+            entry_date=pd.Timestamp(entry_bar.name),
+            entry_price=entry_price,
+            stop_loss=stop,
+            take_profit=0.0,
+            exit_date=pd.Timestamp(df.index[exit_idx]),
+            exit_price=exit_price,
+            exit_reason=exit_reason,
+            bars_held=exit_idx - entry_idx,
+            shares=shares,
+            pnl_dollars=(exit_price - entry_price) * shares,
+            pnl_pct=pnl_pct,
+            strategy=strategy.name,
+        ))
+
+        if exit_reason == "end_of_data":
+            break
+        signal_idx = exit_idx
+
+    return trades
+
 def backtest_ticker(
     df: pd.DataFrame,
     ticker: str,
@@ -331,6 +407,9 @@ def backtest_ticker(
     df = add_indicators(df, p)
     if strategy.name in SKIP_EARNINGS_STRATEGIES:
         df = add_earnings_filter(df, ticker, p)
+
+    if strategy.exit_mode == "signal_with_stop":
+        return backtest_signal_exit_ticker(df, ticker, window_start, p, strategy)
 
     trades: list[Trade] = []
     in_trade_until: int = -1

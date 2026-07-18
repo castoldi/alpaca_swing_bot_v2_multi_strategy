@@ -7,7 +7,7 @@ from __future__ import annotations
 from config import ENABLED_STRATEGIES
 from .base import (
     BaseStrategy, EntrySignal, Trade, ExitLeg,
-    add_indicators, add_earnings_filter, backtest_ticker,
+    add_indicators, add_earnings_filter, backtest_ticker, backtest_signal_exit_ticker,
     simulate_exit, simulate_exit_scaleout,
     is_tp_reachable_in_days, split_take_profit, split_qty,
     SKIP_EARNINGS_STRATEGIES,
