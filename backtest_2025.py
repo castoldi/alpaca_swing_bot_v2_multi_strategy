@@ -44,16 +44,18 @@ STRATEGY_COLORS = OrderedDict([
     ("trend_pullback", "#60a5fa"), ("breakout", "#f59e0b"),
     ("mean_reversion", "#a78bfa"), ("momentum_macd", "#34d399"),
     ("ensemble", "#f472b6"), ("regime", "#fb923c"),
+    ("sma_50_cross", "#38bdf8"),
 ])
 
 
-def download_history(ticker: str, start: date, end: date) -> pd.DataFrame:
-    """Fetch 4h bars from Alpaca with a warmup window so indicators are primed.
-
-    (Previously yfinance daily bars — switched to Alpaca 4h; see data_feed.py.)
-    """
+def download_history(
+    ticker: str, start: date, end: date, timeframe: str = BAR_TIMEFRAME
+) -> pd.DataFrame:
+    """Fetch strategy-timeframe bars with a warmup window for indicators."""
     warmup_start = start - timedelta(days=HISTORY_WARMUP_DAYS)
-    return data_feed.fetch_4h(ticker, warmup_start, end + timedelta(days=1))
+    return data_feed.fetch_bars(
+        ticker, warmup_start, end + timedelta(days=1), timeframe
+    )
 
 
 def apply_portfolio_cap(trades: list[Trade], dollars_per_trade: float, cap: float) -> tuple[list[Trade], int]:
@@ -75,12 +77,14 @@ def compute_stats(trades: list[Trade]) -> dict:
         return dict(trades=0, wins=0, losses=0, win_rate=0.0, total_pnl=0.0,
                     avg_pnl_pct=0.0, best_pct=0.0, worst_pct=0.0,
                     avg_bars_held=0.0, total_tp_pnl=0.0, total_sl_pnl=0.0,
-                    total_time_pnl=0.0, tp_count=0, sl_count=0, time_count=0,
+                    total_time_pnl=0.0, total_signal_pnl=0.0,
+                    tp_count=0, sl_count=0, time_count=0, signal_count=0,
                     avg_win_pct=0.0, avg_loss_pct=0.0, total_volume=0.0, profit_factor=0.0)
     TP_REASONS = {"take_profit", "tp1", "tp2", "tp3"}
     tp_t = [t for t in trades if t.exit_reason in TP_REASONS]
-    sl_t = [t for t in trades if t.exit_reason == "stop_loss"]
+    sl_t = [t for t in trades if t.exit_reason in {"stop_loss", "gap_stop"}]
     time_t = [t for t in trades if t.exit_reason == "time_stop"]
+    signal_t = [t for t in trades if t.exit_reason == "sma_cross_down"]
     win_pnls = [t.pnl_dollars for t in trades if t.pnl_dollars > 0]
     loss_pnls = [t.pnl_dollars for t in trades if t.pnl_dollars <= 0]
     total_gross_profit = sum(win_pnls) or 0.0
@@ -97,7 +101,9 @@ def compute_stats(trades: list[Trade]) -> dict:
         total_tp_pnl=sum(t.pnl_dollars for t in tp_t),
         total_sl_pnl=sum(t.pnl_dollars for t in sl_t),
         total_time_pnl=sum(t.pnl_dollars for t in time_t),
+        total_signal_pnl=sum(t.pnl_dollars for t in signal_t),
         tp_count=len(tp_t), sl_count=len(sl_t), time_count=len(time_t),
+        signal_count=len(signal_t),
         avg_win_pct=float(np.mean([t.pnl_pct for t in trades if t.pnl_dollars > 0])) * 100 if win_pnls else 0.0,
         avg_loss_pct=float(np.mean([t.pnl_pct for t in trades if t.pnl_dollars <= 0])) * 100 if loss_pnls else 0.0,
         total_volume=sum(abs(t.pnl_dollars) for t in trades),
@@ -127,19 +133,19 @@ def compute_max_drawdown(trades: list[Trade]) -> float:
 
 
 def run_full_backtest() -> int:
-    log.info("Downloading history for %d tickers from yfinance...", len(TICKERS))
-
-    ticker_data: dict[str, pd.DataFrame] = {}
-    for tk in TICKERS:
-        log.info("Downloading %s...", tk)
-        df = download_history(tk, BACKTEST_START, BACKTEST_END)
-        if df.empty or len(df) < PARAMS.sma_slow + 5:
-            log.warning("%s: insufficient data — skipping", tk)
-            ticker_data[tk] = pd.DataFrame()
-            continue
-        ticker_data[tk] = df
-
     strategies_to_run = get_enabled()
+    timeframes = sorted({strategy.timeframe for strategy in strategies_to_run})
+    log.info("Downloading %d tickers for timeframes %s...", len(TICKERS), timeframes)
+
+    ticker_data: dict[tuple[str, str], pd.DataFrame] = {}
+    for timeframe in timeframes:
+        for tk in TICKERS:
+            log.info("Downloading %s (%s)...", tk, timeframe)
+            df = download_history(tk, BACKTEST_START, BACKTEST_END, timeframe)
+            if df.empty or len(df) < PARAMS.sma_slow + 5:
+                log.warning("%s (%s): insufficient data — skipping", tk, timeframe)
+                df = pd.DataFrame()
+            ticker_data[(tk, timeframe)] = df
 
     strategy_results = {}
     per_strategy_details = {}
@@ -156,10 +162,10 @@ def run_full_backtest() -> int:
         all_candidate_trades: list[Trade] = []
 
         # Record backtest run in DB
-        bt_id = db_mod.start_backtest_run(2025, strat_name, BAR_TIMEFRAME)
+        bt_id = db_mod.start_backtest_run(2025, strat_name, strategy.timeframe)
 
         for tk in TICKERS:
-            df = ticker_data.get(tk)
+            df = ticker_data.get((tk, strategy.timeframe))
             if df is None or df.empty:
                 continue
             window_start = pd.Timestamp(BACKTEST_START)
@@ -216,13 +222,13 @@ def run_single(strategy_name: str) -> int:
 
     ticker_data: dict[str, pd.DataFrame] = {}
     for tk in TICKERS:
-        df = download_history(tk, BACKTEST_START, BACKTEST_END)
+        df = download_history(tk, BACKTEST_START, BACKTEST_END, strat.timeframe)
         if df.empty or len(df) < PARAMS.sma_slow + 5:
             ticker_data[tk] = pd.DataFrame()
         else:
             ticker_data[tk] = df
 
-    bt_id = db_mod.start_backtest_run(2025, strat_name, BAR_TIMEFRAME)
+    bt_id = db_mod.start_backtest_run(2025, strat_name, strat.timeframe)
     all_trades: list[Trade] = []
     per_ticker: dict = {}
     for tk in TICKERS:

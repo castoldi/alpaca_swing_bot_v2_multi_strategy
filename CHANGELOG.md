@@ -27,6 +27,7 @@ _Changes landed but not yet released under a new version number go here._
 - Added strategy-specific Alpaca bar fetching for `4h` and `1d`, with a guard that removes the still-forming current daily candle from live signal evaluation.
 - Added a dedicated next-session backtest lifecycle for signal-exit strategies: enter at the next open, prioritize the 10% stop (including gap-through fills), and exit at the next open after a daily cross below.
 - Live SMA 50 Cross entries now use Alpaca stop-only OTO orders sized from a fresh snapshot; cross-down exits reuse the bot's ownership proof and cancel only the attached stop before closing the bot-owned quantity.
+- Annual backtests now cache bars by ticker and strategy timeframe, record the SMA strategy as `1d`, and render its no-target trades, cross exits, parameters, and color correctly in Plotly reports.
 
 ### Fixed
 
