@@ -8,7 +8,7 @@ from typing import ClassVar, Optional
 import numpy as np
 import pandas as pd
 
-from config import PARAMS, StrategyParams, TP_SPLITS
+from config import BAR_TIMEFRAME, PARAMS, StrategyParams, TP_SPLITS
 
 
 # ── TP reachability filter ─────────────────────────────────────────────────────
@@ -129,6 +129,7 @@ def add_indicators(df: pd.DataFrame, p: StrategyParams = PARAMS) -> pd.DataFrame
     out = df.copy()
     out["sma_fast"] = sma(out["close"], p.sma_fast)
     out["sma_slow"] = sma(out["close"], p.sma_slow)
+    out["sma_cross"] = sma(out["close"], p.sma_cross_period)
     out["rsi"] = rsi(out["close"], p.rsi_period)
     out["atr"] = atr(out["high"], out["low"], out["close"], p.atr_period)
     out["sma_vol"] = sma(out["volume"], 20)
@@ -162,7 +163,7 @@ class EntrySignal:
     tp3: float = 0.0
 
     def __post_init__(self):
-        if not self.tp3:
+        if self.take_profit > 0 and not self.tp3:
             self.tp1, self.tp2, self.tp3 = split_take_profit(self.entry_price, self.take_profit)
 
 
@@ -201,6 +202,9 @@ class BaseStrategy(ABC):
     color: ClassVar[str] = "#60a5fa"
     description: ClassVar[str] = ""
     params_display: ClassVar[list[str]] = []
+    timeframe: ClassVar[str] = BAR_TIMEFRAME
+    exit_mode: ClassVar[str] = "bracket"
+    has_take_profit: ClassVar[bool] = True
 
     def __init__(self):
         self.enabled: bool = True
@@ -208,6 +212,11 @@ class BaseStrategy(ABC):
     @abstractmethod
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         ...
+
+    def check_exit(
+        self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS
+    ) -> Optional[str]:
+        return None
 
     def meta(self) -> dict:
         return {
@@ -217,6 +226,9 @@ class BaseStrategy(ABC):
             "color": self.color,
             "description": self.description,
             "params_display": list(self.params_display),
+            "timeframe": self.timeframe,
+            "exit_mode": self.exit_mode,
+            "has_take_profit": self.has_take_profit,
             "enabled": self.enabled,
         }
 

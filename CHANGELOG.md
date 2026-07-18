@@ -23,6 +23,7 @@ _Changes landed but not yet released under a new version number go here._
 
 ### Added
 - Design and implementation specifications for the daily **SMA 50 Cross** strategy, including empirical comparison of long-only, stop-protected, long/short, and existing-risk-overlay variants. The selected design is long-only with a broker-held 10% emergency stop and a close-on-cross-below exit.
+- Registered the `sma_50_cross` strategy with exact completed-daily-close entry/exit cross rules, a 50-day SMA, and a 10% emergency-stop parameter.
 
 ### Fixed
 

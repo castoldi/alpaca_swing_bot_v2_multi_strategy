@@ -17,6 +17,7 @@ from .breakout import BreakoutStrategy
 from .mean_reversion import MeanReversionStrategy
 from .momentum_macd import MomentumMACDStrategy
 from .regime_adaptive import RegimeAdaptiveStrategy
+from .sma_50_cross import SMA50CrossStrategy
 from .ensemble import EnsembleStrategy
 
 # Canonical ordered registry — insertion order = display order in UI.
@@ -26,6 +27,7 @@ REGISTRY: dict[str, BaseStrategy] = {
     "mean_reversion": MeanReversionStrategy(),
     "momentum_macd":  MomentumMACDStrategy(),
     "regime":         RegimeAdaptiveStrategy(),
+    "sma_50_cross":   SMA50CrossStrategy(),
     "ensemble":       EnsembleStrategy(),
 }
 
