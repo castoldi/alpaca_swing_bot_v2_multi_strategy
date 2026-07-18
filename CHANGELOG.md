@@ -20,6 +20,8 @@ _Changes landed but not yet released under a new version number go here._
 - Designed a persistent Alpaca SIP market-data cache and a cumulative
   2016–present backtest workflow with incremental refreshes, IPO-aware ticker
   coverage, and yearly result summaries.
+- Added the test-first implementation plan for the historical cache and
+  2016–present backtest runner.
 
 
 
