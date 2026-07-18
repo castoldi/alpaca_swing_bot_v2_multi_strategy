@@ -20,6 +20,9 @@ venv/
 env/
 ENV/
 
+# Isolated feature checkouts
+.worktrees/
+
 # Logs and reports
 logs/
 reports/

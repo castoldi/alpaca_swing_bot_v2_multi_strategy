@@ -27,6 +27,7 @@ _Changes landed but not yet released under a new version number go here._
 ### Fixed
 
 ### Changed
+- Added `.worktrees/` to `.gitignore` so isolated feature checkouts cannot be staged as project content.
 
 ## [0.8.3] - 2026-07-07
 
