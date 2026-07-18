@@ -1,4 +1,4 @@
-"""Live Alpaca paper trader V2 — supports all 6 strategies.
+"""Live Alpaca paper trader V2 — supports all registered strategies.
 
 Usage:
     python bot.py                               # trend_pullback
@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import time
 import uuid
@@ -80,6 +81,31 @@ def _place_scaled_entry(tc, ticker: str, qty: int, sig, strat_name: str) -> dict
 
     return {"entry": entry_order, "tp_legs": leg_orders, "stop": stop_order,
             "entry_coid": entry_coid, "alpaca_id": str(getattr(entry_order, "id", "") or "")}
+
+
+def _place_stop_only_entry(
+    tc, ticker: str, qty: int, stop_price: float, strat_name: str
+) -> dict:
+    """Market entry with a broker-held stop and no take-profit leg."""
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
+
+    entry_coid = _make_client_order_id(strat_name, ticker, "entry")
+    request = MarketOrderRequest(
+        symbol=ticker,
+        qty=qty,
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.OTO,
+        stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
+        client_order_id=entry_coid,
+    )
+    order = tc.submit_order(request)
+    return {
+        "entry": order,
+        "entry_coid": entry_coid,
+        "alpaca_id": str(getattr(order, "id", "") or ""),
+    }
 
 
 def _position_qty(tc, ticker: str) -> float:
@@ -182,9 +208,11 @@ def _get_trading():
 
 # ── Data fetch ────────────────────────────────────────────────────────────────
 
-def fetch_bars(ticker: str, days: int = 90) -> pd.DataFrame:
-    """Recent 4h bars for live trading (Alpaca via data_feed)."""
-    return data_feed.fetch_recent_4h(ticker, days=days + 30)
+def fetch_bars(
+    ticker: str, days: int = 90, timeframe: str = BAR_TIMEFRAME
+) -> pd.DataFrame:
+    """Recent bars for live trading, selected by strategy timeframe."""
+    return data_feed.fetch_recent(ticker, days=days + 30, timeframe=timeframe)
 
 
 # ── Main trading loop ─────────────────────────────────────────────────────────
@@ -200,31 +228,40 @@ def run_once(strategy: StrategyType) -> int:
     orders_placed = 0
     trades_found = 0
     error = None
+    frames: dict[str, pd.DataFrame] = {}
 
     try:
         strat_obj = REGISTRY[strat_name]
 
         for ticker in TICKERS:
             log.info("Checking %s...", ticker)
-            df = fetch_bars(ticker, days=PARAMS.history_days)
+            df = fetch_bars(
+                ticker, days=PARAMS.history_days, timeframe=strat_obj.timeframe
+            )
+            df = data_feed.completed_bars(df, strat_obj.timeframe)
             if df.empty or len(df) < 60:
                 log.warning("%s: insufficient data (got %d bars)", ticker, len(df))
                 continue
 
             df = add_indicators(df, PARAMS)
+            frames[ticker] = df
             idx = len(df) - 1
-            today = df.index[idx]
 
             # Check for entry signal
             sig = strat_obj.check_entry(df, idx, PARAMS)
             if sig is not None:
                 trades_found += 1
-                log.info("  SIGNAL: %s entry at $%.2f (SL $%.2f / TP $%.2f)",
-                         ticker, sig.entry_price, sig.stop_loss, sig.take_profit)
+                if strat_obj.has_take_profit:
+                    log.info("  SIGNAL: %s entry at $%.2f (SL $%.2f / TP $%.2f)",
+                             ticker, sig.entry_price, sig.stop_loss, sig.take_profit)
+                else:
+                    log.info("  SIGNAL: %s entry at $%.2f (cross exit / emergency stop)",
+                             ticker, sig.entry_price)
                 bot_hooks.log_signal(sig, ticker, strat_name)
 
                 # Only enter if the nearest target (TP1) is reachable within ~2 trading days
-                if not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4):
+                if (strat_obj.has_take_profit and
+                        not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4)):
                     log.info("  TP1 $%.2f not reachable (ATR=%.2f) — skipping",
                              sig.tp1, sig.atr)
                     continue
@@ -248,17 +285,34 @@ def run_once(strategy: StrategyType) -> int:
 
                 # Place order
                 try:
-                    qty = int(PARAMS.dollars_per_trade / sig.entry_price)
+                    tc = _get_trading()
+                    if strat_obj.exit_mode == "signal_with_stop":
+                        snapshot = data_feed.fetch_snapshots([ticker]).get(ticker, {})
+                        market_ref = float(snapshot.get("price") or 0)
+                        if not math.isfinite(market_ref) or market_ref <= 0:
+                            log.warning("  %s: no valid live price — skipping protected entry", ticker)
+                            continue
+                    else:
+                        market_ref = sig.entry_price
+
+                    qty = int(PARAMS.dollars_per_trade / market_ref)
                     if qty < 1:
-                        # $200/trade can't buy a whole share of a >$200 stock (ARM, etc.).
+                        # $200/trade can't buy a whole share of a >$200 stock.
                         # Skip entirely (and do NOT notify — this was the "Qty 0" spam).
                         log.info("  $%.0f/trade buys <1 whole share of %s @ $%.2f — skipping "
                                  "(no order, no notify)",
-                                 PARAMS.dollars_per_trade, ticker, sig.entry_price)
+                                 PARAMS.dollars_per_trade, ticker, market_ref)
                         continue
 
-                    coid = _make_client_order_id(strat_name, ticker, "entry")
-                    if qty >= 3:
+                    if strat_obj.exit_mode == "signal_with_stop":
+                        sig.stop_loss = market_ref * (1.0 - PARAMS.sma_cross_stop_loss_pct)
+                        info = _place_stop_only_entry(
+                            tc, ticker, qty, sig.stop_loss, strat_name
+                        )
+                        coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
+                        log.info("  Stop-only OTO: %s x%d (SL $%.2f) [coid=%s]",
+                                 ticker, qty, sig.stop_loss, coid)
+                    elif qty >= 3:
                         # Full 3-TP scale-out (market entry + 3 limit legs + managed stop)
                         info = _place_scaled_entry(tc, ticker, qty, sig, strat_name)
                         coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
@@ -272,6 +326,7 @@ def run_once(strategy: StrategyType) -> int:
                         from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
                         tp = TakeProfitRequest(limit_price=round(sig.tp3, 2))
                         sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
+                        coid = _make_client_order_id(strat_name, ticker, "entry")
                         mkt = MarketOrderRequest(symbol=ticker, qty=qty, side=OrderSide.BUY,
                                                  time_in_force=TimeInForce.DAY,
                                                  order_class=OrderClass.BRACKET,
@@ -287,12 +342,14 @@ def run_once(strategy: StrategyType) -> int:
                                       sig.entry_price, sig.stop_loss, sig.tp3,
                                       shares=qty, client_order_id=coid,
                                       alpaca_order_id=alpaca_id)
-                    send_notification(
-                        f"Bot V2: {ticker} entry ({strat_name})",
-                        f"Entry ${sig.entry_price:.2f}\nSL ${sig.stop_loss:.2f}\n"
-                        f"TP1 ${sig.tp1:.2f} / TP2 ${sig.tp2:.2f} / TP3 ${sig.tp3:.2f}\n"
-                        f"Qty {qty}\nRef {coid}"
-                    )
+                    if strat_obj.has_take_profit:
+                        body = (f"Entry ${sig.entry_price:.2f}\nSL ${sig.stop_loss:.2f}\n"
+                                f"TP1 ${sig.tp1:.2f} / TP2 ${sig.tp2:.2f} / TP3 ${sig.tp3:.2f}\n"
+                                f"Qty {qty}\nRef {coid}")
+                    else:
+                        body = (f"Daily SMA(50) cross entry ~${market_ref:.2f}\n"
+                                f"SL ${sig.stop_loss:.2f}\nQty {qty}\nRef {coid}")
+                    send_notification(f"Bot V2: {ticker} entry ({strat_name})", body)
 
                 except Exception as e:
                     log.error("  Order failed for %s: %s", ticker, e)
@@ -300,7 +357,7 @@ def run_once(strategy: StrategyType) -> int:
                 log.info("  No signal for %s", ticker)
 
         # Reconcile + apply exits — only on positions THIS bot opened
-        _reconcile_and_exit(strat_name)
+        _reconcile_and_exit(strat_name, frames)
 
     except Exception as e:
         error = str(e)
@@ -348,9 +405,10 @@ def _verify_owned(tc, trade: dict) -> bool:
         return False
 
 
-def _reconcile_and_exit(strat_name: str):
-    """Keep DB trades in sync with Alpaca and apply the time-stop — touching ONLY
-    positions this bot opened.
+def _reconcile_and_exit(
+    strat_name: str, frames: dict[str, pd.DataFrame] | None = None
+):
+    """Keep DB trades in sync and apply the selected strategy's live exit.
 
     For each open trade THIS bot recorded:
       * if its Alpaca position is gone (a bracket SL/TP filled) → record the exit.
@@ -364,6 +422,7 @@ def _reconcile_and_exit(strat_name: str):
         log.debug("Exit check skipped (no trading client): %s", e)
         return
 
+    strat_obj = REGISTRY[strat_name]
     for trade in db_mod.get_open_trades_by_strategy(strat_name):
         ticker = trade["ticker"]
         try:
@@ -374,6 +433,20 @@ def _reconcile_and_exit(strat_name: str):
 
             if pos is None:
                 _reconcile_closed(tc, trade)
+                continue
+
+            if strat_obj.exit_mode == "signal_with_stop":
+                frame = (frames or {}).get(ticker)
+                if frame is None or frame.empty:
+                    log.warning("  %s: no completed daily frame — leaving position open", ticker)
+                    continue
+                if not _verify_owned(tc, trade):
+                    log.warning("  %s cross exit blocked: ownership unverified (coid=%s)",
+                                ticker, trade.get("client_order_id"))
+                    continue
+                reason = strat_obj.check_exit(frame, len(frame) - 1, PARAMS)
+                if reason:
+                    _close_owned(tc, trade, pos, reason=reason)
                 continue
 
             # Ratchet the stepped stop (breakeven after TP1, TP1 after TP2) for our
@@ -424,7 +497,12 @@ def _reconcile_closed(tc, trade: dict):
     exit_id = exit_fill["alpaca_order_id"]
     if exit_fill.get("shares"):
         shares = exit_fill["shares"] or shares
-    reason = "bracket_filled"
+    strat_obj = REGISTRY.get(trade.get("strategy", ""))
+    reason = (
+        "stop_loss"
+        if strat_obj is not None and strat_obj.exit_mode == "signal_with_stop"
+        else "bracket_filled"
+    )
 
     pnl = (exit_price - entry) * shares
     pnl_pct = (exit_price - entry) / entry if entry else 0.0
