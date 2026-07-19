@@ -218,7 +218,7 @@ def _signal_exit_candidate(
 
     entry_bar = frame.iloc[entry_idx]
     entry_price = float(entry_bar["open"])
-    stop = entry_price * (1.0 - params.sma_cross_stop_loss_pct)
+    stop = entry_price * (1.0 - strategy.stop_loss_fraction(params))
     exit_idx = end_idx
     exit_price = float(frame.iloc[end_idx]["close"])
     exit_reason = "end_of_data"

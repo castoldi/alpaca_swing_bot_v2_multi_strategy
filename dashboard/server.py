@@ -22,7 +22,7 @@ _PROJECT = _HERE.parent
 if str(_PROJECT) not in sys.path:
     sys.path.insert(0, str(_PROJECT))
 
-from config import ALPACA_KEY, ALPACA_PAPER, ALPACA_SECRET, PARAMS, TICKERS, BAR_TIMEFRAME
+from config import ALPACA_KEY, ALPACA_PAPER, ALPACA_SECRET, PARAMS, TICKERS, ALL_TICKERS, BAR_TIMEFRAME
 from dashboard import db as db_mod
 from logger_setup import get_logger
 import data_feed
@@ -48,7 +48,7 @@ def _get_trading():
     return _trading_client
 
 
-db_mod.set_tickers(TICKERS)
+db_mod.set_tickers(ALL_TICKERS)
 
 app = FastAPI(title="Alpaca Swing Bot V2 Dashboard")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -102,7 +102,7 @@ async def get_summary():
     stats["position_size_pct"] = PARAMS.position_size_pct
     stats["initial_backtest_equity"] = PARAMS.initial_backtest_equity
     stats["max_concurrent_positions"] = PARAMS.max_concurrent_positions
-    stats["tickers"] = TICKERS
+    stats["tickers"] = ALL_TICKERS
     stats["timeframe"] = BAR_TIMEFRAME
     stats["timeframes"] = _configured_timeframes()
     stats["strategy_count"] = _configured_strategy_count()
@@ -169,9 +169,9 @@ async def get_account():
 @app.get("/api/market")
 async def get_market():
     """Universe snapshots (last price + day change) plus the Alpaca market clock."""
-    result: dict = {"tickers": TICKERS}
+    result: dict = {"tickers": ALL_TICKERS}
     try:
-        result["snapshots"] = await run_in_threadpool(data_feed.fetch_snapshots, TICKERS)
+        result["snapshots"] = await run_in_threadpool(data_feed.fetch_snapshots, ALL_TICKERS)
     except Exception as e:
         result["snapshots"] = {}
         result["snapshot_error"] = str(e)

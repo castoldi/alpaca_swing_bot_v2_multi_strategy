@@ -480,7 +480,8 @@ async function loadHome() {
     // Recent trades
     const REASON_LABEL = { tp1:'TP1', tp2:'TP2', tp3:'TP3', take_profit:'TP',
                            stop_loss:'Stop', gap_stop:'Gap stop',
-                           sma_cross_down:'SMA cross', time_stop:'Time', end_of_data:'Open' };
+                           sma_cross_down:'SMA cross', ema_break:'EMA break',
+                           time_stop:'Time', end_of_data:'Open' };
     const closed = (trades.trades||[]).filter(t => t.exit_date).slice(0,12);
     if (closed.length) {
       document.getElementById('trades').innerHTML = tableHtml(

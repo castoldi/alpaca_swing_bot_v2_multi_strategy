@@ -89,7 +89,9 @@ notifier.py        Gmail SMTP alerts
 
 ## Strategy architecture
 
-All 7 strategies live in `strategies/`. The six 4-hour strategies exit through one protected bracket per entry (TP3 + SL at the broker, plus a breakeven-gated time stop); `sma_50_cross` uses its dedicated daily cross exit with an emergency stop. There is deliberately **no scale-out in live trading**: Alpaca rejects extra concurrent sell legs (403 40310000) and the single bracket also backtested better across 2024–2026.
+All 8 strategies live in `strategies/`. The six bracket strategies exit through one protected bracket per entry (TP3 + SL at the broker, plus a breakeven-gated time stop); `sma_50_cross` and `tqqq_momentum` use a dedicated signal exit with an emergency stop (`exit_mode = "signal_with_stop"`). There is deliberately **no scale-out in live trading**: Alpaca rejects extra concurrent sell legs (403 40310000) and the single bracket also backtested better across 2024–2026.
+
+**Ticker scoping**: `config.TICKERS` is the shared universe every strategy trades by default. A strategy may declare `tickers` to scope itself to specific symbols — `tqqq_momentum` does this for `LEVERAGED_TICKERS`, which both keeps it on TQQQ and keeps every other strategy off it. Resolve a universe with `strategy_universe(strategy, TICKERS)`, never by reading `TICKERS` directly in a per-strategy loop.
 
 | Strategy | Key entry condition | SL | TP | Max hold |
 |----------|--------------------|----|-----|---------|
@@ -99,6 +101,7 @@ All 7 strategies live in `strategies/`. The six 4-hour strategies exit through o
 | `momentum_macd` | MACD hist just crossed above 0, RSI > 50 rising, price > SMA(20) & SMA(50) | 9% | 2.5×ATR [4%–12%] | 6d |
 | `regime` | EMA(10)/EMA(50) regime: risk-on = buy dips, risk-off = oversold bounces, neutral = trend-like | adaptive | ATR-based [3%–8%] | 5d |
 | `ensemble` | Weighted vote ≥ 0.30 across all 5 base strategies (regime 35%, MACD 25%, trend 20%, breakout 15%, MR 5%) | 9% | 2.5×ATR [4%–12%] | 6d |
+| `tqqq_momentum` | **TQQQ only.** TSI(25,13,13) crosses above its signal line | 8% (gap insurance) | none — exits on 4h close < EMA(50) | n/a |
 
 `bot.py` entry dispatch: `get_entry_checker(strategy)` returns the matching `check_entry_*` function.
 

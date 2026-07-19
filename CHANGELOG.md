@@ -17,6 +17,54 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 
+## [0.13.0] - 2026-07-19
+
+### Added
+- **`tqqq_momentum` strategy (8th strategy)** — TSI(25,13,13) crossing its
+  signal line enters; a 4h close below EMA(50) exits; 8% broker-held emergency
+  stop; no take-profit. Scoped to TQQQ only. Backtested on Alpaca SIP 4h bars:
+
+  | year | TQQQ buy & hold | strategy (20% sizing, $1k account) |
+  |------|-----------------|-------------------------------------|
+  | 2024 | +65.5%          | +$37.49, PF 1.55, DD 4.6% |
+  | 2025 | +36.8%          | +$177.75, PF 5.66, DD 1.9% |
+  | 2026 | +27.8%          | +$27.78, PF 2.53, DD 1.3% |
+
+  At full allocation over 2022–2026 it returned +309.6% with a 23% max
+  drawdown, against buy-and-hold's +65.8% with an 81% drawdown — and was
+  positive in 2022, when TQQQ itself fell 79.5%.
+- **`LEVERAGED_TICKERS` / `ALL_TICKERS` in `config.py`** — leveraged ETFs are
+  deliberately kept out of the shared `TICKERS` universe.
+- **Per-strategy ticker scoping** via `BaseStrategy.tickers` and the
+  `strategy_universe()` helper. A strategy that declares `tickers` trades only
+  those; every other strategy keeps trading the shared universe and can never
+  reach a leveraged ETF. Backtests download only the union of the universes
+  actually being run.
+- **`tsi()` indicator** in `strategies/base.py`; `add_indicators` now also
+  emits `tsi`, `tsi_signal`, and `ema_trend`.
+- 15 tests in `tests/test_tqqq_momentum.py` covering the entry/exit rules, the
+  stop wiring, and the scoping guarantees in both directions.
+
+### Changed
+- `BaseStrategy.stop_loss_fraction()` lets a `signal_with_stop` strategy set its
+  own emergency stop; the backtest engine no longer hardcodes
+  `sma_cross_stop_loss_pct` for every signal-exit strategy.
+- `BaseStrategy.signal_exit_reason` replaces the hardcoded `"sma_cross_down"`
+  in `bot._exit_reason_for_fill`, so a signal exit is now labelled per strategy
+  (`ema_break` for `tqqq_momentum`). Report and dashboard exit summaries count
+  both reasons; the exit pie chart's slice is now "Signal Exit".
+
+### Notes
+- The bot runs **one strategy per process**, so trading this live means starting
+  the bot with `-Strategy tqqq_momentum` *instead of* the current strategy —
+  it does not run alongside `ensemble`.
+- An entry filter using EMA(50) or MACD was tested and rejected: an ablation
+  showed both *reduced* returns versus TSI alone (TSI-only +309.6%, +EMA50 gate
+  +161.4%, +MACD +157.3% over 2022–2026). A 3xATR take-profit scored higher
+  in-sample (+346%) but was a jagged parameter spike (3.5xATR fell to +144%),
+  so it was left out as an overfit artifact.
+
+
 ## [0.12.0] - 2026-07-18
 
 Safety hardening pass after a full code review: every finding was verified
@@ -366,5 +414,6 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 

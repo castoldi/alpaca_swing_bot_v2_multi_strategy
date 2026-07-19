@@ -9,7 +9,7 @@ from .base import (
     BaseStrategy, EntrySignal, Trade, ExitLeg,
     add_indicators, add_earnings_filter, backtest_ticker, backtest_signal_exit_ticker,
     simulate_exit, simulate_exit_scaleout,
-    is_tp_reachable_in_days, split_take_profit, split_qty,
+    is_tp_reachable_in_days, split_take_profit, split_qty, strategy_universe,
     SKIP_EARNINGS_STRATEGIES,
 )
 from .trend_pullback import TrendPullbackStrategy
@@ -19,6 +19,7 @@ from .momentum_macd import MomentumMACDStrategy
 from .regime_adaptive import RegimeAdaptiveStrategy
 from .sma_50_cross import SMA50CrossStrategy
 from .ensemble import EnsembleStrategy
+from .tqqq_momentum import TQQQMomentumStrategy
 
 # Canonical ordered registry — insertion order = display order in UI.
 REGISTRY: dict[str, BaseStrategy] = {
@@ -29,6 +30,7 @@ REGISTRY: dict[str, BaseStrategy] = {
     "regime":         RegimeAdaptiveStrategy(),
     "sma_50_cross":   SMA50CrossStrategy(),
     "ensemble":       EnsembleStrategy(),
+    "tqqq_momentum":  TQQQMomentumStrategy(),
 }
 
 # Apply enabled/disabled from config.

@@ -117,6 +117,19 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
     return macd_line, signal_line, histogram
 
 
+def tsi(close: pd.Series, long: int = 25, short: int = 13, signal: int = 13):
+    """True Strength Index — double-EMA-smoothed momentum, plus its signal line.
+
+    Steadier than MACD (two smoothing passes instead of one), so it produces far
+    fewer false crossovers on a leveraged ETF's noise. Returns (tsi, signal).
+    """
+    momentum = close.diff()
+    smoothed = ema(ema(momentum, long), short)
+    smoothed_abs = ema(ema(momentum.abs(), long), short)
+    line = 100.0 * smoothed / smoothed_abs.replace(0.0, np.nan)
+    return line, ema(line, signal)
+
+
 def bollinger_bands(series: pd.Series, period: int = 20, n_std: float = 2.0):
     middle = sma(series, period)
     std = series.rolling(period, min_periods=period).std(ddof=0)
@@ -143,6 +156,12 @@ def add_indicators(df: pd.DataFrame, p: StrategyParams = PARAMS) -> pd.DataFrame
     out["macd_hist"] = hist
     out["ema_short"] = ema(out["close"], p.regime_sma_short)
     out["ema_long"] = ema(out["close"], p.regime_sma_long)
+    tsi_line, tsi_sig = tsi(
+        out["close"], p.tqqq_tsi_long, p.tqqq_tsi_short, p.tqqq_tsi_signal
+    )
+    out["tsi"] = tsi_line
+    out["tsi_signal"] = tsi_sig
+    out["ema_trend"] = ema(out["close"], p.tqqq_ema_period)
     out["atr_pct"] = out["atr"] / out["close"]
     return out
 
@@ -205,9 +224,23 @@ class BaseStrategy(ABC):
     timeframe: ClassVar[str] = BAR_TIMEFRAME
     exit_mode: ClassVar[str] = "bracket"
     has_take_profit: ClassVar[bool] = True
+    # None = trade the shared config.TICKERS universe. A strategy tuned for a
+    # specific instrument (e.g. a leveraged ETF) overrides this, which both
+    # scopes it to those symbols and keeps every other strategy off them.
+    tickers: ClassVar[Optional[tuple[str, ...]]] = None
+    # Exit reason recorded when a `signal_with_stop` strategy's check_exit fires.
+    signal_exit_reason: ClassVar[str] = "sma_cross_down"
 
     def __init__(self):
         self.enabled: bool = True
+
+    def universe(self) -> list[str]:
+        """Symbols this strategy trades."""
+        return strategy_universe(self)
+
+    def stop_loss_fraction(self, p: StrategyParams = PARAMS) -> float:
+        """Emergency-stop distance for `signal_with_stop` strategies."""
+        return p.sma_cross_stop_loss_pct
 
     @abstractmethod
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
@@ -229,8 +262,29 @@ class BaseStrategy(ABC):
             "timeframe": self.timeframe,
             "exit_mode": self.exit_mode,
             "has_take_profit": self.has_take_profit,
+            "tickers": list(self.universe()),
             "enabled": self.enabled,
         }
+
+
+# ── Universe resolution ───────────────────────────────────────────────────────
+
+def strategy_universe(strategy, default: list[str] | None = None) -> list[str]:
+    """Symbols ``strategy`` trades.
+
+    A strategy that declares ``tickers`` is scoped to exactly those (that is what
+    keeps ``tqqq_momentum`` on TQQQ and every other strategy off it). Otherwise it
+    trades ``default``, or the shared ``config.TICKERS`` when no default is given.
+    Callers pass their own module-level TICKERS so it stays monkeypatchable, and
+    ``getattr`` keeps this working for duck-typed strategies in tests.
+    """
+    tickers = getattr(strategy, "tickers", None)
+    if tickers:
+        return list(tickers)
+    if default is not None:
+        return list(default)
+    from config import TICKERS
+    return list(TICKERS)
 
 
 # ── Shared exit engine ────────────────────────────────────────────────────────

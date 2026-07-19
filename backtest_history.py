@@ -28,7 +28,7 @@ from backtest_portfolio import (
 from build_report_2025 import build_report_2025
 from config import PARAMS, TICKERS
 from logger_setup import get_logger
-from strategies import REGISTRY, Trade, get_enabled
+from strategies import REGISTRY, Trade, get_enabled, strategy_universe
 
 
 log = get_logger(__name__)
@@ -162,8 +162,13 @@ def run_history_backtest(
     ticker_data: dict[tuple[str, str], pd.DataFrame] = {}
     first_bars: list[pd.Timestamp] = []
     last_bars: list[pd.Timestamp] = []
+    needed = sorted({
+        ticker
+        for strategy in strategies_to_run
+        for ticker in strategy_universe(strategy, TICKERS)
+    })
     for timeframe in timeframes:
-        for ticker in TICKERS:
+        for ticker in needed:
             log.info("Loading %s (%s) from persistent SIP cache...", ticker, timeframe)
             frame = download_history(ticker, start, requested_end, timeframe)
             if frame.empty or len(frame) < PARAMS.sma_slow + 5:
@@ -188,7 +193,7 @@ def run_history_backtest(
         candidates_by_year: dict[int, list[BacktestCandidate]] = {}
         frames = {
             ticker: ticker_data[(ticker, strategy.timeframe)]
-            for ticker in TICKERS
+            for ticker in strategy_universe(strategy, TICKERS)
             if not ticker_data[(ticker, strategy.timeframe)].empty
         }
         for year in range(start.year, requested_end.year + 1):

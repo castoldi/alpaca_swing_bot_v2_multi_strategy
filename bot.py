@@ -23,7 +23,7 @@ import pandas as pd
 
 from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
-from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days
+from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days, strategy_universe
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
@@ -483,7 +483,9 @@ def run_once(strategy: StrategyType) -> int:
         entry_capacity_blocked = _entry_capacity_is_unsettled(tc)
         sizing_state = None if entry_capacity_blocked else _load_live_sizing(tc)
 
-        for ticker in TICKERS:
+        # A strategy scoped to its own instruments (e.g. tqqq_momentum) trades
+        # only those; everything else trades the shared universe.
+        for ticker in strategy_universe(strat_obj, TICKERS):
             log.info("Checking %s...", ticker)
             df = fetch_bars(
                 ticker, days=PARAMS.history_days, timeframe=strat_obj.timeframe
@@ -1057,7 +1059,7 @@ def _exit_reason_for_fill(trade: dict, fill: dict) -> str:
     strat_obj = REGISTRY.get(trade.get("strategy", ""))
     if "-exit-" in coid:
         return (
-            "sma_cross_down"
+            strat_obj.signal_exit_reason
             if strat_obj is not None and strat_obj.exit_mode == "signal_with_stop"
             else "time_stop"
         )

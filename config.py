@@ -21,9 +21,11 @@ class StrategyType(str, Enum):
     ENSEMBLE = "ensemble"           # V2: ML-weighted signal combiner
     REGIME_ADAPTIVE = "regime"      # V2: market-regime-aware strategy
     MOMENTUM_MACD = "momentum_macd" # V2: MACD + momentum
+    TQQQ_MOMENTUM = "tqqq_momentum" # V2: TSI entry / EMA break exit (3x ETF only)
 
 
 # --- Universe ----------------------------------------------------------------
+# Shared universe: every strategy without its own `tickers` override trades these.
 TICKERS: list[str] = [
     "NVDA",
     "AMZN",
@@ -31,6 +33,18 @@ TICKERS: list[str] = [
     "AMD",
     "ARM",
 ]
+
+# Leveraged ETFs are deliberately NOT in TICKERS. A 3x ETF decays through
+# whipsaw, so the fixed-bracket exit the other strategies use is the wrong
+# shape for it — backtests of those strategies on TQQQ went negative in 2026.
+# It is traded only by `tqqq_momentum`, which scopes itself here via
+# BaseStrategy.tickers.
+LEVERAGED_TICKERS: list[str] = [
+    "TQQQ",
+]
+
+# Everything the bot may hold — for dashboard snapshots and position display.
+ALL_TICKERS: list[str] = TICKERS + LEVERAGED_TICKERS
 
 
 # --- Bar timeframe -----------------------------------------------------------
@@ -147,6 +161,18 @@ class StrategyParams:
     sma_cross_period: int = 50
     sma_cross_stop_loss_pct: float = 0.10
 
+    # ── V2: TQQQ Momentum (leveraged ETF, 4h) ────────────────────────────
+    # TSI(25,13) crossing its 13-period signal line is the entry; the exit is
+    # a close below EMA(50). Backtests 2022-2026 (Alpaca SIP 4h): positive
+    # every year including 2022, when TQQQ buy-and-hold was -79.5%.
+    # No take-profit — the edge comes from riding trends until they break,
+    # not from a fixed target. The stop is gap insurance and rarely binds.
+    tqqq_tsi_long: int = 25
+    tqqq_tsi_short: int = 13
+    tqqq_tsi_signal: int = 13
+    tqqq_ema_period: int = 50
+    tqqq_stop_loss_pct: float = 0.08
+
 
 PARAMS = StrategyParams()
 
@@ -159,6 +185,7 @@ ENABLED_STRATEGIES: set[str] = {
     "regime",
     "sma_50_cross",
     "ensemble",
+    "tqqq_momentum",
 }
 
 

@@ -16,7 +16,7 @@ import pandas as pd
 
 from config import PARAMS, TICKERS, BAR_TIMEFRAME
 from logger_setup import get_logger
-from strategies import REGISTRY, get_enabled
+from strategies import REGISTRY, get_enabled, strategy_universe
 from dashboard import db as db_mod
 
 log = get_logger(__name__)
@@ -41,11 +41,12 @@ def run_full_backtest() -> int:
     log.info("=== 2026 Multi-Strategy Backtest (V2) ===")
     strategies_to_run = get_enabled()
     timeframes = sorted({strategy.timeframe for strategy in strategies_to_run})
-    log.info("Downloading %d tickers for timeframes %s...", len(TICKERS), timeframes)
+    needed = sorted({t for s_ in strategies_to_run for t in strategy_universe(s_, TICKERS)})
+    log.info("Downloading %d tickers for timeframes %s...", len(needed), timeframes)
 
     ticker_data: dict[tuple[str, str], pd.DataFrame] = {}
     for timeframe in timeframes:
-        for tk in TICKERS:
+        for tk in needed:
             log.info("Downloading %s (%s)...", tk, timeframe)
             df = download_history(tk, BACKTEST_START, BACKTEST_END, timeframe)
             if df.empty or len(df) < PARAMS.sma_slow + 5:
@@ -106,7 +107,7 @@ def run_single(strategy_name: str) -> int:
     strat = REGISTRY[strategy_name]
     log.info("Single-strategy backtest: %s (2026)", strat.name)
     ticker_data: dict[str, pd.DataFrame] = {}
-    for tk in TICKERS:
+    for tk in strategy_universe(strat, TICKERS):
         df = download_history(tk, BACKTEST_START, BACKTEST_END, strat.timeframe)
         ticker_data[tk] = df if not df.empty and len(df) >= PARAMS.sma_slow + 5 else pd.DataFrame()
     bt_id = db_mod.start_backtest_run(2026, strat.name, strat.timeframe)

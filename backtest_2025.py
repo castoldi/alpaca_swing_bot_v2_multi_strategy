@@ -22,7 +22,7 @@ import yfinance as yf
 
 from config import PARAMS, TICKERS, BAR_TIMEFRAME, HISTORY_WARMUP_DAYS
 from logger_setup import get_logger
-from strategies import REGISTRY, get_enabled, Trade
+from strategies import REGISTRY, get_enabled, strategy_universe, Trade
 from dashboard import db as db_mod
 import data_feed
 from market_cache import MarketDataCache
@@ -50,7 +50,7 @@ STRATEGY_COLORS = OrderedDict([
     ("trend_pullback", "#60a5fa"), ("breakout", "#f59e0b"),
     ("mean_reversion", "#a78bfa"), ("momentum_macd", "#34d399"),
     ("ensemble", "#f472b6"), ("regime", "#fb923c"),
-    ("sma_50_cross", "#38bdf8"),
+    ("sma_50_cross", "#38bdf8"), ("tqqq_momentum", "#facc15"),
 ])
 
 _MARKET_CACHE = MarketDataCache()
@@ -80,10 +80,12 @@ def compute_stats(trades: list[Trade]) -> dict:
                     tp_count=0, sl_count=0, time_count=0, signal_count=0,
                     avg_win_pct=0.0, avg_loss_pct=0.0, total_volume=0.0, profit_factor=0.0)
     TP_REASONS = {"take_profit", "tp1", "tp2", "tp3"}
+    # Strategy-signalled exits, one reason per signal_with_stop strategy.
+    SIGNAL_REASONS = {"sma_cross_down", "ema_break"}
     tp_t = [t for t in trades if t.exit_reason in TP_REASONS]
     sl_t = [t for t in trades if t.exit_reason in {"stop_loss", "gap_stop"}]
     time_t = [t for t in trades if t.exit_reason == "time_stop"]
-    signal_t = [t for t in trades if t.exit_reason == "sma_cross_down"]
+    signal_t = [t for t in trades if t.exit_reason in SIGNAL_REASONS]
     win_pnls = [t.pnl_dollars for t in trades if t.pnl_dollars > 0]
     loss_pnls = [t.pnl_dollars for t in trades if t.pnl_dollars <= 0]
     total_gross_profit = sum(win_pnls) or 0.0
@@ -161,7 +163,7 @@ def run_strategy_year(
     candidates = []
     frames: dict[str, pd.DataFrame] = {}
 
-    for ticker in TICKERS:
+    for ticker in strategy_universe(strategy, TICKERS):
         frame = ticker_data.get((ticker, strategy.timeframe))
         if frame is None:
             frame = ticker_data.get(ticker)
@@ -199,11 +201,12 @@ def run_strategy_year(
 def run_full_backtest() -> int:
     strategies_to_run = get_enabled()
     timeframes = sorted({strategy.timeframe for strategy in strategies_to_run})
-    log.info("Downloading %d tickers for timeframes %s...", len(TICKERS), timeframes)
+    needed = sorted({t for s_ in strategies_to_run for t in strategy_universe(s_, TICKERS)})
+    log.info("Downloading %d tickers for timeframes %s...", len(needed), timeframes)
 
     ticker_data: dict[tuple[str, str], pd.DataFrame] = {}
     for timeframe in timeframes:
-        for tk in TICKERS:
+        for tk in needed:
             log.info("Downloading %s (%s)...", tk, timeframe)
             df = download_history(tk, BACKTEST_START, BACKTEST_END, timeframe)
             if df.empty or len(df) < PARAMS.sma_slow + 5:
@@ -267,7 +270,7 @@ def run_single(strategy_name: str) -> int:
     log.info("Single-strategy backtest: %s (2025)", strat_name)
 
     ticker_data: dict[str, pd.DataFrame] = {}
-    for tk in TICKERS:
+    for tk in strategy_universe(strat, TICKERS):
         df = download_history(tk, BACKTEST_START, BACKTEST_END, strat.timeframe)
         if df.empty or len(df) < PARAMS.sma_slow + 5:
             ticker_data[tk] = pd.DataFrame()

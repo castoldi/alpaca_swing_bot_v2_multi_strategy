@@ -18,7 +18,7 @@ def test_dashboard_summary_reports_every_configured_timeframe():
     from dashboard.server import _configured_strategy_count, _configured_timeframes
 
     assert _configured_timeframes() == ["4h", "1d"]
-    assert _configured_strategy_count() == 7
+    assert _configured_strategy_count() == 8
 
 
 def test_generated_ui_labels_do_not_hardcode_the_old_strategy_count():

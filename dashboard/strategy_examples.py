@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import PARAMS, TICKERS, BAR_TIMEFRAME
+from config import PARAMS, TICKERS, ALL_TICKERS, BAR_TIMEFRAME
 from strategy import add_indicators, simulate_exit
-from strategies import get_all
+from strategies import strategy_universe, get_all
 from strategies.base import backtest_signal_exit_ticker
 from logger_setup import get_logger
 import data_feed
@@ -170,7 +170,7 @@ def _compute() -> dict:
     universe: set[str] = set()
     for timeframe in timeframes:
         frames: dict[str, pd.DataFrame] = {}
-        for ticker in TICKERS:
+        for ticker in ALL_TICKERS:
             try:
                 df = _fetch_bars(ticker, timeframe)
                 if df.empty or len(df) < _WARMUP + 5:
@@ -185,8 +185,12 @@ def _compute() -> dict:
     examples: dict[str, list[dict]] = {}
     for strategy in strategies:
         try:
-            frames = frames_by_timeframe.get(strategy.timeframe, {})
-            examples[strategy.name] = _examples_for_strategy(strategy, frames)
+            available = frames_by_timeframe.get(strategy.timeframe, {})
+            # Only chart symbols this strategy actually trades.
+            scoped = {t: available[t]
+                      for t in strategy_universe(strategy, TICKERS)
+                      if t in available}
+            examples[strategy.name] = _examples_for_strategy(strategy, scoped)
         except Exception as e:
             log.error("strategy_examples: failed for %s: %s", strategy.name, e)
             examples[strategy.name] = []

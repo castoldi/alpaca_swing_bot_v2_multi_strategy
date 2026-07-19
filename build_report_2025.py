@@ -15,13 +15,13 @@ from plotly.subplots import make_subplots
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
 from backtest_2025 import (
-    TICKERS, PARAMS, BACKTEST_START,
+    PARAMS, BACKTEST_START,
     PROFIT_COLOR, LOSS_COLOR, PRICE_COLOR, NEUTRAL_COLOR,
     BG_DARK, BG_CARD, BORDER_COLOR, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
     STRATEGY_COLORS, compute_stats, per_ticker_stats, compute_max_drawdown,
     download_history,
 )
-from config import StrategyType
+from config import ALL_TICKERS, StrategyType
 from strategy import add_indicators, Trade
 
 
@@ -99,9 +99,10 @@ def exit_reason_pie(all_trades: list[Trade]) -> str:
     tp = sum(1 for t in all_trades if t.exit_reason in {"take_profit", "tp1", "tp2", "tp3"})
     sl = sum(1 for t in all_trades if t.exit_reason in {"stop_loss", "gap_stop"})
     ts = sum(1 for t in all_trades if t.exit_reason == "time_stop")
-    cross = sum(1 for t in all_trades if t.exit_reason == "sma_cross_down")
+    cross = sum(1 for t in all_trades
+                if t.exit_reason in {"sma_cross_down", "ema_break"})
     fig = go.Figure()
-    fig.add_trace(go.Pie(labels=["Take Profit", "Stop Loss", "SMA Cross", "Time Stop"],
+    fig.add_trace(go.Pie(labels=["Take Profit", "Stop Loss", "Signal Exit", "Time Stop"],
                          values=[tp, sl, cross, ts],
                          marker_colors=[PROFIT_COLOR, LOSS_COLOR, "#38bdf8", "#f59e0b"],
                          textinfo="label+percent", hole=0.4))
@@ -128,7 +129,7 @@ def ticker_chart(ticker: str, df: pd.DataFrame, trades: list[Trade]) -> str:
     strategy_colors_map = {"trend_pullback": "#3b82f6", "breakout": "#f59e0b",
                            "mean_reversion": "#8b5cf6", "momentum_macd": "#34d399",
                            "ensemble": "#f472b6", "regime": "#fb923c",
-                           "sma_50_cross": "#38bdf8"}
+                           "sma_50_cross": "#38bdf8", "tqqq_momentum": "#facc15"}
     for t in trades:
         color = strategy_colors_map.get(t.strategy, PROFIT_COLOR if t.pnl_dollars > 0 else LOSS_COLOR)
         fig.add_trace(go.Scatter(x=[t.entry_date], y=[t.entry_price], mode="markers",
@@ -342,7 +343,7 @@ def build_report_2025(
 
     # Per-ticker detail sections
     ticker_sections = []
-    for tk in TICKERS:
+    for tk in ALL_TICKERS:
         tk_trades = []
         for sname in sorted(per_strategy_details.keys()):
             per_tk = per_strategy_details.get(sname, {}).get(tk, (pd.DataFrame(), []))
@@ -420,7 +421,7 @@ def build_report_2025(
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>{CSS}</style><title>Alpaca Swing Bot V2 — {report_label}</title></head><body>
 <div class="header"><h1>📊 Alpaca Swing Bot V2<span class="badge">{report_label}</span></h1>
-<div class="subtitle">{len(strategy_results)} strategies · {len(TICKERS)} tickers · real market data</div></div>
+<div class="subtitle">{len(strategy_results)} strategies · {len(ALL_TICKERS)} tickers · real market data</div></div>
 <div class="container">
   <h2>Strategy Comparison</h2>
   {comparison_table}
