@@ -23,6 +23,11 @@ class _TradingClientWithOldSell:
 
 
 def test_trading_hours_excludes_weekends(monkeypatch):
+    # Clock API unavailable -> conservative ET fallback window is used.
+    def broken_client():
+        raise RuntimeError("no client in tests")
+
+    monkeypatch.setattr(bot, "_get_trading", broken_client)
     monkeypatch.setattr(bot, "datetime", _FixedDateTime)
 
     assert bot._in_trading_hours() is False

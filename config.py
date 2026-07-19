@@ -63,6 +63,15 @@ class StrategyParams:
     position_size_pct: float = 0.20
     max_concurrent_positions: int = 5
 
+    # ── Live risk guards ──────────────────────────────────────────────────
+    # Skip an entry when the live price has drifted further than this from the
+    # signal bar close: the SL/TP geometry would no longer match the backtest.
+    entry_max_slippage_pct: float = 0.015
+    # Kill switch: once the account is down this much vs yesterday's close
+    # equity, no new entries are placed for the rest of the day (exits and
+    # broker-held protection keep working).
+    max_daily_loss_pct: float = 0.03
+
     # ── Shared data window ────────────────────────────────────────────
     history_days: int = 90
     one_position_per_ticker: bool = True

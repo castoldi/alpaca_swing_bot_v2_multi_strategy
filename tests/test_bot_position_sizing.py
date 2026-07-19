@@ -10,6 +10,11 @@ from config import StrategyType
 from strategies.base import EntrySignal
 
 
+class _NoPositionError(RuntimeError):
+    """Alpaca's 404 for get_open_position on a symbol with no position."""
+    status_code = 404
+
+
 class _AccountClient:
     def __init__(
         self,
@@ -29,10 +34,13 @@ class _AccountClient:
         return SimpleNamespace(equity=self.equity, cash=self.cash)
 
     def get_open_position(self, _ticker):
-        raise RuntimeError("position not found")
+        raise _NoPositionError("position does not exist")
 
     def get_all_positions(self):
         return [SimpleNamespace(symbol=f"OPEN{index}") for index in range(self.open_positions)]
+
+    def get_order_by_id(self, _order_id):
+        raise RuntimeError("order lookup unavailable")
 
 
 class _SignalStrategy:
@@ -90,26 +98,7 @@ def _configure_cycle(monkeypatch, client, tickers, prices):
     monkeypatch.setattr(bot.db_mod, "get_open_trades", lambda: [])
     monkeypatch.setattr(bot.db_mod, "save_trade", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(bot.bot_hooks, "log_signal", lambda *_args: None)
-    def place_scaled(
-        _tc,
-        ticker,
-        qty,
-        _sig,
-        _name,
-        entry_coid=None,
-        on_entry_accepted=None,
-    ):
-        info = {
-            "entry_coid": entry_coid or f"coid-{ticker}",
-            "alpaca_id": f"id-{ticker}",
-            "setup_error": None,
-        }
-        placed.append((ticker, qty))
-        if on_entry_accepted is not None:
-            on_entry_accepted(info)
-        return info
 
-    monkeypatch.setattr(bot, "_place_scaled_entry", place_scaled)
     def place_single(
         _tc,
         ticker,
@@ -146,7 +135,10 @@ def test_load_live_sizing_reads_equity_and_cash():
 
 def test_live_cycle_uses_snapshot_price_for_twenty_percent_quantity(monkeypatch):
     placed, _, _ = _configure_cycle(
-        monkeypatch, _AccountClient(), ["TEST"], {"TEST": 60.0}
+        monkeypatch,
+        _AccountClient(equity="1500", cash="1500"),
+        ["TEST"],
+        {"TEST": 100.0},
     )
 
     bot.run_once(StrategyType.ENSEMBLE)
@@ -157,9 +149,9 @@ def test_live_cycle_uses_snapshot_price_for_twenty_percent_quantity(monkeypatch)
 def test_live_cycle_caps_second_signal_by_locally_remaining_cash(monkeypatch):
     placed, _, _ = _configure_cycle(
         monkeypatch,
-        _AccountClient(equity="1000", cash="250"),
+        _AccountClient(equity="1500", cash="450"),
         ["A", "B"],
-        {"A": 60.0, "B": 60.0},
+        {"A": 100.0, "B": 100.0},
     )
 
     bot.run_once(StrategyType.ENSEMBLE)
@@ -169,7 +161,42 @@ def test_live_cycle_caps_second_signal_by_locally_remaining_cash(monkeypatch):
 
 def test_high_price_skip_submits_and_notifies_nothing(monkeypatch):
     placed, notified, _ = _configure_cycle(
-        monkeypatch, _AccountClient(), ["TEST"], {"TEST": 250.0}
+        monkeypatch,
+        _AccountClient(equity="400", cash="400"),
+        ["TEST"],
+        {"TEST": 100.0},
+    )
+
+    bot.run_once(StrategyType.ENSEMBLE)
+
+    assert placed == []
+    assert notified == []
+
+
+def test_slippage_guard_skips_price_far_from_signal(monkeypatch):
+    placed, notified, _ = _configure_cycle(
+        monkeypatch,
+        _AccountClient(equity="1500", cash="1500"),
+        ["TEST"],
+        {"TEST": 105.0},  # 5% above the $100 signal close
+    )
+
+    bot.run_once(StrategyType.ENSEMBLE)
+
+    assert placed == []
+    assert notified == []
+
+
+def test_position_lookup_failure_fails_closed(monkeypatch):
+    class _OutageClient(_AccountClient):
+        def get_open_position(self, _ticker):
+            raise ConnectionError("broker unreachable")  # not a 404
+
+    placed, notified, _ = _configure_cycle(
+        monkeypatch,
+        _OutageClient(equity="1500", cash="1500"),
+        ["TEST"],
+        {"TEST": 100.0},
     )
 
     bot.run_once(StrategyType.ENSEMBLE)
@@ -183,7 +210,7 @@ def test_account_failure_disables_entries_but_still_reconciles(monkeypatch):
         monkeypatch,
         _AccountClient(fail_account=True),
         ["TEST"],
-        {"TEST": 60.0},
+        {"TEST": 100.0},
     )
 
     bot.run_once(StrategyType.ENSEMBLE)
@@ -197,12 +224,12 @@ def test_live_cycle_never_exceeds_five_account_positions(monkeypatch):
         monkeypatch,
         _AccountClient(open_positions=4),
         ["A", "B"],
-        {"A": 101.0, "B": 101.0},
+        {"A": 100.0, "B": 100.0},
     )
 
     bot.run_once(StrategyType.ENSEMBLE)
 
-    assert placed == [("A", 1)]
+    assert placed == [("A", 2)]
     assert len(reconciled) == 1
 
 
@@ -242,47 +269,6 @@ def test_unfilled_entry_from_prior_cycle_blocks_new_cycle_capacity(monkeypatch):
     bot.run_once(StrategyType.ENSEMBLE)
 
     assert placed == [("A", 1)]
-
-
-def test_scaled_target_failure_still_reserves_and_persists_entry(monkeypatch):
-    placed, _, _ = _configure_cycle(
-        monkeypatch,
-        _AccountClient(),
-        ["TEST"],
-        {"TEST": 60.0},
-    )
-    saved = []
-    monkeypatch.setattr(
-        bot.db_mod,
-        "save_trade",
-        lambda *args, **kwargs: saved.append((args, kwargs)),
-    )
-
-    def fail_targets(
-        _tc,
-        ticker,
-        qty,
-        _sig,
-        _name,
-        entry_coid=None,
-        on_entry_accepted=None,
-    ):
-        info = {
-            "entry_coid": entry_coid or f"coid-{ticker}",
-            "alpaca_id": f"id-{ticker}",
-            "setup_error": "target rejected",
-        }
-        placed.append((ticker, qty))
-        on_entry_accepted(info)
-        return info
-
-    monkeypatch.setattr(bot, "_place_scaled_entry", fail_targets)
-
-    bot.run_once(StrategyType.ENSEMBLE)
-
-    assert placed == [("TEST", 3)]
-    assert len(saved) == 1
-    assert saved[0][1]["shares"] == 3
 
 
 def test_persistence_failure_prevents_broker_submission(monkeypatch):
@@ -408,40 +394,6 @@ def test_ambiguous_submit_stays_pending_and_disables_entries(monkeypatch):
     assert placed == []
     assert closed == []
     assert len(reconciled) >= 2
-
-
-def test_unconfirmed_target_cleanup_disables_later_cycle_entries(monkeypatch):
-    placed, _, _ = _configure_cycle(
-        monkeypatch,
-        _AccountClient(),
-        ["A", "B"],
-        {"A": 60.0, "B": 60.0},
-    )
-
-    def incomplete_targets(
-        _tc,
-        ticker,
-        qty,
-        _sig,
-        _name,
-        entry_coid=None,
-        on_entry_accepted=None,
-    ):
-        info = {
-            "entry_coid": entry_coid,
-            "alpaca_id": f"id-{ticker}",
-            "setup_error": "target rejected",
-            "cleanup_confirmed": False,
-        }
-        placed.append((ticker, qty))
-        on_entry_accepted(info)
-        return info
-
-    monkeypatch.setattr(bot, "_place_scaled_entry", incomplete_targets)
-
-    bot.run_once(StrategyType.ENSEMBLE)
-
-    assert placed == [("A", 3)]
 
 
 def test_reconciliation_adopts_pending_entry_by_client_id(monkeypatch):

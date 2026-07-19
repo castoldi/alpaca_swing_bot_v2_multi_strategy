@@ -20,7 +20,6 @@ from strategies.base import (
     is_tp_reachable_in_days,
     simulate_exit,
     simulate_exit_scaleout,
-    split_qty,
 )
 
 
@@ -74,33 +73,20 @@ def materialize_candidate(
     candidate: BacktestCandidate,
     quantity: int,
 ) -> list[Trade]:
-    """Turn a quantity-independent candidate into live-compatible exit trades."""
+    """Turn a quantity-independent candidate into live-compatible exit trades.
+
+    Live places one protected bracket (TP3 + SL) per entry regardless of
+    quantity: Alpaca rejects extra concurrent sell legs (403 40310000), and a
+    2024-2026 comparison showed the single bracket also outperforms the 3-leg
+    scale-out. The backtest therefore models the single-exit path only;
+    ``scaled_legs`` is retained on candidates for research tooling.
+    """
     if quantity < 1:
         return []
-    if quantity < 3:
-        return [
-            _trade_from_leg(candidate, leg, quantity)
-            for leg in candidate.single_legs
-        ]
-
-    quantities = split_qty(quantity)
-    remaining = quantity
-    trades: list[Trade] = []
-    for leg in candidate.scaled_legs:
-        if leg.reason == "tp1":
-            shares = quantities[0]
-        elif leg.reason == "tp2":
-            shares = quantities[1]
-        elif leg.reason == "tp3":
-            shares = quantities[2]
-        else:
-            shares = remaining
-        shares = min(shares, remaining)
-        if shares < 1:
-            continue
-        trades.append(_trade_from_leg(candidate, leg, shares))
-        remaining -= shares
-    return trades
+    return [
+        _trade_from_leg(candidate, leg, quantity)
+        for leg in candidate.single_legs
+    ]
 
 
 def run_annual_portfolio(

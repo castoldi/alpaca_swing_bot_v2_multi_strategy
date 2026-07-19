@@ -35,21 +35,23 @@ def _candidate(*, scaled_legs: tuple[ExitLeg, ...] | None = None):
     )
 
 
-def test_one_or_two_shares_use_single_bracket_outcome():
+def test_small_quantities_use_single_bracket_outcome():
     trades = materialize_candidate(_candidate(), 2)
 
     assert [trade.shares for trade in trades] == [2]
     assert [trade.exit_reason for trade in trades] == ["take_profit"]
 
 
-def test_three_or_more_shares_use_integer_scaleout_quantities():
+def test_large_quantities_also_use_the_single_bracket_outcome():
+    # Live places one protected bracket per entry regardless of quantity
+    # (Alpaca rejects extra concurrent sell legs), so the backtest must too.
     trades = materialize_candidate(_candidate(), 7)
 
-    assert [trade.shares for trade in trades] == [2, 2, 3]
-    assert [trade.exit_reason for trade in trades] == ["tp1", "tp2", "tp3"]
+    assert [trade.shares for trade in trades] == [7]
+    assert [trade.exit_reason for trade in trades] == ["take_profit"]
 
 
-def test_terminal_scaled_leg_receives_all_remaining_shares():
+def test_scaled_legs_are_never_materialized():
     scaled = (
         ExitLeg(pd.Timestamp("2026-01-03"), 103.0, "tp1", 1, 0.33),
         ExitLeg(pd.Timestamp("2026-01-04"), 100.0, "stop_loss", 2, 0.67),
@@ -57,7 +59,7 @@ def test_terminal_scaled_leg_receives_all_remaining_shares():
 
     trades = materialize_candidate(_candidate(scaled_legs=scaled), 7)
 
-    assert [trade.shares for trade in trades] == [2, 5]
+    assert [trade.exit_reason for trade in trades] == ["take_profit"]
 
 
 class _RepeatedSignalStrategy(BaseStrategy):

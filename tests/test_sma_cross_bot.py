@@ -55,7 +55,7 @@ def test_reconcile_closes_owned_sma_trade_on_cross_down(monkeypatch):
     )
     monkeypatch.setattr(bot, "_get_trading", lambda: tc)
     monkeypatch.setattr(
-        bot.db_mod, "get_open_trades_by_strategy", lambda _: [trade]
+        bot.db_mod, "get_open_trades", lambda: [trade]
     )
     monkeypatch.setattr(bot, "_verify_owned", lambda *_: True)
     closed = []
@@ -196,7 +196,7 @@ def test_pending_sma_exit_closes_only_at_confirmed_broker_fill(monkeypatch):
 
     closed = []
     monkeypatch.setattr(bot, "_get_trading", lambda: Client())
-    monkeypatch.setattr(bot.db_mod, "get_open_trades_by_strategy", lambda _: [trade])
+    monkeypatch.setattr(bot.db_mod, "get_open_trades", lambda: [trade])
     monkeypatch.setattr(
         bot.db_mod, "close_trade", lambda *args, **kwargs: closed.append((args, kwargs))
     )
@@ -228,7 +228,7 @@ def test_restart_adopts_owned_exit_submitted_before_pending_state_was_saved(monk
 
     pending = []
     monkeypatch.setattr(bot, "_get_trading", lambda: Client())
-    monkeypatch.setattr(bot.db_mod, "get_open_trades_by_strategy", lambda _: [trade])
+    monkeypatch.setattr(bot.db_mod, "get_open_trades", lambda: [trade])
     monkeypatch.setattr(bot, "_our_sell_orders", lambda *_args: [exit_order])
     monkeypatch.setattr(
         bot.db_mod, "set_exit_pending", lambda *args: pending.append(args)
@@ -427,7 +427,7 @@ def test_durable_exit_intent_retries_after_cross_is_no_longer_latest(monkeypatch
     client = Client()
     pending = []
     monkeypatch.setattr(bot, "_get_trading", lambda: client)
-    monkeypatch.setattr(bot.db_mod, "get_open_trades_by_strategy", lambda _: [trade])
+    monkeypatch.setattr(bot.db_mod, "get_open_trades", lambda: [trade])
     monkeypatch.setattr(bot.db_mod, "record_exit_order_progress", lambda *_args: None)
     monkeypatch.setattr(bot.db_mod, "get_exit_fill_totals", lambda _id: (0.0, 0.0))
     monkeypatch.setattr(bot.db_mod, "set_exit_pending", lambda *args: pending.append(args))

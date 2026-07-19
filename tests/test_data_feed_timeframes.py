@@ -17,11 +17,23 @@ def test_completed_bars_removes_current_daily_session():
     assert list(out.index) == [pd.Timestamp("2026-07-17")]
 
 
-def test_completed_bars_does_not_trim_four_hour_data():
+def test_completed_bars_drops_the_forming_four_hour_bucket():
+    # Index is tz-naive UTC bar-start; the 16:00 bucket spans 16:00-20:00.
+    df = pd.DataFrame(
+        {"close": [100.0, 101.0]},
+        index=pd.to_datetime(["2026-07-18 12:00", "2026-07-18 16:00"]),
+    )
+    as_of = datetime(2026, 7, 18, 18, 0, tzinfo=ZoneInfo("UTC"))
+    out = data_feed.completed_bars(df, "4h", as_of)
+    assert list(out.index) == [pd.Timestamp("2026-07-18 12:00")]
+
+
+def test_completed_bars_keeps_a_finished_four_hour_bucket():
     df = pd.DataFrame(
         {"close": [100.0]}, index=pd.to_datetime(["2026-07-18 16:00"])
     )
-    assert data_feed.completed_bars(df, "4h").equals(df)
+    as_of = datetime(2026, 7, 18, 20, 0, tzinfo=ZoneInfo("UTC"))
+    assert data_feed.completed_bars(df, "4h", as_of).equals(df)
 
 
 def test_alpaca_timeframe_accepts_only_supported_values():

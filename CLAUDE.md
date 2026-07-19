@@ -82,14 +82,14 @@ notifier.py        Gmail SMTP alerts
 ```
 
 **Data flow:**
-`data_feed.fetch_4h` → `strategy.add_indicators` → `strategy.check_entry_*` → signal → atomic stop-protected Alpaca entry → `db.save_trade` + cash/slot reservation → scaled TP setup → `bot._reconcile_and_exit` → `db.close_trade`
+`data_feed.fetch_4h` → completed bars only → `strategy.add_indicators` → `strategy.check_entry_*` → signal → slippage guard vs live price → protected bracket entry (market buy + OCO TP/SL) → `db.save_trade` + cash/slot reservation + real fill price → `bot._reconcile_and_exit` (all strategies) → `db.close_trade`
 
 **Backtest flow:**
 `download_history` → `collect_backtest_candidates` (strategy signals plus single/scaled exit paths) → `run_annual_portfolio` (20% whole-share sizing, cash/slot limits, realized-P&L compounding) → HTML report + `db.finish_backtest_run`
 
 ## Strategy architecture
 
-All 7 strategies live in `strategies/`. The six 4-hour strategies share the 3-leg TP ladder and stepped-stop exit engine; `sma_50_cross` uses its dedicated daily cross exit with an emergency stop.
+All 7 strategies live in `strategies/`. The six 4-hour strategies exit through one protected bracket per entry (TP3 + SL at the broker, plus a breakeven-gated time stop); `sma_50_cross` uses its dedicated daily cross exit with an emergency stop. There is deliberately **no scale-out in live trading**: Alpaca rejects extra concurrent sell legs (403 40310000) and the single bracket also backtested better across 2024–2026.
 
 | Strategy | Key entry condition | SL | TP | Max hold |
 |----------|--------------------|----|-----|---------|
@@ -104,15 +104,17 @@ All 7 strategies live in `strategies/`. The six 4-hour strategies share the 3-le
 
 All strategies share: TP reachability filter (target reachable in ≤4 ATR-days),
 one position per ticker, whole-share entries capped at 20% of current equity
-and cash, five positions maximum, no margin, and a 3-leg scaled exit
-(TP1/TP2/TP3 with a stepped stop) when quantity is at least three. Annual
+and cash, five positions maximum, no margin, an entry slippage guard
+(skip if live price drifts >1.5% from the signal close), a daily-loss kill
+switch (−3% vs yesterday's closing equity halts new entries for the day), and
+one protected bracket exit (TP3 + SL) per entry regardless of quantity. Annual
 backtests start at $1,000, compound within the year, and reset each January.
 
 **Ensemble warmup**: needs 60+ bars before first signal. Regime needs 50+ for EMA(50).
 
 ## Bot trading hours
 
-The loop only calls `run_once` between **08:30–17:00 ET** (America/New_York). Outside that window it heartbeats normally and logs `"Outside trading hours"`. The candle timeframe is **4h** — a 30-min loop interval is well-matched (new signals can only appear at 4h candle closes).
+The loop only calls `run_once` while **Alpaca's market clock reports the market open** (handles holidays and early closes; fallback window 09:30–16:00 ET weekdays if the clock API fails). Outside the session it heartbeats normally and logs `"Outside trading hours"`. The candle timeframe is **4h** and `data_feed.completed_bars` drops the still-forming bucket, so signals only ever come from completed candles — a 30-min loop interval is well-matched.
 
 ## Dashboard
 

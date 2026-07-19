@@ -20,11 +20,10 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pandas as pd
-from alpaca.trading.requests import GetCalendarRequest
 
 from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
-from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days, split_qty
+from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
@@ -50,6 +49,50 @@ class LiveSizingState:
     remaining_slots: int
 
 
+def _daily_loss_pct(account) -> float | None:
+    """Fractional loss vs yesterday's closing equity, or None when unknown."""
+    try:
+        last = float(getattr(account, "last_equity", None))
+        equity = float(account.equity)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(last) and last > 0 and math.isfinite(equity)):
+        return None
+    return (last - equity) / last
+
+
+_KILL_SWITCH_MARKER = ROOT / "run" / "killswitch.date"
+
+
+def _announce_kill_switch(loss_pct: float, equity: float) -> None:
+    """Log every cycle, but email only once per trading day."""
+    log.error(
+        "KILL SWITCH: daily loss %.2f%% >= %.2f%% limit — new entries disabled (equity $%.2f)",
+        loss_pct * 100,
+        PARAMS.max_daily_loss_pct * 100,
+        equity,
+    )
+    today = datetime.now(_ET).date().isoformat()
+    try:
+        if (
+            _KILL_SWITCH_MARKER.exists()
+            and _KILL_SWITCH_MARKER.read_text().strip() == today
+        ):
+            return
+        _KILL_SWITCH_MARKER.parent.mkdir(exist_ok=True)
+        _KILL_SWITCH_MARKER.write_text(today)
+    except Exception:
+        pass  # a marker failure must never suppress the alert itself
+    send_notification(
+        "Bot V2: kill switch tripped",
+        f"Daily loss {loss_pct * 100:.2f}% breached the "
+        f"{PARAMS.max_daily_loss_pct * 100:.1f}% limit.\n"
+        f"New entries are disabled for the rest of the day. Open positions "
+        f"keep their broker-held stop/TP protection and exits keep running.\n"
+        f"Equity ${equity:.2f}",
+    )
+
+
 def _load_live_sizing(tc) -> LiveSizingState | None:
     """Read one safe, non-margin sizing snapshot for the current bot cycle."""
     try:
@@ -67,6 +110,10 @@ def _load_live_sizing(tc) -> LiveSizingState | None:
             or open_position_count < 0
         ):
             raise ValueError("invalid equity or cash")
+        loss_pct = _daily_loss_pct(account)
+        if loss_pct is not None and loss_pct >= PARAMS.max_daily_loss_pct:
+            _announce_kill_switch(loss_pct, equity)
+            return None
         return LiveSizingState(
             equity=equity,
             remaining_cash=cash,
@@ -82,132 +129,6 @@ def _load_live_sizing(tc) -> LiveSizingState | None:
 def _make_client_order_id(strategy: str, ticker: str, kind: str) -> str:
     """Unique, Alpaca-safe correlation id, e.g. swingv2-entry-ensemble-ARM-9f3a1c2b."""
     return f"{CLIENT_ORDER_PREFIX}-{kind}-{strategy}-{ticker}-{uuid.uuid4().hex[:8]}"
-
-
-def stepped_stop_target(n_tp_filled: int, entry: float, initial_sl: float, tp1: float):
-    """Where the stop should sit given how many TP legs have filled.
-
-    0 -> initial SL, 1 -> entry (breakeven), 2 -> TP1, 3 -> None (position closed).
-    """
-    return [initial_sl, entry, tp1, None][min(int(n_tp_filled), 3)]
-
-
-def _cancel_orders_confirmed(
-    tc, orders: list, *, attempts: int = 5, delay: float = 0.2
-) -> bool:
-    """Request cancellation and confirm every order reaches a terminal state."""
-    if not orders:
-        return True
-
-    order_ids = [str(getattr(order, "id", "") or "") for order in orders]
-    if any(not order_id for order_id in order_ids):
-        return False
-
-    for order_id in order_ids:
-        try:
-            tc.cancel_order_by_id(order_id)
-        except Exception as exc:
-            log.error("  Could not request cancellation of TP leg %s: %s", order_id, exc)
-
-    terminal = {"canceled", "expired", "rejected", "filled", "closed"}
-    for attempt in range(attempts):
-        try:
-            statuses = {
-                order_id: _status_str(tc.get_order_by_id(order_id))
-                for order_id in order_ids
-            }
-        except Exception as exc:
-            log.error("  Could not confirm TP cleanup: %s", exc)
-            statuses = {}
-
-        if statuses and all(
-            statuses.get(order_id) in terminal for order_id in order_ids
-        ):
-            return True
-        if attempt < attempts - 1:
-            time.sleep(delay)
-
-    return False
-
-
-def _place_scaled_entry(
-    tc,
-    ticker: str,
-    qty: int,
-    sig,
-    strat_name: str,
-    entry_coid: str | None = None,
-    on_entry_accepted=None,
-) -> dict:
-    """Atomic stop-protected market entry followed by three TP sell orders."""
-    from alpaca.trading.requests import (
-        LimitOrderRequest,
-        MarketOrderRequest,
-        StopLossRequest,
-    )
-    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
-
-    entry_coid = entry_coid or _make_client_order_id(
-        strat_name, ticker, "entry"
-    )
-    buy = MarketOrderRequest(
-        symbol=ticker,
-        qty=qty,
-        side=OrderSide.BUY,
-        time_in_force=TimeInForce.DAY,
-        order_class=OrderClass.OTO,
-        stop_loss=StopLossRequest(stop_price=round(sig.stop_loss, 2)),
-        client_order_id=entry_coid,
-    )
-    entry_order = tc.submit_order(buy)
-    result = {
-        "entry": entry_order,
-        "tp_legs": [],
-        "stop": None,
-        "entry_coid": entry_coid,
-        "alpaca_id": str(getattr(entry_order, "id", "") or ""),
-        "setup_error": None,
-        "cleanup_confirmed": True,
-    }
-
-    if on_entry_accepted is not None:
-        try:
-            on_entry_accepted(result)
-        except Exception:
-            try:
-                tc.cancel_order_by_id(entry_order.id)
-            except Exception as cancel_exc:
-                log.error(
-                    "  Could not cancel unrecorded protected entry %s: %s",
-                    ticker,
-                    cancel_exc,
-                )
-            raise
-
-    legs = split_qty(qty)            # [a, a, qty-2a]
-    tps = [sig.tp1, sig.tp2, sig.tp3]
-    leg_orders = []
-    try:
-        for i, (lq, tp) in enumerate(zip(legs, tps), start=1):
-            coid = _make_client_order_id(strat_name, ticker, f"tp{i}")
-            req = LimitOrderRequest(
-                symbol=ticker,
-                qty=lq,
-                side=OrderSide.SELL,
-                time_in_force=TimeInForce.GTC,
-                limit_price=round(tp, 2),
-                client_order_id=coid,
-            )
-            leg_orders.append(tc.submit_order(req))
-    except Exception as exc:
-        cleanup_confirmed = _cancel_orders_confirmed(tc, leg_orders)
-        result["tp_legs"] = leg_orders
-        result["setup_error"] = str(exc)
-        result["cleanup_confirmed"] = cleanup_confirmed
-        return result
-
-    result["tp_legs"] = leg_orders
-    return result
 
 
 def _place_stop_only_entry(
@@ -283,6 +204,69 @@ def _position_qty(tc, ticker: str) -> float:
         return abs(float(pos.qty)) if pos else 0.0
     except Exception:
         return 0.0
+
+
+def _effective_entry_price(trade: dict) -> float:
+    """Real broker fill when recorded, else the signal-close entry price."""
+    return float(trade.get("entry_filled_price") or trade["entry_price"])
+
+
+def _record_entry_fill(
+    tc, trade_id, alpaca_id, *, attempts: int = 4, delay: float = 0.5
+) -> None:
+    """Briefly poll the entry order and persist its real average fill price.
+
+    Market entries usually fill in under a second during market hours; if the
+    fill arrives later, _backfill_entry_fill picks it up on reconciliation.
+    """
+    if not trade_id or not alpaca_id:
+        return
+    for attempt in range(attempts):
+        try:
+            order = tc.get_order_by_id(alpaca_id)
+        except Exception:
+            return
+        avg = getattr(order, "filled_avg_price", None)
+        if _status_str(order) in ("filled", "closed") and avg is not None:
+            try:
+                db_mod.set_entry_fill(
+                    trade_id,
+                    float(avg),
+                    float(getattr(order, "filled_qty", 0) or 0) or None,
+                )
+            except Exception as exc:
+                log.warning(
+                    "  Entry fill could not be recorded for trade %s: %s",
+                    trade_id,
+                    exc,
+                )
+            return
+        if attempt < attempts - 1:
+            time.sleep(delay)
+
+
+def _backfill_entry_fill(tc, trade: dict) -> None:
+    """Record the real entry fill during reconciliation if it is still missing."""
+    if trade.get("entry_filled_price"):
+        return
+    for order in _entry_order_candidates(tc, trade):
+        if _status_str(order) not in ("filled", "closed"):
+            continue
+        avg = getattr(order, "filled_avg_price", None)
+        qty = float(getattr(order, "filled_qty", 0) or 0)
+        if avg is None or qty <= 0:
+            continue
+        price = float(avg)
+        try:
+            db_mod.set_entry_fill(trade["id"], price, qty)
+        except Exception as exc:
+            log.warning(
+                "  %s entry fill backfill failed: %s", trade["ticker"], exc
+            )
+            return
+        trade["entry_filled_price"] = price
+        trade["shares"] = qty
+        return
 
 
 def _status_str(obj) -> str:
@@ -455,67 +439,6 @@ def _our_sell_orders(tc, ticker: str):
     return [o for o in out if str(getattr(o, "client_order_id", "") or "").startswith(CLIENT_ORDER_PREFIX)]
 
 
-def _count_filled_tp_legs(tc, trade: dict) -> int:
-    n = 0
-    for o in _our_sell_orders(tc, trade["ticker"]):
-        coid = str(getattr(o, "client_order_id", "") or "")
-        if "-tp" in coid and _status_str(o) in ("filled", "done_for_day", "closed"):
-            n += 1
-    return n
-
-
-def _open_stop_order(tc, trade: dict):
-    active = {"new", "accepted", "held", "pending_new", "partially_filled"}
-    for o in _our_sell_orders(tc, trade["ticker"]):
-        coid = str(getattr(o, "client_order_id", "") or "")
-        if "-stop-" in coid and _status_str(o) in active:
-            return o
-    for entry in _entry_order_candidates(tc, trade):
-        for leg in (getattr(entry, "legs", None) or []):
-            if getattr(leg, "stop_price", None) is not None and _status_str(leg) in active:
-                return leg
-    return None
-
-
-def _sync_stepped_stop(tc, trade: dict):
-    """Move the resting stop to match how many TP legs have filled (breakeven/TP1)."""
-    from strategy import split_take_profit
-    entry = float(trade["entry_price"])
-    tp1, _, _ = split_take_profit(entry, float(trade["take_profit"]))
-
-    n = _count_filled_tp_legs(tc, trade)
-    target = stepped_stop_target(n, entry, float(trade["stop_loss"]), tp1)
-    if target is None:
-        return  # all TPs filled; reconciliation closes the trade elsewhere
-
-    stop = _open_stop_order(tc, trade)
-    if stop is None:
-        return
-
-    qty = _position_qty(tc, trade["ticker"]) or float(getattr(stop, "qty", 0) or 0)
-    if qty < 1:
-        return
-    stop_price_matches = (
-        abs(float(getattr(stop, "stop_price", 0.0)) - target) < 1e-6
-    )
-    stop_qty_matches = (
-        abs(float(getattr(stop, "qty", 0.0) or 0.0) - qty) < 1e-6
-    )
-    if stop_price_matches and stop_qty_matches:
-        return
-    try:
-        tc.cancel_order_by_id(stop.id)
-        from alpaca.trading.requests import StopOrderRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce
-        coid = _make_client_order_id(trade["strategy"], trade["ticker"], "stop")
-        tc.submit_order(StopOrderRequest(symbol=trade["ticker"], qty=int(qty),
-                                         side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
-                                         stop_price=round(target, 2), client_order_id=coid))
-        log.info("  %s stepped stop -> $%.2f (%d TP legs filled)", trade["ticker"], target, n)
-    except Exception as e:
-        log.error("  Failed to move stepped stop for %s: %s", trade["ticker"], e)
-
-
 # ── Alpaca client (lazy) ──────────────────────────────────────────────────────
 
 _trading_client = None
@@ -599,16 +522,25 @@ def run_once(strategy: StrategyType) -> int:
                     continue
 
                 # Also avoid stacking on top of any pre-existing position (e.g. one a
-                # human opened): don't add exposure to a symbol we don't already manage.
+                # human opened). Only a definitive 404 proves "no position"; any
+                # other failure (network, outage) is unknown state, so skip the
+                # entry rather than risk doubling exposure.
                 try:
-                    tc = _get_trading()
                     open_pos = tc.get_open_position(ticker)
-                    if open_pos:
-                        log.info("  A %s position already exists (qty %s) not tracked by the bot — skipping",
-                                 ticker, open_pos.qty)
+                except Exception as pos_exc:
+                    if _exception_status_code(pos_exc) == 404:
+                        open_pos = None
+                    else:
+                        log.warning(
+                            "  %s: position lookup failed (%s) — skipping entry",
+                            ticker,
+                            pos_exc,
+                        )
                         continue
-                except Exception:
-                    pass  # No position — good to proceed
+                if open_pos is not None:
+                    log.info("  A %s position already exists (qty %s) not tracked by the bot — skipping",
+                             ticker, open_pos.qty)
+                    continue
 
                 # Persist ownership intent before any broker submission.
                 entry_db_id = None
@@ -633,6 +565,23 @@ def run_once(strategy: StrategyType) -> int:
                     if not math.isfinite(market_ref) or market_ref <= 0:
                         log.warning("  %s: no valid live price — skipping protected entry", ticker)
                         continue
+
+                    # The SL/TP geometry was computed off the signal bar close.
+                    # If the live price has already drifted away, that geometry
+                    # no longer matches the backtest — skip rather than chase.
+                    if strat_obj.has_take_profit and sig.entry_price > 0:
+                        slippage = abs(market_ref - sig.entry_price) / sig.entry_price
+                        if slippage > PARAMS.entry_max_slippage_pct:
+                            log.info(
+                                "  %s: live $%.2f is %.2f%% from signal $%.2f "
+                                "(max %.2f%%) — skipping entry",
+                                ticker,
+                                market_ref,
+                                slippage * 100,
+                                sig.entry_price,
+                                PARAMS.entry_max_slippage_pct * 100,
+                            )
+                            continue
 
                     size = whole_share_position_size(
                         sizing_state.equity,
@@ -719,44 +668,14 @@ def run_once(strategy: StrategyType) -> int:
                             entry_coid=entry_coid,
                         )
                         record_accepted_entry(info)
-                        coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
+                        coid = info["entry_coid"]
                         log.info("  Stop-only OTO: %s x%d (SL $%.2f) [coid=%s]",
                                  ticker, qty, sig.stop_loss, coid)
-                    elif qty >= 3:
-                        # Atomic stop-protected entry, then three managed TP legs.
-                        info = _place_scaled_entry(
-                            tc,
-                            ticker,
-                            qty,
-                            sig,
-                            strat_name,
-                            entry_coid=entry_coid,
-                            on_entry_accepted=record_accepted_entry,
-                        )
-                        coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
-                        log.info("  Scaled entry: %s x%d (TP1 $%.2f / TP2 $%.2f / TP3 $%.2f, "
-                                 "SL $%.2f) [coid=%s]", ticker, qty, sig.tp1, sig.tp2, sig.tp3,
-                                 sig.stop_loss, coid)
-                        if info.get("setup_error"):
-                            log.error(
-                                "  %s TP setup incomplete; atomic stop remains active: %s",
-                                ticker,
-                                info["setup_error"],
-                            )
-                            if not info.get("cleanup_confirmed", True):
-                                # Unknown sell-order state makes every later
-                                # allocation unsafe. Fail the rest of the entry
-                                # cycle closed while the durable trade record and
-                                # broker-held stop remain available to recovery.
-                                sizing_state.remaining_cash = 0.0
-                                sizing_state.remaining_slots = 0
-                                log.error(
-                                    "  %s TP cancellation unconfirmed; disabling later entries this cycle",
-                                    ticker,
-                                )
-                            _reconcile_and_exit(strat_name, frames)
                     else:
-                        # qty 1-2: too few shares to scale out — single OCO bracket at TP3
+                        # One protected bracket (TP3 + SL) per entry, whatever the
+                        # quantity. Alpaca rejects extra concurrent sell legs
+                        # (403 40310000), and the single bracket also backtested
+                        # better than the 3-leg scale-out across 2024-2026.
                         info = _place_single_bracket_entry(
                             tc,
                             ticker,
@@ -766,20 +685,16 @@ def run_once(strategy: StrategyType) -> int:
                             entry_coid=entry_coid,
                         )
                         record_accepted_entry(info)
-                        coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
-                        log.info("  Single bracket (qty<3): %s x%d @ $%.2f (SL $%.2f / TP $%.2f) [coid=%s]",
-                                 ticker, qty, sig.entry_price, sig.stop_loss, sig.tp3, coid)
+                        coid = info["entry_coid"]
+                        log.info("  Bracket entry: %s x%d @ ~$%.2f (SL $%.2f / TP $%.2f) [coid=%s]",
+                                 ticker, qty, market_ref, sig.stop_loss, sig.tp3, coid)
 
                     orders_placed += 1
+                    _record_entry_fill(tc, entry_db_id, info.get("alpaca_id"))
                     if strat_obj.has_take_profit:
-                        body = (f"Entry ${sig.entry_price:.2f}\nSL ${sig.stop_loss:.2f}\n"
-                                f"TP1 ${sig.tp1:.2f} / TP2 ${sig.tp2:.2f} / TP3 ${sig.tp3:.2f}\n"
+                        body = (f"Entry ~${market_ref:.2f} (signal ${sig.entry_price:.2f})\n"
+                                f"SL ${sig.stop_loss:.2f}\nTP ${sig.tp3:.2f}\n"
                                 f"Qty {qty}\nRef {coid}")
-                        if info.get("setup_error"):
-                            body += (
-                                "\nWARNING: TP setup failed; broker stop remains active. "
-                                f"{info['setup_error']}"
-                            )
                     else:
                         body = (f"Daily SMA(50) cross entry ~${market_ref:.2f}\n"
                                 f"SL ${sig.stop_loss:.2f}\nQty {qty}\nRef {coid}")
@@ -891,12 +806,34 @@ def _verify_owned(tc, trade: dict) -> bool:
         return False
 
 
+def _signal_exit_frame(
+    ticker: str,
+    strat_obj,
+    cache: dict[tuple[str, str], pd.DataFrame],
+) -> pd.DataFrame:
+    """Fetch (once per cycle) a completed, indicator-ready frame for an exit check."""
+    key = (ticker, strat_obj.timeframe)
+    if key not in cache:
+        try:
+            df = fetch_bars(
+                ticker, days=PARAMS.history_days, timeframe=strat_obj.timeframe
+            )
+            df = data_feed.completed_bars(df, strat_obj.timeframe)
+            cache[key] = add_indicators(df, PARAMS) if not df.empty else df
+        except Exception as e:
+            log.warning("  %s: exit frame fetch failed: %s", ticker, e)
+            cache[key] = pd.DataFrame()
+    return cache[key]
+
+
 def _reconcile_and_exit(
     strat_name: str, frames: dict[str, pd.DataFrame] | None = None
 ):
-    """Keep DB trades in sync and apply the selected strategy's live exit.
+    """Keep DB trades in sync and apply each trade's own strategy exit.
 
-    For each open trade THIS bot recorded:
+    Covers EVERY open trade this bot recorded — whatever strategy opened it —
+    so restarting the singleton with a different strategy never orphans the
+    older strategy's positions. For each open trade:
       * if its Alpaca position is gone (a bracket SL/TP filled) → record the exit.
       * else if past max-hold and at breakeven+ → close OUR quantity (after verifying
         ownership and cancelling our own bracket legs).
@@ -908,12 +845,28 @@ def _reconcile_and_exit(
         log.debug("Exit check skipped (no trading client): %s", e)
         return
 
-    strat_obj = REGISTRY[strat_name]
-    for trade in db_mod.get_open_trades_by_strategy(strat_name):
+    try:
+        open_trades = db_mod.get_open_trades()
+    except Exception as e:
+        log.error("Exit check skipped: open trades unavailable (%s)", e)
+        return
+
+    frame_cache: dict[tuple[str, str], pd.DataFrame] = {}
+    for trade in open_trades:
         ticker = trade["ticker"]
+        trade_strat = str(trade.get("strategy") or "")
+        strat_obj = REGISTRY.get(trade_strat)
+        if strat_obj is None:
+            log.warning(
+                "  %s: unknown strategy %r — leaving trade untouched",
+                ticker,
+                trade_strat,
+            )
+            continue
         try:
             if not _resolve_pending_entry(tc, trade):
                 continue
+            _backfill_entry_fill(tc, trade)
             try:
                 pos = tc.get_open_position(ticker)
             except Exception:
@@ -945,7 +898,9 @@ def _reconcile_and_exit(
                 continue
 
             if strat_obj.exit_mode == "signal_with_stop":
-                frame = (frames or {}).get(ticker)
+                frame = (frames or {}).get(ticker) if trade_strat == strat_name else None
+                if frame is None or frame.empty:
+                    frame = _signal_exit_frame(ticker, strat_obj, frame_cache)
                 if frame is None or frame.empty:
                     log.warning("  %s: no completed daily frame — leaving position open", ticker)
                     continue
@@ -958,17 +913,12 @@ def _reconcile_and_exit(
                     _close_owned(tc, trade, pos, reason=reason)
                 continue
 
-            # Ratchet the stepped stop (breakeven after TP1, TP1 after TP2) for our
-            # scaled positions. No-op for single-bracket trades (no managed stop order).
-            if _verify_owned(tc, trade):
-                _sync_stepped_stop(tc, trade)
-
             held = _days_held(trade["entry_date"])
             # max-hold is expressed in 4h bars (~2 per trading day); convert to a
             # calendar-day backstop for the live time-stop so it tracks the backtest.
-            max_hold = max(1, round(_max_hold_days(strat_name) / 2))
+            max_hold = max(1, round(_max_hold_days(trade_strat) / 2))
             current = float(pos.current_price)
-            entry = float(trade["entry_price"])
+            entry = _effective_entry_price(trade)
             if held >= max_hold and current >= entry:
                 if not _verify_owned(tc, trade):
                     log.warning("  %s past max-hold but ownership unverified (coid=%s) — leaving it alone",
@@ -983,7 +933,7 @@ def _reconcile_closed(tc, trade: dict):
     """Our tracked position is gone — either a bracket leg filled, or the entry
     order itself never filled and was later canceled/expired by the broker."""
     ticker = trade["ticker"]
-    entry = float(trade["entry_price"])
+    entry = _effective_entry_price(trade)
 
     if _entry_never_filled(tc, trade):
         db_mod.close_trade(trade["id"], datetime.now(timezone.utc).isoformat(), entry,
@@ -1123,7 +1073,7 @@ def _finalize_accumulated_exit(
 ) -> bool:
     """Close once durable broker fills cover the bot-owned share quantity."""
     ticker = trade["ticker"]
-    entry = float(trade["entry_price"])
+    entry = _effective_entry_price(trade)
     try:
         total_shares, total_notional = db_mod.get_exit_fill_totals(trade["id"])
         if total_shares <= 0:
@@ -1628,25 +1578,26 @@ def _close_owned(tc, trade: dict, pos, reason: str) -> bool:
 
 
 _ET = ZoneInfo("America/New_York")
-_MARKET_OPEN  = dtime(8, 30)
-_MARKET_CLOSE = dtime(17, 0)
+_MARKET_OPEN  = dtime(9, 30)
+_MARKET_CLOSE = dtime(16, 0)
 
 
 def _in_trading_hours() -> bool:
+    """True only while the market is actually open (Alpaca clock).
+
+    DAY market orders submitted outside regular hours queue for the next open
+    and fill far from the signal price, so the loop trades strictly inside the
+    session. The clock also handles holidays and early closes. If the clock is
+    unavailable, fall back to a conservative weekday 09:30-16:00 ET window.
+    """
+    try:
+        return bool(_get_trading().get_clock().is_open)
+    except Exception as e:
+        log.warning("Market clock unavailable (%s) — using ET fallback window", e)
     now_et = datetime.now(_ET)
-    now_time = now_et.time().replace(second=0, microsecond=0)
     if now_et.weekday() >= 5:
         return False
-    if not (_MARKET_OPEN <= now_time < _MARKET_CLOSE):
-        return False
-    try:
-        return bool(_get_trading().get_calendar(GetCalendarRequest(
-            start=now_et.date(),
-            end=now_et.date(),
-        )))
-    except Exception as e:
-        log.debug("Market calendar unavailable; using weekday/time fallback: %s", e)
-        return True
+    return _MARKET_OPEN <= now_et.time() < _MARKET_CLOSE
 
 
 def run_loop(strategy: StrategyType, interval_minutes: int = 30):

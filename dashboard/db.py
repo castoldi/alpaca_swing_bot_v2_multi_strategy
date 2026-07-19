@@ -119,6 +119,7 @@ def _migrate(c: sqlite3.Connection):
         "exit_client_order_id": "TEXT",  # correlation id of the closing order
         "exit_alpaca_order_id": "TEXT",  # Alpaca's order UUID for the exit
         "exit_intent_reason": "TEXT",     # durable intent before protection is canceled
+        "entry_filled_price": "REAL",    # broker average fill price of the entry
     }
     for col, decl in add.items():
         if col not in have:
@@ -193,6 +194,26 @@ def set_entry_order_id(db_id: int, alpaca_order_id: Optional[str]):
             "WHERE id=? AND status='open'",
             (alpaca_order_id, db_id),
         )
+
+
+def set_entry_fill(db_id: int, filled_price: float, filled_qty: Optional[float] = None):
+    """Record the broker's real average entry fill (and quantity when known).
+
+    The signal-close ``entry_price`` stays untouched for reference; live P&L,
+    breakeven checks, and time stops should prefer ``entry_filled_price``.
+    """
+    with _con() as c:
+        if filled_qty and filled_qty > 0:
+            c.execute(
+                "UPDATE trades SET entry_filled_price=?, shares=? "
+                "WHERE id=? AND status='open'",
+                (filled_price, filled_qty, db_id),
+            )
+        else:
+            c.execute(
+                "UPDATE trades SET entry_filled_price=? WHERE id=? AND status='open'",
+                (filled_price, db_id),
+            )
 
 
 def close_trade(db_id: int, exit_date: str, exit_price: float, reason: str,

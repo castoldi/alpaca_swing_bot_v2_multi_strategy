@@ -16,6 +16,54 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 _Changes landed but not yet released under a new version number go here._
 
+
+## [0.12.0] - 2026-07-18
+
+Safety hardening pass after a full code review: every finding was verified
+empirically against the Alpaca paper API and by 2024–2026 backtest comparison.
+
+### Changed
+- **Single protected bracket for every entry quantity.** The 3-leg scaled TP
+  ladder + stepped-stop engine was removed entirely: an empirical probe showed
+  Alpaca rejects the extra sell legs while the entry buy is open
+  (`403 40310000: cannot open a short sell while a long buy order is open`),
+  so the scaled path could never execute as coded — and had it been accepted,
+  stop-outs would have orphaned GTC sells able to short the margin account.
+  A 2024–2026 backtest comparison also showed the single bracket outperforms
+  the scale-out at account scale (+$261k vs +$182k total across strategies at
+  $100k equity). `materialize_candidate` now models the single-exit path so
+  backtests match live behavior.
+- **Trading window follows Alpaca's market clock** (`get_clock().is_open`)
+  instead of a fixed 08:30–17:00 ET window: no more premarket-queued market
+  orders, and holidays/early closes are handled. Conservative 09:30–16:00 ET
+  weekday fallback if the clock API is unavailable.
+- **Live signals only evaluate completed candles**: `completed_bars` now drops
+  the still-forming 4h bucket (it previously only trimmed the daily session),
+  removing intra-bar entries the backtest could never see.
+- **Reconciliation covers all strategies' open trades**, not just the running
+  strategy's, so restarting the bot with a different `-Strategy` no longer
+  orphans older positions (daily exit frames are fetched on demand).
+
+### Added
+- **Daily-loss kill switch**: when equity is down ≥3% (configurable
+  `max_daily_loss_pct`) vs yesterday's close, new entries are disabled for the
+  rest of the day (one alert email per day); exits and broker-held protection
+  keep running.
+- **Entry slippage guard** (`entry_max_slippage_pct`, 1.5%): entries are
+  skipped when the live price has drifted too far from the signal bar close,
+  keeping the SL/TP geometry consistent with the backtest.
+- **Real fill price recording**: the broker's average entry fill (and filled
+  quantity) is persisted per trade (`entry_filled_price`) and preferred over
+  the signal close for P&L, breakeven checks, and the time stop.
+
+### Fixed
+- Pre-entry position check treated *any* API error as "no position"; now only
+  a definitive 404 allows the entry and all other failures fail closed.
+- Stepped-stop bugs (counting TP fills from previous trades on the same
+  ticker; permanently losing the stop after a failed cancel/replace) are gone
+  with the machinery — protection is now a single broker-held OCO that cannot
+  desynchronize.
+
 ## [0.11.0] - 2026-07-18
 
 ### Added
@@ -318,4 +366,5 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 

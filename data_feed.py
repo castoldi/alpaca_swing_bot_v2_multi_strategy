@@ -128,14 +128,28 @@ def fetch_recent(
 def completed_bars(
     df: pd.DataFrame, timeframe: str, as_of: datetime | None = None
 ) -> pd.DataFrame:
-    """Remove the still-forming current daily candle from live evaluations."""
-    if timeframe != "1d" or df.empty:
+    """Remove any candle that could still be forming at ``as_of``.
+
+    Alpaca includes the accumulating current bucket in bar responses, and the
+    backtests only ever see completed candles — so live evaluations must drop
+    the partial daily session (1d) or the partial 4-hour bucket (4h) before a
+    strategy looks at the frame.
+    """
+    if df.empty:
         return df
     current = as_of or datetime.now(_ET)
     if current.tzinfo is None:
         current = current.replace(tzinfo=_ET)
-    session_date = current.astimezone(_ET).date()
-    return df[pd.Index(df.index.date) < session_date].copy()
+    if timeframe == "1d":
+        session_date = current.astimezone(_ET).date()
+        return df[pd.Index(df.index.date) < session_date].copy()
+    if timeframe == "4h":
+        # Index is tz-naive UTC bar-start; a bucket [T, T+4h) is complete
+        # once now >= T+4h.
+        now_utc = current.astimezone(timezone.utc).replace(tzinfo=None)
+        cutoff = now_utc - timedelta(hours=4)
+        return df[df.index <= cutoff].copy()
+    return df
 
 
 def fetch_4h(
