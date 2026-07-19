@@ -23,6 +23,7 @@ def _make_df():
 
 def test_backtest_ticker_emits_multiple_legs():
     df = _make_df()
+    df[["open", "high", "low", "close"]] *= 0.4
     trades = S.backtest_ticker(df, "TEST", pd.Timestamp("2025-07-01"),
                                PARAMS, StrategyType.TREND_PULLBACK)
     reasons = {t.exit_reason for t in trades}

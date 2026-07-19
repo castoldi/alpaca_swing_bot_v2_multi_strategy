@@ -162,15 +162,19 @@ the one-time install command above after a fresh clone (otherwise no auto tag/pu
 
 | Strategy | Entry conditions | SL | TP | Max hold | 2025 P&L | 2026 P&L |
 |----------|-----------------|----|----|----------|----------|----------|
-| **trend_pullback** | Price > SMA(50), RSI dipped below 55 recently, bounce bar (close > open, rising RSI). Skips entries 3 days before earnings. | 10% | 2×ATR [3%, 8%] | 5d | +$71.37 | +$142.02 |
-| **breakout** | Price breaks 20-bar high with ≥1.5× avg volume, price > SMA(50), RSI > 50 rising | 8% | 3×ATR [5%, 15%] | 7d | -$26.51 | +$117.66 |
-| **mean_reversion** | Price > SMA(50) but below SMA(20), RSI < 50, near Bollinger lower band, bounce bar | 7% | 1.5×ATR [1.5%, 5%] | 3d | -$26.31 | +$26.68 |
-| **momentum_macd** | MACD histogram just crossed above 0, RSI > 50 rising, price > SMA(20) and SMA(50) | 9% | 2.5×ATR [4%, 12%] | 6d | +$13.31 | +$35.99 |
-| **ensemble** | Weighted vote ≥ 0.30: regime(0.35) + MACD(0.25) + trend(0.20) + breakout(0.15) + MR(0.05) | 9% | 2.5×ATR [4%, 12%] | 6d | +$199.92 | +$331.78 |
-| **regime** | EMA(10)/EMA(50) cross: risk-on = buy dips in uptrend, risk-off = oversold bounces only, neutral = trend-pullback-like | adaptive | ATR-based [3%, 8%] | 5d | +$85.69 | +$239.86 |
-| **sma_50_cross** | Completed daily close crosses from ≤ SMA(50) to > SMA(50); exit on the opposite daily cross | 10% emergency | none | until cross | +$262.87 | +$392.68 |
+| **trend_pullback** | Price > SMA(50), RSI dipped below 55 recently, bounce bar (close > open, rising RSI). Skips entries 3 days before earnings. | 10% | 2×ATR [3%, 8%] | 5d | +$87.46 | +$59.22 |
+| **breakout** | Price breaks 20-bar high with ≥1.5× avg volume, price > SMA(50), RSI > 50 rising | 8% | 3×ATR [5%, 15%] | 7d | +$78.64 | +$3.95 |
+| **mean_reversion** | Price > SMA(50) but below SMA(20), RSI < 50, near Bollinger lower band, bounce bar | 7% | 1.5×ATR [1.5%, 5%] | 3d | +$35.10 | -$23.15 |
+| **momentum_macd** | MACD histogram just crossed above 0, RSI > 50 rising, price > SMA(20) and SMA(50) | 9% | 2.5×ATR [4%, 12%] | 6d | +$29.89 | +$3.99 |
+| **ensemble** | Weighted vote ≥ 0.30: regime(0.35) + MACD(0.25) + trend(0.20) + breakout(0.15) + MR(0.05) | 9% | 2.5×ATR [4%, 12%] | 6d | +$91.83 | +$243.87 |
+| **regime** | EMA(10)/EMA(50) cross: risk-on = buy dips in uptrend, risk-off = oversold bounces only, neutral = trend-pullback-like | adaptive | ATR-based [3%, 8%] | 5d | +$196.45 | +$207.28 |
+| **sma_50_cross** | Completed daily close crosses from ≤ SMA(50) to > SMA(50); exit on the opposite daily cross | 10% emergency | none | until cross | +$117.12 | +$146.19 |
 
-All strategies share one position per ticker, $200/trade, and $1,000 max concurrent capital. The six bracket strategies use the TP reachability filter; `sma_50_cross` has no TP and bypasses it.
+All strategies share one position per ticker, a whole-share entry capped at 20%
+of current equity and available cash, five positions maximum, and no margin.
+Annual backtests start at $1,000, compound realized P&L within the year, and
+reset to $1,000 for the next year. The six bracket strategies use the TP
+reachability filter; `sma_50_cross` has no TP and bypasses it.
 
 ## Research ideas — status
 
@@ -200,7 +204,7 @@ All strategies share one position per ticker, $200/trade, and $1,000 max concurr
 - **Ensemble threshold**: currently 0.30 (tightened from 0.25 on 2026-05-28) — check `strategy.py:467` if tuning
 - **Ensemble warmup**: requires 60+ bars before first signal; regime needs 50+ bars for EMA(50)
 - **SMA 50 Cross timeframe**: this strategy alone uses completed daily candles (`1d`). It needs 51 completed daily bars, enters on a fresh cross above SMA(50), exits on a fresh cross below, and never acts on the current incomplete session.
-- **OCO brackets / high-priced stocks**: Alpaca requires whole shares for bracket (SL/TP) orders. With `dollars_per_trade=$200`, a stock priced >$200 gives `qty=0`, so the bot now **skips it entirely** (no order, no email). This replaced the old notional-buy fallback, which placed unprotected positions and spammed "Qty 0" emails every loop. Raise `dollars_per_trade` in `config.py` to trade those names.
+- **OCO brackets / high-priced stocks**: Alpaca requires whole shares for protected bracket orders. If a stock costs more than the 20% equity allocation or available cash, `qty=0` and the bot **skips it entirely** (no order, no email). This avoids unprotected notional positions and repeated "Qty 0" notifications; a larger account balance is required to trade that symbol.
 - **Never start duplicates**: start the bot/dashboard only via `scripts/manage.ps1` — two `--loop` bots email the user twice over. PIDs live in `run/`.
 - **DB population**: backtests write to `dashboard/swing_bot_v2.db` — run both backtest scripts before opening the dashboard or it will appear empty
 - **simulate_exit uses signal prices directly**: SL/TP on the signal object are authoritative — do not recalculate from params in `simulate_exit` (bug fixed 2026-05-31)

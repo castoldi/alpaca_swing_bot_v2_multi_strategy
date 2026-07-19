@@ -462,8 +462,9 @@ async function loadHome() {
       ? {background:'#22c55e20',color:'#22c55e',borderColor:'#22c55e40'}
       : {background:'#ef444420',color:'#ef4444',borderColor:'#ef444440'});
     const timeframeLabel = (summary.timeframes || [summary.timeframe || '4h']).join(' + ');
+    const sizePct = Math.round((summary.position_size_pct || 0.20) * 100);
     document.getElementById('subtitle').textContent =
-      `${(summary.tickers||[]).join(' · ')}  ·  ${timeframeLabel} candles  ·  $${summary.dollars_per_trade||200}/trade  ·  $${summary.max_capital||1000} cap`;
+      `${(summary.tickers||[]).join(' · ')}  ·  ${timeframeLabel} candles  ·  ${sizePct}% equity/trade  ·  ${summary.max_concurrent_positions||5} positions max`;
 
     // KPIs
     document.getElementById('kpis').innerHTML = `

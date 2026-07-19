@@ -22,10 +22,15 @@ import yfinance as yf
 
 from config import PARAMS, TICKERS, BAR_TIMEFRAME, HISTORY_WARMUP_DAYS
 from logger_setup import get_logger
-from strategies import REGISTRY, get_enabled, Trade, add_indicators, backtest_ticker
+from strategies import REGISTRY, get_enabled, Trade
 from dashboard import db as db_mod
 import data_feed
 from market_cache import MarketDataCache
+from backtest_portfolio import (
+    PortfolioResult,
+    collect_backtest_candidates,
+    run_annual_portfolio,
+)
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
@@ -64,20 +69,6 @@ def download_history(
         feed="sip",
     )
     return data_feed.completed_bars(bars, timeframe)
-
-
-def apply_portfolio_cap(trades: list[Trade], dollars_per_trade: float, cap: float) -> tuple[list[Trade], int]:
-    max_concurrent = int(cap // dollars_per_trade) if dollars_per_trade else 0
-    accepted, skipped = [], 0
-    open_exit_dates = []
-    for t in sorted(trades, key=lambda x: x.entry_date):
-        open_exit_dates = [d for d in open_exit_dates if d >= t.entry_date]
-        if len(open_exit_dates) >= max_concurrent:
-            skipped += 1
-            continue
-        accepted.append(t)
-        open_exit_dates.append(t.exit_date)
-    return accepted, skipped
 
 
 def compute_stats(trades: list[Trade]) -> dict:
@@ -124,20 +115,85 @@ def per_ticker_stats(ticker: str, trades: list[Trade]) -> dict:
     s["ticker"] = ticker
     return s
 
-def compute_max_drawdown(trades: list[Trade]) -> float:
-    """Return maximum drawdown % from peak equity. Uses total capital at risk as denominator."""
+def compute_max_drawdown(
+    trades: list[Trade],
+    initial_equity: float = PARAMS.initial_backtest_equity,
+) -> float:
+    """Return maximum realized-equity drawdown from the running peak."""
     if not trades:
         return 0.0
     sorted_t = sorted(trades, key=lambda t: t.exit_date)
-    cum = np.cumsum([t.pnl_dollars for t in sorted_t])
-    running_max = np.maximum.accumulate(cum)
-    dd = cum - running_max
-    # Use max capital deployed as denominator instead of running_max (which can be 0)
-    denominator = PARAMS.max_concurrent_capital
-    if denominator <= 0:
+    if initial_equity <= 0:
         return 0.0
-    dd_pct = dd / denominator
-    return float(abs(dd_pct.min())) if len(dd_pct) > 0 else 0.0
+    equity = initial_equity + np.cumsum([t.pnl_dollars for t in sorted_t])
+    equity = np.insert(equity, 0, initial_equity)
+    running_peak = np.maximum.accumulate(equity)
+    drawdowns = (running_peak - equity) / running_peak
+    return float(np.max(drawdowns))
+
+
+def stats_from_portfolio(result: PortfolioResult) -> dict:
+    """Attach annual account metadata to the existing trade statistics."""
+    trades = list(result.trades)
+    stats = compute_stats(trades)
+    stats["max_drawdown_pct"] = compute_max_drawdown(
+        trades, result.starting_equity
+    )
+    stats["roi_on_cap"] = result.return_pct
+    stats["starting_equity"] = result.starting_equity
+    stats["ending_equity"] = result.ending_equity
+    stats["return_pct"] = result.return_pct
+    stats["accepted_positions"] = result.accepted_positions
+    stats["skipped"] = result.skipped_positions
+    stats["_trades"] = trades
+    return stats
+
+
+def run_strategy_year(
+    ticker_data: dict,
+    strategy,
+    year: int,
+    params=PARAMS,
+) -> tuple[PortfolioResult, dict, dict]:
+    """Run one strategy as one combined, annually reset ticker portfolio."""
+    window_start = pd.Timestamp(date(year, 1, 1))
+    window_end = pd.Timestamp(date(year, 12, 31)) + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+    candidates = []
+    frames: dict[str, pd.DataFrame] = {}
+
+    for ticker in TICKERS:
+        frame = ticker_data.get((ticker, strategy.timeframe))
+        if frame is None:
+            frame = ticker_data.get(ticker)
+        if frame is None or frame.empty:
+            continue
+        frames[ticker] = frame
+        candidates.extend(
+            collect_backtest_candidates(
+                frame,
+                ticker,
+                window_start,
+                window_end,
+                params,
+                strategy,
+            )
+        )
+
+    result = run_annual_portfolio(
+        candidates,
+        initial_equity=params.initial_backtest_equity,
+        position_fraction=params.position_size_pct,
+        max_positions=params.max_concurrent_positions,
+    )
+    trades_by_ticker = {
+        ticker: [trade for trade in result.trades if trade.ticker == ticker]
+        for ticker in frames
+    }
+    per_ticker = {
+        ticker: (frame, trades_by_ticker[ticker])
+        for ticker, frame in frames.items()
+    }
+    return result, stats_from_portfolio(result), per_ticker
 
 
 def run_full_backtest() -> int:
@@ -166,30 +222,12 @@ def run_full_backtest() -> int:
         log.info("Running strategy: %s", strat_name)
         log.info("=" * 50)
 
-        per_ticker: dict[str, tuple[pd.DataFrame, list[Trade]]] = {}
-        all_candidate_trades: list[Trade] = []
-
         # Record backtest run in DB
         bt_id = db_mod.start_backtest_run(2025, strat_name, strategy.timeframe)
-
-        for tk in TICKERS:
-            df = ticker_data.get((tk, strategy.timeframe))
-            if df is None or df.empty:
-                continue
-            window_start = pd.Timestamp(BACKTEST_START)
-            trades = backtest_ticker(df, tk, window_start, PARAMS, strategy)
-            all_candidate_trades.extend(trades)
-            per_ticker[tk] = (df, trades)
-
-        capped, skipped = apply_portfolio_cap(all_candidate_trades,
-                                               PARAMS.dollars_per_trade,
-                                               PARAMS.max_concurrent_capital)
-        stats = compute_stats(capped)
-        dd = compute_max_drawdown(capped)
-        stats["max_drawdown_pct"] = dd
-        stats["roi_on_cap"] = stats["total_pnl"] / PARAMS.max_concurrent_capital
-        stats["_trades"] = capped
-        stats["skipped"] = skipped
+        _, stats, per_ticker = run_strategy_year(
+            ticker_data, strategy, 2025, PARAMS
+        )
+        dd = stats["max_drawdown_pct"]
 
         strategy_results[strat_name] = stats
         per_strategy_details[strat_name] = per_ticker
@@ -237,19 +275,8 @@ def run_single(strategy_name: str) -> int:
             ticker_data[tk] = df
 
     bt_id = db_mod.start_backtest_run(2025, strat_name, strat.timeframe)
-    all_trades: list[Trade] = []
-    per_ticker: dict = {}
-    for tk in TICKERS:
-        df = ticker_data.get(tk)
-        if df is None or df.empty:
-            continue
-        trades = backtest_ticker(df, tk, pd.Timestamp(BACKTEST_START), PARAMS, strat)
-        all_trades.extend(trades)
-        per_ticker[tk] = (df, trades)
-
-    capped, _ = apply_portfolio_cap(all_trades, PARAMS.dollars_per_trade, PARAMS.max_concurrent_capital)
-    stats = compute_stats(capped)
-    dd = compute_max_drawdown(capped)
+    _, stats, _ = run_strategy_year(ticker_data, strat, 2025, PARAMS)
+    dd = stats["max_drawdown_pct"]
     pf = stats["profit_factor"]
     db_mod.finish_backtest_run(bt_id, stats["trades"], stats["win_rate"],
                                stats["total_pnl"], pf if pf != float("inf") else 999.0, dd, 0.0)

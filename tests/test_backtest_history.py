@@ -4,7 +4,9 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from backtest_portfolio import BacktestCandidate
 from strategies import Trade
+from strategies.base import ExitLeg
 
 import backtest_history
 
@@ -61,6 +63,35 @@ def test_yearly_stats_group_accepted_trades_by_exit_year():
     assert result[2021]["total_pnl"] == 6.0
 
 
+def _annual_candidate(year: int) -> BacktestCandidate:
+    entry = pd.Timestamp(year=year, month=1, day=2)
+    exit_date = pd.Timestamp(year=year, month=1, day=3)
+    leg = ExitLeg(exit_date, 110.0, "take_profit", 1, 1.0)
+    return BacktestCandidate(
+        ticker="TEST",
+        entry_date=entry,
+        entry_price=100.0,
+        stop_loss=90.0,
+        take_profit=110.0,
+        strategy="trend_pullback",
+        single_legs=(leg,),
+        scaled_legs=(leg,),
+    )
+
+
+def test_independent_years_each_restart_at_one_thousand():
+    results = backtest_history.run_independent_annual_portfolios(
+        {2024: [_annual_candidate(2024)], 2025: [_annual_candidate(2025)]}
+    )
+
+    assert results[2024].starting_equity == 1_000.0
+    assert results[2025].starting_equity == 1_000.0
+    assert results[2024].trades[0].shares == 2
+    assert results[2025].trades[0].shares == 2
+    assert results[2024].ending_equity == 1_020.0
+    assert results[2025].ending_equity == 1_020.0
+
+
 def test_run_history_includes_partial_ticker_histories(tmp_path, monkeypatch):
     old_bars = pd.DataFrame(
         {
@@ -78,18 +109,24 @@ def test_run_history_includes_partial_ticker_histories(tmp_path, monkeypatch):
         calls.append((ticker, start, end, timeframe))
         return old_bars if ticker == "OLD" else old_bars.iloc[0:0]
 
-    def fake_backtest(frame, ticker, window_start, params, strategy):
+    def fake_candidates(
+        frame, ticker, window_start, window_end, params, strategy
+    ):
         assert ticker == "OLD"
         assert window_start == pd.Timestamp("2016-01-01")
-        return [
-            make_trade(
-                ticker=ticker,
-                entry="2016-02-01",
-                exit="2016-02-02",
-                pnl=5.0,
-                strategy=strategy.name,
-            )
-        ]
+        leg = ExitLeg(
+            pd.Timestamp("2016-02-02"), 102.5, "time_stop", 1, 1.0
+        )
+        return [BacktestCandidate(
+            ticker=ticker,
+            entry_date=pd.Timestamp("2016-02-01"),
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=110.0,
+            strategy=strategy.name,
+            single_legs=(leg,),
+            scaled_legs=(leg,),
+        )]
 
     class FakeCache:
         @staticmethod
@@ -105,7 +142,9 @@ def test_run_history_includes_partial_ticker_histories(tmp_path, monkeypatch):
         lambda: [SimpleNamespace(name="trend_pullback", timeframe="4h")],
     )
     monkeypatch.setattr(backtest_history, "download_history", fake_download)
-    monkeypatch.setattr(backtest_history, "backtest_ticker", fake_backtest)
+    monkeypatch.setattr(
+        backtest_history, "collect_backtest_candidates", fake_candidates
+    )
     monkeypatch.setattr(backtest_history, "_MARKET_CACHE", FakeCache())
     monkeypatch.setattr(backtest_history, "OUTPUT_HTML", html_path)
     monkeypatch.setattr(backtest_history, "OUTPUT_JSON", json_path)

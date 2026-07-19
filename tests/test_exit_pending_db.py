@@ -1,6 +1,35 @@
 from dashboard import db
 
 
+def test_durable_entry_intent_can_attach_broker_id_after_acceptance(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(db, "_DB", tmp_path / "entry-intent.db")
+    db._ensure_tables()
+    trade_id = db.save_trade(
+        "AMD",
+        "ensemble",
+        "2026-07-18",
+        100.0,
+        90.0,
+        110.0,
+        shares=2,
+        client_order_id="swingv2-entry-ensemble-AMD-abcd",
+        alpaca_order_id=None,
+        entry_state="pending_submission",
+    )
+
+    pending = db.get_open_trade("AMD", "ensemble")
+    assert pending["entry_state"] == "pending_submission"
+
+    db.set_entry_order_id(trade_id, "entry-42")
+
+    trade = db.get_open_trade("AMD", "ensemble")
+    assert trade["client_order_id"] == "swingv2-entry-ensemble-AMD-abcd"
+    assert trade["alpaca_order_id"] == "entry-42"
+    assert trade["entry_state"] == "accepted"
+
+
 def test_pending_exit_remains_open_until_confirmed_fill(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "_DB", tmp_path / "trades.db")
     db._ensure_tables()

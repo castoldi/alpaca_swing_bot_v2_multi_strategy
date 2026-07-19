@@ -47,3 +47,21 @@ def get_all() -> list[BaseStrategy]:
 
 def get_enabled() -> list[BaseStrategy]:
     return [s for s in REGISTRY.values() if s.enabled]
+
+
+_PORTFOLIO_EXPORTS = {
+    "BacktestCandidate",
+    "collect_backtest_candidates",
+    "materialize_candidate",
+}
+
+
+def __getattr__(name: str):
+    """Lazily export portfolio APIs without a package import cycle."""
+    if name in _PORTFOLIO_EXPORTS:
+        import backtest_portfolio
+
+        value = getattr(backtest_portfolio, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

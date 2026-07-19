@@ -13,7 +13,12 @@ import yfinance as yf
 
 from config import PARAMS, TICKERS, StrategyParams, StrategyType
 from logger_setup import get_logger
-from strategy import add_indicators, backtest_ticker, Trade
+from strategy import Trade
+from strategies import REGISTRY
+from backtest_portfolio import (
+    collect_backtest_candidates,
+    run_annual_portfolio,
+)
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent.parent
@@ -44,19 +49,6 @@ def download_history(ticker: str, start: date, end: date) -> pd.DataFrame:
 from datetime import timedelta
 
 
-def apply_portfolio_cap(trades: list[Trade], dollars_per_trade: float, cap: float) -> list[Trade]:
-    max_concurrent = int(cap // dollars_per_trade) if dollars_per_trade else 0
-    accepted: list[Trade] = []
-    open_exit_dates: list[pd.Timestamp] = []
-    for t in sorted(trades, key=lambda x: x.entry_date):
-        open_exit_dates = [d for d in open_exit_dates if d >= t.entry_date]
-        if len(open_exit_dates) >= max_concurrent:
-            continue
-        accepted.append(t)
-        open_exit_dates.append(t.exit_date)
-    return accepted
-
-
 def run_backtest_for_params(
     p: StrategyParams,
     strategy: StrategyType,
@@ -65,18 +57,30 @@ def run_backtest_for_params(
     """Run a full multi-ticker backtest for a given year with custom params."""
     start = date(year, 1, 1)
     end = date(year, 12, 31)
-    all_trades: list[Trade] = []
+    all_candidates = []
+    strategy_obj = REGISTRY[strategy.value]
 
     for ticker in TICKERS:
         df = download_history(ticker, start, end)
         if df.empty or len(df) < 60:
             continue
         window_start = pd.Timestamp(start)
-        trades = backtest_ticker(df, ticker, window_start, p, strategy)
-        all_trades.extend(trades)
+        window_end = (
+            pd.Timestamp(end) + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+        )
+        all_candidates.extend(
+            collect_backtest_candidates(
+                df, ticker, window_start, window_end, p, strategy_obj
+            )
+        )
 
-    capped = apply_portfolio_cap(all_trades, p.dollars_per_trade, p.max_concurrent_capital)
-    return capped
+    result = run_annual_portfolio(
+        all_candidates,
+        initial_equity=p.initial_backtest_equity,
+        position_fraction=p.position_size_pct,
+        max_positions=p.max_concurrent_positions,
+    )
+    return list(result.trades)
 
 
 def compute_stats(trades: list[Trade]) -> dict[str, Any]:
@@ -91,12 +95,12 @@ def compute_stats(trades: list[Trade]) -> dict[str, Any]:
 
     # Simple equity curve for max drawdown
     equity = []
-    running = 0.0
-    for t in sorted(trades, key=lambda x: x.entry_date):
+    running = PARAMS.initial_backtest_equity
+    for t in sorted(trades, key=lambda x: x.exit_date):
         running += t.pnl_dollars
         equity.append(running)
-    peak = np.maximum.accumulate(equity) if equity else [0]
-    dd = [(peak[i] - equity[i]) / peak[i] * 100 if peak[i] > 0 else 0 for i in range(len(equity))]
+    peak = np.maximum.accumulate(equity) if equity else [PARAMS.initial_backtest_equity]
+    dd = [(peak[i] - equity[i]) / peak[i] * 100 for i in range(len(equity))]
     max_dd = max(dd) if dd else 0
 
     pf = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (gross_profit if gross_profit > 0 else 0)
@@ -138,7 +142,6 @@ def random_search(
 
     # Param search space
     param_bounds = {
-        "dollars_per_trade": (100, 500),
         "stop_loss_pct": (0.05, 0.15),
         "atr_tp_multiple": (1.5, 4.0),
         "rsi_pullback_max": (40, 65),
@@ -157,7 +160,6 @@ def random_search(
         p = PARAMS
         new_p = StrategyParams(
             strategy=strategy,
-            dollars_per_trade=overrides.get("dollars_per_trade", p.dollars_per_trade),
             stop_loss_pct=overrides.get("stop_loss_pct", p.stop_loss_pct),
             atr_tp_multiple=overrides.get("atr_tp_multiple", p.atr_tp_multiple),
             rsi_pullback_max=overrides.get("rsi_pullback_max", p.rsi_pullback_max),

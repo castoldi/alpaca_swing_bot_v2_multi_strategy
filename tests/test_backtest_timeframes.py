@@ -31,11 +31,36 @@ def test_report_accepts_history_label_and_source():
         None,
         report_label="2016–Present Backtest",
         data_source="Alpaca SIP historical data",
+        annual_reset_aggregate=True,
     )
 
     assert "2016–Present Backtest" in html
     assert "Alpaca SIP historical data" in html
     assert "yfinance live data" not in html
+    assert "Annual reset: $1,000" in html
+    assert "Independent-Year P&amp;L Aggregate" in html
+    assert "Account Equity ($)" not in html
+
+
+def test_strategy_report_shows_start_end_equity_and_return():
+    from backtest_2025 import compute_stats
+    from build_report_2025 import strategy_kpi_cards
+
+    stats = compute_stats([])
+    stats.update(
+        starting_equity=1_000.0,
+        ending_equity=1_125.0,
+        return_pct=0.125,
+        max_drawdown_pct=0.05,
+    )
+
+    html = strategy_kpi_cards("ensemble", stats)
+
+    assert "Starting Equity" in html
+    assert "$1,000.00" in html
+    assert "Ending Equity" in html
+    assert "$1,125.00" in html
+    assert "+12.50%" in html
 
 
 def test_backtest_history_uses_sip_cache_and_drops_current_daily(monkeypatch):

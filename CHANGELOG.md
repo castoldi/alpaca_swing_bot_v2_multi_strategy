@@ -16,14 +16,48 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 _Changes landed but not yet released under a new version number go here._
 
+## [0.11.0] - 2026-07-18
+
 ### Added
-- Added the test-first implementation plan for live 20%-of-equity sizing and
-  whole-share annual-reset backtest compounding.
-- Designed 20%-of-equity live position sizing and whole-share annual backtest
-  compounding, with each calendar year resetting to a fresh $1,000 portfolio.
+- Added a shared whole-share sizing policy and chronological annual portfolio
+  ledger with cash, ticker, and five-position capacity controls.
+- Added test-first design and implementation documentation for live
+  20%-of-equity sizing and annual-reset backtest compounding.
 
+### Fixed
+- Scale-out legs now consume one backtest position slot instead of being
+  treated as independent concurrent trades.
+- Live cycles now count existing Alpaca positions and reserve capacity after
+  each submitted entry, preventing whole-share rounding from admitting a
+  sixth account position.
+- Live entries now persist a durable client-id intent before broker submission,
+  attach the broker id after acceptance, adopt timeout-ambiguous submissions by
+  client id, and retain unresolved intents until Alpaca confirms absence.
+- Reconciliation retires an aged pending entry only after Alpaca explicitly
+  confirms that its client id is absent, preventing phantom or orphaned orders
+  across submission failures and process restarts.
+- Each live cycle resolves durable intents before sizing and disables new
+  entries while any earlier parent order is active or unverifiable, so pending
+  cash and position capacity cannot be reused after a restart or strategy swap.
+- Scaled entries now use an atomic stop-only OTO parent; cash/slot capacity is
+  reserved before separate profit targets are submitted, and partial target
+  setup failures require confirmed cleanup while the position remains tracked
+  and broker-protected.
+- Simultaneous backtest entries now share the same pre-event realized equity,
+  preventing same-bar exits from leaking future P&L into another ticker's
+  opening quantity.
+- Multi-year report curves are labeled as independent-year P&L aggregates
+  instead of implying that capital compounds across calendar years.
 
-
+### Changed
+- Live entries now use protected whole-share orders capped at 20% of current
+  Alpaca equity and available cash, with local cash reservation preventing
+  multiple signals in one cycle from relying on margin.
+- Annual and historical backtests now compound realized P&L within each year,
+  model the live one/two-share versus scaled exit paths, and reset every
+  calendar year to a fresh $1,000.
+- Dashboard and reports now expose percentage sizing, starting/ending annual
+  equity, returns, and the five-position maximum.
 
 ## [0.10.0] - 2026-07-18
 

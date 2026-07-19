@@ -59,8 +59,9 @@ class StrategyParams:
     strategy: StrategyType = StrategyType.TREND_PULLBACK
 
     # ── Position sizing ───────────────────────────────────────────────────
-    dollars_per_trade: float = 200.0
-    max_concurrent_capital: float = 1000.0
+    initial_backtest_equity: float = 1000.0
+    position_size_pct: float = 0.20
+    max_concurrent_positions: int = 5
 
     # ── Shared data window ────────────────────────────────────────────
     history_days: int = 90

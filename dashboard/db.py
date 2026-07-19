@@ -49,6 +49,7 @@ def _ensure_tables():
                 shares REAL,
                 pnl_dollars REAL,
                 pnl_pct REAL,
+                entry_state TEXT DEFAULT 'accepted',
                 status TEXT DEFAULT 'open',
                 created_at TEXT DEFAULT (datetime('now'))
             );
@@ -114,6 +115,7 @@ def _migrate(c: sqlite3.Connection):
     add = {
         "client_order_id": "TEXT",       # our correlation id sent to Alpaca on entry
         "alpaca_order_id": "TEXT",       # Alpaca's order UUID for the entry
+        "entry_state": "TEXT DEFAULT 'accepted'",  # pending_submission | accepted
         "exit_client_order_id": "TEXT",  # correlation id of the closing order
         "exit_alpaca_order_id": "TEXT",  # Alpaca's order UUID for the exit
         "exit_intent_reason": "TEXT",     # durable intent before protection is canceled
@@ -168,18 +170,29 @@ def get_recent_runs(limit: int = 50) -> list[dict]:
 def save_trade(ticker: str, strategy: str, entry_date: str, entry_price: float,
                stop_loss: float, take_profit: float, shares: Optional[float] = None,
                client_order_id: Optional[str] = None,
-               alpaca_order_id: Optional[str] = None) -> int:
+               alpaca_order_id: Optional[str] = None,
+               entry_state: str = "accepted") -> int:
     """Persist a newly opened trade, including its Alpaca correlation ids."""
     _ensure_tables()
     with _con() as c:
         cur = c.execute(
             "INSERT INTO trades (ticker, strategy, entry_date, entry_price, stop_loss, "
-            "take_profit, shares, client_order_id, alpaca_order_id, status) "
-            "VALUES (?,?,?,?,?,?,?,?,?,'open')",
+            "take_profit, shares, client_order_id, alpaca_order_id, entry_state, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,'open')",
             (ticker, strategy, entry_date, entry_price, stop_loss, take_profit,
-             shares, client_order_id, alpaca_order_id),
+             shares, client_order_id, alpaca_order_id, entry_state),
         )
         return cur.lastrowid
+
+
+def set_entry_order_id(db_id: int, alpaca_order_id: Optional[str]):
+    """Attach the broker id after a durable client-id entry intent is accepted."""
+    with _con() as c:
+        c.execute(
+            "UPDATE trades SET alpaca_order_id=?, entry_state='accepted' "
+            "WHERE id=? AND status='open'",
+            (alpaca_order_id, db_id),
+        )
 
 
 def close_trade(db_id: int, exit_date: str, exit_price: float, reason: str,

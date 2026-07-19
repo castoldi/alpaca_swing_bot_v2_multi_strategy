@@ -10,6 +10,11 @@ from strategies.base import (
     SKIP_EARNINGS_STRATEGIES, _max_holding_days,
 )
 from strategies import REGISTRY
+from backtest_portfolio import (
+    BacktestCandidate,
+    collect_backtest_candidates,
+    materialize_candidate,
+)
 
 
 def get_entry_checker(strategy):

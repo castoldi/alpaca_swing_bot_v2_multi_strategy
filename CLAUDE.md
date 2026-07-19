@@ -82,10 +82,10 @@ notifier.py        Gmail SMTP alerts
 ```
 
 **Data flow:**
-`data_feed.fetch_4h` → `strategy.add_indicators` → `strategy.check_entry_*` → signal → `bot._place_scaled_entry` → Alpaca + `db.save_trade` → `bot._reconcile_and_exit` → `db.close_trade`
+`data_feed.fetch_4h` → `strategy.add_indicators` → `strategy.check_entry_*` → signal → atomic stop-protected Alpaca entry → `db.save_trade` + cash/slot reservation → scaled TP setup → `bot._reconcile_and_exit` → `db.close_trade`
 
 **Backtest flow:**
-`data_feed.fetch_4h` → `strategy.add_indicators` → `strategy.backtest_ticker` (calls `check_entry_*` + `simulate_exit_scaleout` bar-by-bar) → `apply_portfolio_cap` → HTML report + `db.finish_backtest_run`
+`download_history` → `collect_backtest_candidates` (strategy signals plus single/scaled exit paths) → `run_annual_portfolio` (20% whole-share sizing, cash/slot limits, realized-P&L compounding) → HTML report + `db.finish_backtest_run`
 
 ## Strategy architecture
 
@@ -102,7 +102,11 @@ All 7 strategies live in `strategies/`. The six 4-hour strategies share the 3-le
 
 `bot.py` entry dispatch: `get_entry_checker(strategy)` returns the matching `check_entry_*` function.
 
-All strategies share: TP reachability filter (target reachable in ≤4 ATR-days), one position per ticker, $200/trade, $1,000 max concurrent capital, 3-leg scaled exit (TP1/TP2/TP3 at 1/3–2/3–full with stepped stop).
+All strategies share: TP reachability filter (target reachable in ≤4 ATR-days),
+one position per ticker, whole-share entries capped at 20% of current equity
+and cash, five positions maximum, no margin, and a 3-leg scaled exit
+(TP1/TP2/TP3 with a stepped stop) when quantity is at least three. Annual
+backtests start at $1,000, compound within the year, and reset each January.
 
 **Ensemble warmup**: needs 60+ bars before first signal. Regime needs 50+ for EMA(50).
 
@@ -133,7 +137,7 @@ Health model: bot = pid alive AND heartbeat fresh within ~2 intervals; dashboard
 
 ## Pitfalls
 
-- **High-priced stocks**: at $200/trade, a stock priced > $200 gives qty=0. Bot skips entirely (no order, no email). Raise `dollars_per_trade` in `config.py` to trade those names.
+- **High-priced stocks**: if one share costs more than the 20% equity allocation or available cash, the bot skips it entirely (no order, no email).
 - **simulate_exit uses signal prices directly**: SL/TP on the `EntrySignal` object are authoritative — do not recalculate from params inside `simulate_exit_scaleout`.
 - **Ensemble threshold**: 0.30 (tightened from 0.25 on 2026-05-28) — in `strategy.py` around `check_entry_ensemble`.
 - **Alpaca paper hardcoded**: `paper=True` is set in both `bot.py` and `server.py` regardless of `.env`.

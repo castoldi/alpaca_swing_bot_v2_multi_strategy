@@ -14,15 +14,21 @@ import pandas as pd
 
 from backtest_2025 import (
     _MARKET_CACHE,
-    apply_portfolio_cap,
     compute_max_drawdown,
     compute_stats,
     download_history,
+    stats_from_portfolio,
+)
+from backtest_portfolio import (
+    BacktestCandidate,
+    PortfolioResult,
+    collect_backtest_candidates,
+    run_annual_portfolio,
 )
 from build_report_2025 import build_report_2025
 from config import PARAMS, TICKERS
 from logger_setup import get_logger
-from strategies import REGISTRY, Trade, backtest_ticker, get_enabled
+from strategies import REGISTRY, Trade, get_enabled
 
 
 log = get_logger(__name__)
@@ -31,6 +37,21 @@ REPORTS_DIR = ROOT / "reports"
 OUTPUT_HTML = REPORTS_DIR / "backtest_2016_present.html"
 OUTPUT_JSON = REPORTS_DIR / "backtest_2016_present.json"
 EARLIEST_HISTORY = date(2016, 1, 1)
+
+
+def run_independent_annual_portfolios(
+    candidates_by_year: dict[int, list[BacktestCandidate]],
+) -> dict[int, PortfolioResult]:
+    """Run every calendar year with a fresh configured starting account."""
+    return {
+        year: run_annual_portfolio(
+            candidates,
+            initial_equity=PARAMS.initial_backtest_equity,
+            position_fraction=PARAMS.position_size_pct,
+            max_positions=PARAMS.max_concurrent_positions,
+        )
+        for year, candidates in sorted(candidates_by_year.items())
+    }
 
 
 def validate_range(start: date, end: date) -> None:
@@ -43,12 +64,15 @@ def validate_range(start: date, end: date) -> None:
         raise ValueError("Backtest end date cannot be before start date")
 
 
-def _stats_with_risk(trades: list[Trade]) -> dict[str, Any]:
+def _stats_with_risk(
+    trades: list[Trade],
+    initial_equity: float = PARAMS.initial_backtest_equity,
+) -> dict[str, Any]:
     stats = compute_stats(trades)
-    stats["max_drawdown_pct"] = compute_max_drawdown(trades)
+    stats["max_drawdown_pct"] = compute_max_drawdown(trades, initial_equity)
     stats["roi_on_cap"] = (
-        stats["total_pnl"] / PARAMS.max_concurrent_capital
-        if PARAMS.max_concurrent_capital
+        stats["total_pnl"] / initial_equity
+        if initial_equity
         else 0.0
     )
     return stats
@@ -161,35 +185,86 @@ def run_history_backtest(
     best_pnl = float("-inf")
 
     for strategy in strategies_to_run:
-        candidates: list[Trade] = []
-        per_ticker: dict[str, tuple[pd.DataFrame, list[Trade]]] = {}
-        for ticker in TICKERS:
-            frame = ticker_data[(ticker, strategy.timeframe)]
-            if frame.empty:
-                continue
-            trades = backtest_ticker(
-                frame,
-                ticker,
-                pd.Timestamp(start),
-                PARAMS,
-                strategy,
+        candidates_by_year: dict[int, list[BacktestCandidate]] = {}
+        frames = {
+            ticker: ticker_data[(ticker, strategy.timeframe)]
+            for ticker in TICKERS
+            if not ticker_data[(ticker, strategy.timeframe)].empty
+        }
+        for year in range(start.year, requested_end.year + 1):
+            year_start = max(start, date(year, 1, 1))
+            year_end = min(requested_end, date(year, 12, 31))
+            window_start = pd.Timestamp(year_start)
+            window_end = (
+                pd.Timestamp(year_end)
+                + pd.Timedelta(days=1)
+                - pd.Timedelta(nanoseconds=1)
             )
-            candidates.extend(trades)
-            per_ticker[ticker] = (frame, trades)
+            annual_candidates: list[BacktestCandidate] = []
+            for ticker, frame in frames.items():
+                annual_candidates.extend(
+                    collect_backtest_candidates(
+                        frame,
+                        ticker,
+                        window_start,
+                        window_end,
+                        PARAMS,
+                        strategy,
+                    )
+                )
+            candidates_by_year[year] = annual_candidates
 
-        accepted, skipped = apply_portfolio_cap(
-            candidates,
-            PARAMS.dollars_per_trade,
-            PARAMS.max_concurrent_capital,
+        annual_results = run_independent_annual_portfolios(candidates_by_year)
+        accepted = [
+            trade
+            for result in annual_results.values()
+            for trade in result.trades
+        ]
+        per_ticker = {
+            ticker: (
+                frame,
+                [trade for trade in accepted if trade.ticker == ticker],
+            )
+            for ticker, frame in frames.items()
+        }
+        stats = compute_stats(accepted)
+        stats["max_drawdown_pct"] = max(
+            (
+                compute_max_drawdown(
+                    list(result.trades), result.starting_equity
+                )
+                for result in annual_results.values()
+            ),
+            default=0.0,
         )
-        stats = _stats_with_risk(accepted)
+        years_run = len(annual_results)
+        stats["roi_on_cap"] = (
+            stats["total_pnl"]
+            / (PARAMS.initial_backtest_equity * years_run)
+            if years_run
+            else 0.0
+        )
+        stats["accepted_positions"] = sum(
+            result.accepted_positions for result in annual_results.values()
+        )
+        stats["skipped"] = sum(
+            result.skipped_positions for result in annual_results.values()
+        )
+        stats["annual_reset"] = True
+        stats["initial_equity"] = PARAMS.initial_backtest_equity
         stats["_trades"] = accepted
-        stats["skipped"] = skipped
         strategy_results[strategy.name] = stats
         per_strategy_details[strategy.name] = per_ticker
 
         cumulative = {key: value for key, value in stats.items() if key != "_trades"}
-        annual = yearly_stats(accepted, start.year, requested_end.year)
+        annual = {
+            year: {
+                key: value
+                for key, value in stats_from_portfolio(result).items()
+                if key != "_trades"
+            }
+            for year, result in annual_results.items()
+        }
         payload_strategies[strategy.name] = {
             "timeframe": strategy.timeframe,
             "cumulative": _json_ready(cumulative),
@@ -215,6 +290,9 @@ def run_history_backtest(
         "actual_end": max(last_bars).isoformat() if last_bars else None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "data_source": "Alpaca SIP historical data (adjustment=all)",
+        "annual_reset": True,
+        "initial_equity": PARAMS.initial_backtest_equity,
+        "position_size_pct": PARAMS.position_size_pct,
         "tickers": list(TICKERS),
         "strategies": payload_strategies,
         "cache": _json_ready(_MARKET_CACHE.status()),
@@ -229,6 +307,7 @@ def run_history_backtest(
         overall_best,
         report_label=_report_label(start, requested_end),
         data_source="Alpaca SIP historical data",
+        annual_reset_aggregate=True,
     )
     OUTPUT_HTML.write_text(report, encoding="utf-8")
     OUTPUT_JSON.write_text(

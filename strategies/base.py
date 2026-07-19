@@ -325,74 +325,8 @@ def backtest_signal_exit_ticker(
     p: StrategyParams,
     strategy: BaseStrategy,
 ) -> list[Trade]:
-    """Backtest a close-confirmed signal strategy with next-session fills."""
-    trades: list[Trade] = []
-    signal_idx = 0
-    final_idx = len(df) - 1
-
-    while signal_idx < final_idx:
-        if df.index[signal_idx] < window_start:
-            signal_idx += 1
-            continue
-
-        signal = strategy.check_entry(df, signal_idx, p)
-        if signal is None:
-            signal_idx += 1
-            continue
-
-        entry_idx = signal_idx + 1
-        entry_bar = df.iloc[entry_idx]
-        entry_price = float(entry_bar["open"])
-        stop = entry_price * (1.0 - p.sma_cross_stop_loss_pct)
-        shares = p.dollars_per_trade / entry_price
-
-        exit_idx = final_idx
-        exit_price = float(df.iloc[final_idx]["close"])
-        exit_reason = "end_of_data"
-
-        for idx in range(entry_idx, len(df)):
-            bar = df.iloc[idx]
-            bar_open = float(bar["open"])
-            if bar_open <= stop:
-                exit_idx = idx
-                exit_price = bar_open
-                exit_reason = "gap_stop"
-                break
-            if float(bar["low"]) <= stop:
-                exit_idx = idx
-                exit_price = stop
-                exit_reason = "stop_loss"
-                break
-
-            reason = strategy.check_exit(df, idx, p)
-            if reason and idx + 1 < len(df):
-                exit_idx = idx + 1
-                exit_price = float(df.iloc[exit_idx]["open"])
-                exit_reason = reason
-                break
-
-        pnl_pct = (exit_price - entry_price) / entry_price
-        trades.append(Trade(
-            ticker=ticker,
-            entry_date=pd.Timestamp(entry_bar.name),
-            entry_price=entry_price,
-            stop_loss=stop,
-            take_profit=0.0,
-            exit_date=pd.Timestamp(df.index[exit_idx]),
-            exit_price=exit_price,
-            exit_reason=exit_reason,
-            bars_held=exit_idx - entry_idx,
-            shares=shares,
-            pnl_dollars=(exit_price - entry_price) * shares,
-            pnl_pct=pnl_pct,
-            strategy=strategy.name,
-        ))
-
-        if exit_reason == "end_of_data":
-            break
-        signal_idx = exit_idx
-
-    return trades
+    """Compatibility wrapper for close-confirmed signal strategies."""
+    return backtest_ticker(df, ticker, window_start, p, strategy)
 
 def backtest_ticker(
     df: pd.DataFrame,
@@ -403,54 +337,26 @@ def backtest_ticker(
 ) -> list[Trade]:
     if strategy is None:
         raise ValueError("strategy must be a BaseStrategy instance")
+    if df.empty:
+        return []
 
-    df = add_indicators(df, p)
-    if strategy.name in SKIP_EARNINGS_STRATEGIES:
-        df = add_earnings_filter(df, ticker, p)
+    from backtest_portfolio import (
+        collect_backtest_candidates,
+        run_annual_portfolio,
+    )
 
-    if strategy.exit_mode == "signal_with_stop":
-        return backtest_signal_exit_ticker(df, ticker, window_start, p, strategy)
-
-    trades: list[Trade] = []
-    in_trade_until: int = -1
-
-    for idx in range(len(df)):
-        ts = df.index[idx]
-        if ts < window_start:
-            continue
-        if p.one_position_per_ticker and idx <= in_trade_until:
-            continue
-
-        sig = strategy.check_entry(df, idx, p)
-        if sig is None:
-            continue
-
-        if not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4):
-            continue
-
-        legs = simulate_exit_scaleout(df, idx, sig, p)
-        if not legs:
-            continue
-
-        shares_total = p.dollars_per_trade / sig.entry_price
-        for leg in legs:
-            shares = shares_total * leg.fraction
-            exit_date = leg.exit_date if isinstance(leg.exit_date, pd.Timestamp) else pd.Timestamp(leg.exit_date)
-            trades.append(Trade(
-                ticker=ticker,
-                entry_date=sig.date,
-                entry_price=sig.entry_price,
-                stop_loss=sig.stop_loss,
-                take_profit=sig.tp3,
-                exit_date=exit_date,
-                exit_price=leg.exit_price,
-                exit_reason=leg.reason,
-                bars_held=leg.bars_held,
-                shares=shares,
-                pnl_dollars=(leg.exit_price - sig.entry_price) * shares,
-                pnl_pct=(leg.exit_price - sig.entry_price) / sig.entry_price,
-                strategy=strategy.name,
-            ))
-        in_trade_until = idx + max(leg.bars_held for leg in legs)
-
-    return trades
+    candidates = collect_backtest_candidates(
+        df,
+        ticker,
+        pd.Timestamp(window_start),
+        pd.Timestamp(df.index[-1]),
+        p,
+        strategy,
+    )
+    result = run_annual_portfolio(
+        candidates,
+        initial_equity=p.initial_backtest_equity,
+        position_fraction=p.position_size_pct,
+        max_positions=p.max_concurrent_positions,
+    )
+    return list(result.trades)

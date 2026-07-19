@@ -58,10 +58,28 @@ disabled for that cycle, but signal evaluation and existing-position exit
 reconciliation continue. The bot fetches a live snapshot immediately before
 each eligible entry and uses its price solely for quantity sizing.
 
-After a successful order submission, the reference-price notional is deducted
-from locally remaining cash. Rejected or failed submissions do not reserve
-cash. Logging records equity, percentage budget, cash cap, price, and final
-whole-share quantity without exposing account credentials.
+Before a parent order is submitted, the bot persists its client-id ownership
+intent. After broker acceptance, it attaches the broker id and deducts the
+reference-price notional from locally remaining cash. Rejected parents close
+their durable intent without reserving cash. If submission returns an
+ambiguous timeout, the bot looks up the same client id and adopts the broker
+order when found. An unresolved lookup leaves the intent pending, disables
+later entries for the cycle, and lets reconciliation retry after a restart. A
+pending intent is retired only after a grace period and explicit confirmation
+from Alpaca that the client id is absent. Logging records equity, percentage
+budget, cash cap, price, and final whole-share quantity without exposing
+account credentials.
+
+Before loading the next account sizing snapshot, the singleton checks durable
+entries across every strategy. Any active or unverifiable parent order disables
+new entries for that cycle. This prevents an accepted-but-unfilled order from a
+prior loop, restart, or strategy swap from reusing its cash or position slot.
+
+Scaled entries use an atomic stop-only OTO market parent. Its cash/position
+slot is reserved before the three separate profit targets are submitted. If
+target setup is incomplete, partial targets must reach a confirmed terminal
+state; otherwise later entries are disabled and reconciliation runs
+immediately while the durable trade and broker-held parent stop remain active.
 
 ### Annual portfolio backtest engine
 
@@ -70,8 +88,10 @@ strategy and one calendar year. Candidates retain their entry signal and the
 price data needed to simulate the correct exit lifecycle after their integer
 quantity is known.
 
-Before each entry event, the engine realizes every accepted exit leg whose
-timestamp is at or before that entry. It then computes sizing equity from the
+Before each entry timestamp, the engine realizes every accepted exit leg from
+a strictly earlier timestamp. All simultaneous candidates are then sized from
+the same pre-event account so a same-bar exit cannot leak future P&L into
+another ticker's opening quantity. It computes sizing equity from the
 initial `$1,000` plus realized P&L, caps the 20% allocation by available cash,
 rounds down to whole shares, and rejects entries when:
 
@@ -149,4 +169,3 @@ backtests, and the historical backtest from the local SIP cache. Generated
 results are inspected for integer quantities, annual start/end equity, and
 reset metadata. After code and dashboard changes, the managed dashboard and
 the currently configured ensemble bot are restarted and must report HEALTHY.
-

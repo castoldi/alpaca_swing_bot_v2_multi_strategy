@@ -99,8 +99,9 @@ async def get_summary():
         stats["deployed"] = 0
         stats["sync_error"] = str(e)
 
-    stats["max_capital"] = PARAMS.max_concurrent_capital
-    stats["dollars_per_trade"] = PARAMS.dollars_per_trade
+    stats["position_size_pct"] = PARAMS.position_size_pct
+    stats["initial_backtest_equity"] = PARAMS.initial_backtest_equity
+    stats["max_concurrent_positions"] = PARAMS.max_concurrent_positions
     stats["tickers"] = TICKERS
     stats["timeframe"] = BAR_TIMEFRAME
     stats["timeframes"] = _configured_timeframes()

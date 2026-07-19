@@ -14,6 +14,7 @@ import math
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, date, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -29,6 +30,7 @@ from dashboard import bot_hooks
 from notifier import send_notification
 import data_feed
 import runtime
+from position_sizing import whole_share_position_size
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
@@ -38,6 +40,43 @@ SERVICE = "bot"  # name used for run/bot.pid, run/bot.meta.json, run/bot.heartbe
 # It is our correlation id with Alpaca and the proof of ownership: the bot will only
 # ever close a position whose originating order carries this prefix.
 CLIENT_ORDER_PREFIX = "swingv2"
+ENTRY_PENDING_GRACE = timedelta(minutes=5)
+
+
+@dataclass
+class LiveSizingState:
+    equity: float
+    remaining_cash: float
+    remaining_slots: int
+
+
+def _load_live_sizing(tc) -> LiveSizingState | None:
+    """Read one safe, non-margin sizing snapshot for the current bot cycle."""
+    try:
+        account = tc.get_account()
+        equity = float(account.equity)
+        cash = float(account.cash)
+        get_positions = getattr(tc, "get_all_positions", None)
+        positions = get_positions() if callable(get_positions) else []
+        open_position_count = len(positions or [])
+        if (
+            not math.isfinite(equity)
+            or not math.isfinite(cash)
+            or equity <= 0
+            or cash < 0
+            or open_position_count < 0
+        ):
+            raise ValueError("invalid equity or cash")
+        return LiveSizingState(
+            equity=equity,
+            remaining_cash=cash,
+            remaining_slots=max(
+                0, PARAMS.max_concurrent_positions - open_position_count
+            ),
+        )
+    except Exception as exc:
+        log.warning("New entries disabled this cycle: account sizing unavailable (%s)", exc)
+        return None
 
 
 def _make_client_order_id(strategy: str, ticker: str, kind: str) -> str:
@@ -53,44 +92,139 @@ def stepped_stop_target(n_tp_filled: int, entry: float, initial_sl: float, tp1: 
     return [initial_sl, entry, tp1, None][min(int(n_tp_filled), 3)]
 
 
-def _place_scaled_entry(tc, ticker: str, qty: int, sig, strat_name: str) -> dict:
-    """Market buy + 3 limit-sell TP legs + a full-qty protective stop. Bot-owned."""
-    from alpaca.trading.requests import (MarketOrderRequest, LimitOrderRequest, StopOrderRequest)
-    from alpaca.trading.enums import OrderSide, TimeInForce
+def _cancel_orders_confirmed(
+    tc, orders: list, *, attempts: int = 5, delay: float = 0.2
+) -> bool:
+    """Request cancellation and confirm every order reaches a terminal state."""
+    if not orders:
+        return True
 
-    entry_coid = _make_client_order_id(strat_name, ticker, "entry")
-    buy = MarketOrderRequest(symbol=ticker, qty=qty, side=OrderSide.BUY,
-                             time_in_force=TimeInForce.DAY, client_order_id=entry_coid)
+    order_ids = [str(getattr(order, "id", "") or "") for order in orders]
+    if any(not order_id for order_id in order_ids):
+        return False
+
+    for order_id in order_ids:
+        try:
+            tc.cancel_order_by_id(order_id)
+        except Exception as exc:
+            log.error("  Could not request cancellation of TP leg %s: %s", order_id, exc)
+
+    terminal = {"canceled", "expired", "rejected", "filled", "closed"}
+    for attempt in range(attempts):
+        try:
+            statuses = {
+                order_id: _status_str(tc.get_order_by_id(order_id))
+                for order_id in order_ids
+            }
+        except Exception as exc:
+            log.error("  Could not confirm TP cleanup: %s", exc)
+            statuses = {}
+
+        if statuses and all(
+            statuses.get(order_id) in terminal for order_id in order_ids
+        ):
+            return True
+        if attempt < attempts - 1:
+            time.sleep(delay)
+
+    return False
+
+
+def _place_scaled_entry(
+    tc,
+    ticker: str,
+    qty: int,
+    sig,
+    strat_name: str,
+    entry_coid: str | None = None,
+    on_entry_accepted=None,
+) -> dict:
+    """Atomic stop-protected market entry followed by three TP sell orders."""
+    from alpaca.trading.requests import (
+        LimitOrderRequest,
+        MarketOrderRequest,
+        StopLossRequest,
+    )
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+
+    entry_coid = entry_coid or _make_client_order_id(
+        strat_name, ticker, "entry"
+    )
+    buy = MarketOrderRequest(
+        symbol=ticker,
+        qty=qty,
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.OTO,
+        stop_loss=StopLossRequest(stop_price=round(sig.stop_loss, 2)),
+        client_order_id=entry_coid,
+    )
     entry_order = tc.submit_order(buy)
+    result = {
+        "entry": entry_order,
+        "tp_legs": [],
+        "stop": None,
+        "entry_coid": entry_coid,
+        "alpaca_id": str(getattr(entry_order, "id", "") or ""),
+        "setup_error": None,
+        "cleanup_confirmed": True,
+    }
+
+    if on_entry_accepted is not None:
+        try:
+            on_entry_accepted(result)
+        except Exception:
+            try:
+                tc.cancel_order_by_id(entry_order.id)
+            except Exception as cancel_exc:
+                log.error(
+                    "  Could not cancel unrecorded protected entry %s: %s",
+                    ticker,
+                    cancel_exc,
+                )
+            raise
 
     legs = split_qty(qty)            # [a, a, qty-2a]
     tps = [sig.tp1, sig.tp2, sig.tp3]
     leg_orders = []
-    for i, (lq, tp) in enumerate(zip(legs, tps), start=1):
-        coid = _make_client_order_id(strat_name, ticker, f"tp{i}")
-        req = LimitOrderRequest(symbol=ticker, qty=lq, side=OrderSide.SELL,
-                                time_in_force=TimeInForce.GTC,
-                                limit_price=round(tp, 2), client_order_id=coid)
-        leg_orders.append(tc.submit_order(req))
+    try:
+        for i, (lq, tp) in enumerate(zip(legs, tps), start=1):
+            coid = _make_client_order_id(strat_name, ticker, f"tp{i}")
+            req = LimitOrderRequest(
+                symbol=ticker,
+                qty=lq,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.GTC,
+                limit_price=round(tp, 2),
+                client_order_id=coid,
+            )
+            leg_orders.append(tc.submit_order(req))
+    except Exception as exc:
+        cleanup_confirmed = _cancel_orders_confirmed(tc, leg_orders)
+        result["tp_legs"] = leg_orders
+        result["setup_error"] = str(exc)
+        result["cleanup_confirmed"] = cleanup_confirmed
+        return result
 
-    stop_coid = _make_client_order_id(strat_name, ticker, "stop")
-    stop_req = StopOrderRequest(symbol=ticker, qty=qty, side=OrderSide.SELL,
-                                time_in_force=TimeInForce.GTC,
-                                stop_price=round(sig.stop_loss, 2), client_order_id=stop_coid)
-    stop_order = tc.submit_order(stop_req)
-
-    return {"entry": entry_order, "tp_legs": leg_orders, "stop": stop_order,
-            "entry_coid": entry_coid, "alpaca_id": str(getattr(entry_order, "id", "") or "")}
+    result["tp_legs"] = leg_orders
+    return result
 
 
 def _place_stop_only_entry(
-    tc, ticker: str, qty: int, stop_price: float, strat_name: str
+    tc,
+    ticker: str,
+    qty: int,
+    stop_price: float,
+    strat_name: str,
+    entry_coid: str | None = None,
 ) -> dict:
     """Market entry with a broker-held stop and no take-profit leg."""
     from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
 
-    entry_coid = _make_client_order_id(strat_name, ticker, "entry")
+    entry_coid = entry_coid or _make_client_order_id(
+        strat_name, ticker, "entry"
+    )
     request = MarketOrderRequest(
         symbol=ticker,
         qty=qty,
@@ -104,6 +238,41 @@ def _place_stop_only_entry(
     return {
         "entry": order,
         "entry_coid": entry_coid,
+        "alpaca_id": str(getattr(order, "id", "") or ""),
+    }
+
+
+def _place_single_bracket_entry(
+    tc,
+    ticker: str,
+    qty: int,
+    sig,
+    strat_name: str,
+    entry_coid: str | None = None,
+) -> dict:
+    """Submit one protected bracket when quantity is too small to scale out."""
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (
+        MarketOrderRequest,
+        StopLossRequest,
+        TakeProfitRequest,
+    )
+
+    coid = entry_coid or _make_client_order_id(strat_name, ticker, "entry")
+    request = MarketOrderRequest(
+        symbol=ticker,
+        qty=qty,
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.BRACKET,
+        take_profit=TakeProfitRequest(limit_price=round(sig.tp3, 2)),
+        stop_loss=StopLossRequest(stop_price=round(sig.stop_loss, 2)),
+        client_order_id=coid,
+    )
+    order = tc.submit_order(request)
+    return {
+        "entry": order,
+        "entry_coid": coid,
         "alpaca_id": str(getattr(order, "id", "") or ""),
     }
 
@@ -126,6 +295,150 @@ def _status_str(obj) -> str:
     """
     status = getattr(obj, "status", "") or ""
     return str(getattr(status, "value", status)).lower()
+
+
+def _exception_status_code(exc: Exception) -> int | None:
+    value = getattr(exc, "status_code", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_definite_submission_rejection(exc: Exception) -> bool:
+    """True only for broker responses that definitively reject the request."""
+    return _exception_status_code(exc) in {400, 401, 403, 404, 422}
+
+
+def _lookup_entry_by_client_id(
+    tc, client_order_id: str, *, attempts: int = 3, delay: float = 0.1
+) -> tuple[str, object | None]:
+    """Resolve an ambiguous submit as found, explicitly absent, or unknown."""
+    only_not_found = True
+    for attempt in range(attempts):
+        try:
+            order = tc.get_order_by_client_id(client_order_id)
+            if order is not None:
+                return "found", order
+        except Exception as exc:
+            if _exception_status_code(exc) != 404:
+                only_not_found = False
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return ("not_found" if only_not_found else "unknown"), None
+
+
+def _resolve_pending_entry(tc, trade: dict) -> bool:
+    """Adopt or retire a durable pre-submit intent during reconciliation."""
+    if trade.get("entry_state") != "pending_submission":
+        return True
+
+    coid = str(trade.get("client_order_id") or "")
+    if not coid:
+        log.error("  Pending entry %s has no client id; leaving open", trade.get("id"))
+        return False
+
+    resolution, order = _lookup_entry_by_client_id(tc, coid)
+    if resolution == "found":
+        order_id = str(getattr(order, "id", "") or "") or None
+        db_mod.set_entry_order_id(trade["id"], order_id)
+        trade["alpaca_order_id"] = order_id
+        trade["entry_state"] = "accepted"
+        log.warning(
+            "  Adopted pending %s entry by client id %s",
+            trade["ticker"],
+            coid,
+        )
+        return True
+
+    created_at = _parse_timestamp(trade.get("created_at"))
+    age = (
+        datetime.now(timezone.utc) - created_at
+        if created_at is not None
+        else timedelta(0)
+    )
+    if resolution == "not_found" and age >= ENTRY_PENDING_GRACE:
+        entry = float(trade.get("entry_price") or 0.0)
+        db_mod.close_trade(
+            trade["id"],
+            datetime.now(timezone.utc).isoformat(),
+            entry,
+            "entry_not_submitted",
+            0,
+            0.0,
+            0.0,
+            0.0,
+            exit_client_order_id=coid,
+        )
+        log.warning(
+            "  Retired aged pending %s intent; broker confirms no client-id order",
+            trade["ticker"],
+        )
+        return False
+
+    log.warning(
+        "  Pending %s entry remains unresolved (%s); leaving intent open",
+        trade["ticker"],
+        resolution,
+    )
+    return False
+
+
+def _entry_capacity_is_unsettled(tc) -> bool:
+    """Fail closed while an earlier entry can still consume cash or a slot.
+
+    This check spans every strategy because a user may restart the singleton
+    bot with a different strategy while an earlier market order is still live.
+    Pending durable intents are resolved by client id before account sizing is
+    loaded. Any active or unqueryable parent keeps new entries disabled for the
+    cycle; filled parents are already represented in Alpaca account state.
+    """
+    try:
+        trades = db_mod.get_open_trades()
+    except Exception as exc:
+        log.error(
+            "New entries disabled: open entry capacity could not be verified (%s)",
+            exc,
+        )
+        return True
+
+    active = {
+        "new",
+        "accepted",
+        "held",
+        "pending_new",
+        "partially_filled",
+        "pending_replace",
+        "pending_cancel",
+    }
+    terminal = {"filled", "closed", "canceled", "expired", "rejected"}
+
+    blocked = False
+    for trade in trades:
+        if trade.get("entry_state") == "pending_submission":
+            if not _resolve_pending_entry(tc, trade):
+                blocked = True
+                continue
+
+        orders = _entry_order_candidates(tc, trade)
+        statuses = {_status_str(order) for order in orders}
+        if not statuses or any(status not in active | terminal for status in statuses):
+            log.warning(
+                "New entries disabled: %s entry state cannot be verified (trade %s)",
+                trade.get("ticker"),
+                trade.get("id"),
+            )
+            blocked = True
+            continue
+        if statuses & active:
+            log.info(
+                "New entries disabled: %s has an unsettled parent order (trade %s)",
+                trade.get("ticker"),
+                trade.get("id"),
+            )
+            blocked = True
+
+    return blocked
 
 
 def _our_sell_orders(tc, ticker: str):
@@ -152,10 +465,15 @@ def _count_filled_tp_legs(tc, trade: dict) -> int:
 
 
 def _open_stop_order(tc, trade: dict):
+    active = {"new", "accepted", "held", "pending_new", "partially_filled"}
     for o in _our_sell_orders(tc, trade["ticker"]):
         coid = str(getattr(o, "client_order_id", "") or "")
-        if "-stop-" in coid and _status_str(o) in ("new", "accepted", "held", "pending_new"):
+        if "-stop-" in coid and _status_str(o) in active:
             return o
+    for entry in _entry_order_candidates(tc, trade):
+        for leg in (getattr(entry, "legs", None) or []):
+            if getattr(leg, "stop_price", None) is not None and _status_str(leg) in active:
+                return leg
     return None
 
 
@@ -173,11 +491,17 @@ def _sync_stepped_stop(tc, trade: dict):
     stop = _open_stop_order(tc, trade)
     if stop is None:
         return
-    if abs(float(getattr(stop, "stop_price", 0.0)) - target) < 1e-6:
-        return  # already at the right level
 
     qty = _position_qty(tc, trade["ticker"]) or float(getattr(stop, "qty", 0) or 0)
     if qty < 1:
+        return
+    stop_price_matches = (
+        abs(float(getattr(stop, "stop_price", 0.0)) - target) < 1e-6
+    )
+    stop_qty_matches = (
+        abs(float(getattr(stop, "qty", 0.0) or 0.0) - qty) < 1e-6
+    )
+    if stop_price_matches and stop_qty_matches:
         return
     try:
         tc.cancel_order_by_id(stop.id)
@@ -232,6 +556,9 @@ def run_once(strategy: StrategyType) -> int:
 
     try:
         strat_obj = REGISTRY[strat_name]
+        tc = _get_trading()
+        entry_capacity_blocked = _entry_capacity_is_unsettled(tc)
+        sizing_state = None if entry_capacity_blocked else _load_live_sizing(tc)
 
         for ticker in TICKERS:
             log.info("Checking %s...", ticker)
@@ -283,75 +610,234 @@ def run_once(strategy: StrategyType) -> int:
                 except Exception:
                     pass  # No position — good to proceed
 
+                # Persist ownership intent before any broker submission.
+                entry_db_id = None
+                entry_coid = None
+                entry_accepted = False
+
                 # Place order
                 try:
-                    tc = _get_trading()
-                    if strat_obj.exit_mode == "signal_with_stop":
-                        snapshot = data_feed.fetch_snapshots([ticker]).get(ticker, {})
-                        market_ref = float(snapshot.get("price") or 0)
-                        if not math.isfinite(market_ref) or market_ref <= 0:
-                            log.warning("  %s: no valid live price — skipping protected entry", ticker)
-                            continue
-                    else:
-                        market_ref = sig.entry_price
-
-                    qty = int(PARAMS.dollars_per_trade / market_ref)
-                    if qty < 1:
-                        # $200/trade can't buy a whole share of a >$200 stock.
-                        # Skip entirely (and do NOT notify — this was the "Qty 0" spam).
-                        log.info("  $%.0f/trade buys <1 whole share of %s @ $%.2f — skipping "
-                                 "(no order, no notify)",
-                                 PARAMS.dollars_per_trade, ticker, market_ref)
+                    if sizing_state is None:
+                        log.info("  %s: entry disabled — no valid account sizing snapshot", ticker)
+                        continue
+                    if sizing_state.remaining_slots < 1:
+                        log.info(
+                            "  %s: entry skipped — %d-position account limit reached",
+                            ticker,
+                            PARAMS.max_concurrent_positions,
+                        )
                         continue
 
-                    if strat_obj.exit_mode == "signal_with_stop":
-                        sig.stop_loss = market_ref * (1.0 - PARAMS.sma_cross_stop_loss_pct)
-                        info = _place_stop_only_entry(
-                            tc, ticker, qty, sig.stop_loss, strat_name
+                    snapshot = data_feed.fetch_snapshots([ticker]).get(ticker, {})
+                    market_ref = float(snapshot.get("price") or 0)
+                    if not math.isfinite(market_ref) or market_ref <= 0:
+                        log.warning("  %s: no valid live price — skipping protected entry", ticker)
+                        continue
+
+                    size = whole_share_position_size(
+                        sizing_state.equity,
+                        sizing_state.remaining_cash,
+                        market_ref,
+                        PARAMS.position_size_pct,
+                    )
+                    qty = size.quantity
+                    if qty < 1:
+                        log.info(
+                            "  %.0f%% equity budget $%.2f buys <1 whole share of "
+                            "%s @ $%.2f — skipping (no order, no notify)",
+                            PARAMS.position_size_pct * 100,
+                            size.budget,
+                            ticker,
+                            market_ref,
                         )
+                        continue
+
+                    log.info(
+                        "  Sizing %s: equity $%.2f, %.0f%% budget $%.2f, "
+                        "cash $%.2f, ref $%.2f -> %d shares ($%.2f)",
+                        ticker,
+                        sizing_state.equity,
+                        PARAMS.position_size_pct * 100,
+                        sizing_state.equity * PARAMS.position_size_pct,
+                        sizing_state.remaining_cash,
+                        market_ref,
+                        qty,
+                        size.notional,
+                    )
+
+                    if strat_obj.exit_mode == "signal_with_stop":
+                        sig.stop_loss = market_ref * (
+                            1.0 - PARAMS.sma_cross_stop_loss_pct
+                        )
+
+                    entry_coid = _make_client_order_id(
+                        strat_name, ticker, "entry"
+                    )
+                    entry_db_id = db_mod.save_trade(
+                        ticker,
+                        strat_name,
+                        str(sig.date),
+                        sig.entry_price,
+                        sig.stop_loss,
+                        sig.tp3,
+                        shares=qty,
+                        client_order_id=entry_coid,
+                        alpaca_order_id=None,
+                        entry_state="pending_submission",
+                    )
+
+                    def record_accepted_entry(accepted_info: dict) -> None:
+                        nonlocal entry_accepted
+                        entry_accepted = True
+                        sizing_state.remaining_cash = max(
+                            0.0, sizing_state.remaining_cash - size.notional
+                        )
+                        sizing_state.remaining_slots -= 1
+                        if entry_db_id is not None:
+                            try:
+                                db_mod.set_entry_order_id(
+                                    entry_db_id, accepted_info["alpaca_id"]
+                                )
+                            except Exception as update_exc:
+                                # The durable client id is sufficient for
+                                # ownership/recovery even if this enrichment
+                                # fails; keep the protected entry tracked.
+                                log.warning(
+                                    "  %s entry id update failed; recovering by client id %s: %s",
+                                    ticker,
+                                    entry_coid,
+                                    update_exc,
+                                )
+
+                    if strat_obj.exit_mode == "signal_with_stop":
+                        info = _place_stop_only_entry(
+                            tc,
+                            ticker,
+                            qty,
+                            sig.stop_loss,
+                            strat_name,
+                            entry_coid=entry_coid,
+                        )
+                        record_accepted_entry(info)
                         coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
                         log.info("  Stop-only OTO: %s x%d (SL $%.2f) [coid=%s]",
                                  ticker, qty, sig.stop_loss, coid)
                     elif qty >= 3:
-                        # Full 3-TP scale-out (market entry + 3 limit legs + managed stop)
-                        info = _place_scaled_entry(tc, ticker, qty, sig, strat_name)
+                        # Atomic stop-protected entry, then three managed TP legs.
+                        info = _place_scaled_entry(
+                            tc,
+                            ticker,
+                            qty,
+                            sig,
+                            strat_name,
+                            entry_coid=entry_coid,
+                            on_entry_accepted=record_accepted_entry,
+                        )
                         coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
                         log.info("  Scaled entry: %s x%d (TP1 $%.2f / TP2 $%.2f / TP3 $%.2f, "
                                  "SL $%.2f) [coid=%s]", ticker, qty, sig.tp1, sig.tp2, sig.tp3,
                                  sig.stop_loss, coid)
+                        if info.get("setup_error"):
+                            log.error(
+                                "  %s TP setup incomplete; atomic stop remains active: %s",
+                                ticker,
+                                info["setup_error"],
+                            )
+                            if not info.get("cleanup_confirmed", True):
+                                # Unknown sell-order state makes every later
+                                # allocation unsafe. Fail the rest of the entry
+                                # cycle closed while the durable trade record and
+                                # broker-held stop remain available to recovery.
+                                sizing_state.remaining_cash = 0.0
+                                sizing_state.remaining_slots = 0
+                                log.error(
+                                    "  %s TP cancellation unconfirmed; disabling later entries this cycle",
+                                    ticker,
+                                )
+                            _reconcile_and_exit(strat_name, frames)
                     else:
                         # qty 1-2: too few shares to scale out — single OCO bracket at TP3
-                        from alpaca.trading.requests import (MarketOrderRequest,
-                                                             TakeProfitRequest, StopLossRequest)
-                        from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
-                        tp = TakeProfitRequest(limit_price=round(sig.tp3, 2))
-                        sl = StopLossRequest(stop_price=round(sig.stop_loss, 2))
-                        coid = _make_client_order_id(strat_name, ticker, "entry")
-                        mkt = MarketOrderRequest(symbol=ticker, qty=qty, side=OrderSide.BUY,
-                                                 time_in_force=TimeInForce.DAY,
-                                                 order_class=OrderClass.BRACKET,
-                                                 take_profit=tp, stop_loss=sl,
-                                                 client_order_id=coid)
-                        order = tc.submit_order(mkt)
-                        alpaca_id = str(getattr(order, "id", "") or "")
+                        info = _place_single_bracket_entry(
+                            tc,
+                            ticker,
+                            qty,
+                            sig,
+                            strat_name,
+                            entry_coid=entry_coid,
+                        )
+                        record_accepted_entry(info)
+                        coid, alpaca_id = info["entry_coid"], info["alpaca_id"]
                         log.info("  Single bracket (qty<3): %s x%d @ $%.2f (SL $%.2f / TP $%.2f) [coid=%s]",
                                  ticker, qty, sig.entry_price, sig.stop_loss, sig.tp3, coid)
 
                     orders_placed += 1
-                    db_mod.save_trade(ticker, strat_name, str(sig.date),
-                                      sig.entry_price, sig.stop_loss, sig.tp3,
-                                      shares=qty, client_order_id=coid,
-                                      alpaca_order_id=alpaca_id)
                     if strat_obj.has_take_profit:
                         body = (f"Entry ${sig.entry_price:.2f}\nSL ${sig.stop_loss:.2f}\n"
                                 f"TP1 ${sig.tp1:.2f} / TP2 ${sig.tp2:.2f} / TP3 ${sig.tp3:.2f}\n"
                                 f"Qty {qty}\nRef {coid}")
+                        if info.get("setup_error"):
+                            body += (
+                                "\nWARNING: TP setup failed; broker stop remains active. "
+                                f"{info['setup_error']}"
+                            )
                     else:
                         body = (f"Daily SMA(50) cross entry ~${market_ref:.2f}\n"
                                 f"SL ${sig.stop_loss:.2f}\nQty {qty}\nRef {coid}")
                     send_notification(f"Bot V2: {ticker} entry ({strat_name})", body)
 
                 except Exception as e:
+                    if entry_db_id is not None and not entry_accepted:
+                        resolution, recovered = _lookup_entry_by_client_id(
+                            tc, entry_coid
+                        )
+                        if resolution == "found":
+                            recovered_info = {
+                                "entry_coid": entry_coid,
+                                "alpaca_id": str(
+                                    getattr(recovered, "id", "") or ""
+                                ),
+                            }
+                            record_accepted_entry(recovered_info)
+                            orders_placed += 1
+                            log.error(
+                                "  %s submit response was ambiguous, but Alpaca accepted %s; durable entry adopted",
+                                ticker,
+                                recovered_info["alpaca_id"] or entry_coid,
+                            )
+                            send_notification(
+                                f"Bot V2: {ticker} entry recovered ({strat_name})",
+                                f"Alpaca accepted the protected entry despite a submit error.\n"
+                                f"Qty {qty}\nRef {entry_coid}\nError: {e}",
+                            )
+                            _reconcile_and_exit(strat_name, frames)
+                        elif _is_definite_submission_rejection(e):
+                            try:
+                                db_mod.close_trade(
+                                    entry_db_id,
+                                    datetime.now(timezone.utc).isoformat(),
+                                    sig.entry_price,
+                                    "entry_not_submitted",
+                                    0,
+                                    0.0,
+                                    0.0,
+                                    0.0,
+                                    exit_client_order_id=entry_coid,
+                                )
+                            except Exception as close_exc:
+                                log.error(
+                                    "  Failed to close rejected entry intent for %s: %s",
+                                    ticker,
+                                    close_exc,
+                                )
+                        else:
+                            sizing_state.remaining_cash = 0.0
+                            sizing_state.remaining_slots = 0
+                            log.error(
+                                "  %s submission remains ambiguous (%s); intent stays pending and later entries are disabled",
+                                ticker,
+                                resolution,
+                            )
+                            _reconcile_and_exit(strat_name, frames)
                     log.error("  Order failed for %s: %s", ticker, e)
             else:
                 log.info("  No signal for %s", ticker)
@@ -426,6 +912,8 @@ def _reconcile_and_exit(
     for trade in db_mod.get_open_trades_by_strategy(strat_name):
         ticker = trade["ticker"]
         try:
+            if not _resolve_pending_entry(tc, trade):
+                continue
             try:
                 pos = tc.get_open_position(ticker)
             except Exception:

@@ -19,7 +19,7 @@ from backtest_2025 import (
     PROFIT_COLOR, LOSS_COLOR, PRICE_COLOR, NEUTRAL_COLOR,
     BG_DARK, BG_CARD, BORDER_COLOR, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
     STRATEGY_COLORS, compute_stats, per_ticker_stats, compute_max_drawdown,
-    apply_portfolio_cap, download_history,
+    download_history,
 )
 from config import StrategyType
 from strategy import add_indicators, Trade
@@ -36,15 +36,20 @@ def dark_template():
     )
 
 
-def strategy_comparison_equity(all_results: dict[str, list[Trade]]) -> str:
+def strategy_comparison_equity(
+    all_results: dict[str, list[Trade]],
+    *,
+    annual_reset_aggregate: bool = False,
+) -> str:
     fig = go.Figure()
     has_data = False
+    baseline = 0.0 if annual_reset_aggregate else PARAMS.initial_backtest_equity
     for sname, trades in all_results.items():
         if not trades:
             continue
         has_data = True
         sorted_t = sorted(trades, key=lambda t: t.exit_date)
-        cum = np.cumsum([t.pnl_dollars for t in sorted_t])
+        cum = baseline + np.cumsum([t.pnl_dollars for t in sorted_t])
         dates = [t.exit_date for t in sorted_t]
         color = STRATEGY_COLORS.get(sname, PRICE_COLOR)
         fig.add_trace(go.Scatter(x=dates, y=cum, mode="lines",
@@ -52,8 +57,13 @@ def strategy_comparison_equity(all_results: dict[str, list[Trade]]) -> str:
                                  name=sname.replace("_", " ").title()))
     if not has_data:
         fig.add_annotation(text="No trades for any strategy", showarrow=False)
-    fig.add_hline(y=0, line=dict(color=TEXT_MUTED, dash="dash"))
-    fig.update_layout(title="Strategy Comparison — Cumulative P&L ($)", height=400,
+    fig.add_hline(y=baseline, line=dict(color=TEXT_MUTED, dash="dash"))
+    chart_title = (
+        "Strategy Comparison — Independent-Year P&amp;L Aggregate ($)"
+        if annual_reset_aggregate
+        else "Strategy Comparison — Account Equity ($)"
+    )
+    fig.update_layout(title=chart_title, height=400,
                       template=dark_template(), margin=dict(l=40, r=20, t=50, b=40),
                       hovermode="x unified")
     return fig.to_html(full_html=False, include_plotlyjs=False)
@@ -230,7 +240,7 @@ def render_trades_table(trades: list[Trade]) -> str:
 
 def render_strategy_comparison_table(all_strategy_results: dict) -> str:
     headers = ["Strategy", "Trades", "Wins", "Losses", "Win %", "Total P&L", "Avg %",
-               "Avg Win %", "Avg Loss %", "Max DD %", "PF", "ROI on Cap"]
+               "Avg Win %", "Avg Loss %", "Max DD %", "PF", "Return"]
     rows = []
     for sname, sdata in sorted(all_strategy_results.items(), key=lambda x: x[1]["total_pnl"], reverse=True):
         s = sdata
@@ -251,6 +261,16 @@ def strategy_kpi_cards(strat_name: str, s: dict) -> str:
     color = STRATEGY_COLORS.get(strat_name, "#8892a4")
     pnl_cls = "pos" if s["total_pnl"] > 0 else ("neg" if s["total_pnl"] < 0 else "")
     pf_str = f"{s['profit_factor']:.2f}" if s["profit_factor"] != float("inf") else "∞"
+    account_cards = ""
+    if "starting_equity" in s and "ending_equity" in s:
+        account_cards = (
+            f'<div class="strategy-kpi"><div class="label">Starting Equity</div>'
+            f'<div class="value">${s["starting_equity"]:,.2f}</div>'
+            f'<div class="sub">Annual reset</div></div>'
+            f'<div class="strategy-kpi"><div class="label">Ending Equity</div>'
+            f'<div class="value {pnl_cls}">${s["ending_equity"]:,.2f}</div>'
+            f'<div class="sub">Return {fmt_pct(s.get("return_pct", 0.0))}</div></div>'
+        )
     return f"""<div class="strategy-section" style="border-left: 3px solid {color}">
       <h3><span class="color-dot" style="background:{color}"></span>{strat_name.replace('_', ' ').title()}</h3>
       <div class="strategy-row">
@@ -260,37 +280,39 @@ def strategy_kpi_cards(strat_name: str, s: dict) -> str:
         <div class="strategy-kpi"><div class="label">Profit Factor</div><div class="value">{pf_str}</div><div class="sub">Avg held {s['avg_bars_held']:.1f}d</div></div>
         <div class="strategy-kpi"><div class="label">Exit Split</div><div class="value" style="font-size:14px">TP {s['tp_count']} · SL {s['sl_count']} · Cross {s.get('signal_count', 0)} · Time {s['time_count']}</div></div>
         <div class="strategy-kpi"><div class="label">Best / Worst</div><div class="value" style="font-size:16px">{fmt_pct(s['best_pct'])} / {fmt_pct(s['worst_pct'])}</div><div class="sub">Max DD {fmt_pct(s.get('max_drawdown_pct', 0))}</div></div>
+        {account_cards}
       </div></div>"""
 
 
 def params_html_for_strategy(strat: StrategyType) -> str:
     p = PARAMS
+    sizing = f"{p.position_size_pct*100:.0f}% equity/trade"
     if strat == StrategyType.TREND_PULLBACK:
-        return (f"<strong>Trend Pullback:</strong> ${p.dollars_per_trade:.0f}/trade · SL {p.stop_loss_pct*100:.0f}% · "
+        return (f"<strong>Trend Pullback:</strong> {sizing} · SL {p.stop_loss_pct*100:.0f}% · "
                 f"TP {p.atr_tp_multiple}×ATR [{p.take_profit_floor_pct*100:.0f}%, {p.take_profit_cap_pct*100:.0f}%] · "
                 f"time stop if breakeven+")
     elif strat == StrategyType.BREAKOUT:
-        return (f"<strong>Breakout:</strong> ${p.dollars_per_trade:.0f}/trade · SL {p.breakout_stop_loss_pct*100:.0f}% · "
+        return (f"<strong>Breakout:</strong> {sizing} · SL {p.breakout_stop_loss_pct*100:.0f}% · "
                 f"TP {p.breakout_atr_multiple}×ATR [{p.breakout_tp_floor_pct*100:.0f}%, {p.breakout_tp_cap_pct*100:.0f}%] · "
                 f"time stop if breakeven+")
     elif strat == StrategyType.MOMENTUM_MACD:
-        return (f"<strong>MACD Momentum:</strong> ${p.dollars_per_trade:.0f}/trade · SL {p.macd_stop_loss_pct*100:.0f}% · "
+        return (f"<strong>MACD Momentum:</strong> {sizing} · SL {p.macd_stop_loss_pct*100:.0f}% · "
                 f"TP {p.macd_tp_multiple}×ATR [{p.macd_tp_floor_pct*100:.0f}%, {p.macd_tp_cap_pct*100:.0f}%] · "
                 f"MACD cross + RSI momentum · time stop if breakeven+")
     elif strat == StrategyType.ENSEMBLE:
-        return (f"<strong>Ensemble:</strong> ${p.dollars_per_trade:.0f}/trade · SL {p.ensemble_stop_loss_pct*100:.0f}% · "
+        return (f"<strong>Ensemble:</strong> {sizing} · SL {p.ensemble_stop_loss_pct*100:.0f}% · "
                 f"TP {p.ensemble_tp_multiple}×ATR [{p.ensemble_tp_floor_pct*100:.0f}%, {p.ensemble_tp_cap_pct*100:.0f}%] · "
                 f"Weighted vote of all 5 strategies · time stop if breakeven+")
     elif strat == StrategyType.REGIME_ADAPTIVE:
-        return (f"<strong>Regime Adaptive:</strong> ${p.dollars_per_trade:.0f}/trade · "
+        return (f"<strong>Regime Adaptive:</strong> {sizing} · "
                 f"SL {p.stop_loss_pct*100:.0f}% · TP {p.atr_tp_multiple}×ATR · "
                 f"Risk-on/off via EMA cross")
     elif strat == StrategyType.SMA_50_CROSS:
-        return (f"<strong>SMA 50 Cross:</strong> ${p.dollars_per_trade:.0f}/trade · "
+        return (f"<strong>SMA 50 Cross:</strong> {sizing} · "
                 f"Daily close vs SMA(50) · SL {p.sma_cross_stop_loss_pct*100:.0f}% · "
                 "No take profit · exit on cross below")
     else:
-        return (f"<strong>Mean Reversion:</strong> ${p.dollars_per_trade:.0f}/trade · "
+        return (f"<strong>Mean Reversion:</strong> {sizing} · "
                 f"SL {p.mr_stop_loss_pct*100:.0f}% · TP {p.mr_atr_multiple}×ATR "
                 f"[{p.mr_tp_floor_pct*100:.0f}%, {p.mr_tp_cap_pct*100:.0f}%] · time stop if breakeven+")
 
@@ -302,12 +324,18 @@ def build_report_2025(
     *,
     report_label: str = "2025 Backtest",
     data_source: str = "Alpaca SIP historical data",
+    annual_reset_aggregate: bool = False,
 ) -> str:
     """Build a full HTML report with a caller-supplied range label."""
     strat_sections = []
     for sname, sdata in sorted(strategy_results.items(), key=lambda x: x[1]["total_pnl"], reverse=True):
-        sdata["max_drawdown_pct"] = compute_max_drawdown(sdata.get("_trades", []))
-        sdata["roi_on_cap"] = sdata["total_pnl"] / PARAMS.max_concurrent_capital if PARAMS.max_concurrent_capital else 0.0
+        sdata.setdefault(
+            "max_drawdown_pct",
+            compute_max_drawdown(
+                sdata.get("_trades", []), PARAMS.initial_backtest_equity
+            ),
+        )
+        sdata.setdefault("roi_on_cap", sdata.get("return_pct", 0.0))
         strat_sections.append(strategy_kpi_cards(sname, sdata))
 
     comparison_table = render_strategy_comparison_table(strategy_results)
@@ -326,7 +354,8 @@ def build_report_2025(
         # Combine all trades for equity
         combined_equity = strategy_comparison_equity(
             {sname: per_strategy_details.get(sname, {}).get(tk, (pd.DataFrame(), []))[1]
-             for sname in sorted(per_strategy_details.keys())}
+             for sname in sorted(per_strategy_details.keys())},
+            annual_reset_aggregate=annual_reset_aggregate,
         )
         tk_chart_html = ticker_chart(tk, per_strategy_details.get(list(per_strategy_details.keys())[0], {}).get(tk, (pd.DataFrame(), []))[0], tk_trades)
         tk_stats = per_ticker_stats(tk, tk_trades)
@@ -370,7 +399,8 @@ def build_report_2025(
 
     # Comparison equity curve (all strategies combined)
     all_equity_chart = strategy_comparison_equity(
-        {sname: sdata.get("_trades", []) for sname, sdata in strategy_results.items()}
+        {sname: sdata.get("_trades", []) for sname, sdata in strategy_results.items()},
+        annual_reset_aggregate=annual_reset_aggregate,
     )
 
     # Combined trades table
@@ -405,7 +435,7 @@ def build_report_2025(
   <h2>Ticker Detail</h2>
   {"".join(ticker_sections) if ticker_sections else "<p class='muted'>No trades for any ticker.</p>"}
   <div class="params" style="margin-top:20px">
-    <strong>System:</strong> ALIENWARE 16 · RTX 5050 4GB · {data_source} · Generated {now_str}
+    <strong>System:</strong> {PARAMS.position_size_pct*100:.0f}% equity/trade · {PARAMS.max_concurrent_positions} positions max · Annual reset: ${PARAMS.initial_backtest_equity:,.0f} · {data_source} · Generated {now_str}
   </div>
 </div></body></html>"""
     return html

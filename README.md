@@ -54,8 +54,9 @@ Each stock is traded independently. The bot holds at most one position per ticke
 
 | Parameter | Value |
 |-----------|-------|
-| Capital per trade | $200 |
-| Max concurrent capital | $1,000 (5 trades max) |
+| Capital per trade | 20% of current account equity, capped by available cash |
+| Max concurrent positions | 5 (no margin) |
+| Annual backtest starting equity | $1,000, reset for every calendar year |
 | Default stop loss | 7–10% below entry (strategy-dependent) |
 | Default take profit | 3–12% above entry for bracket strategies; none for SMA 50 Cross |
 | Max holding period | 3–7 days for bracket strategies; cross-driven for SMA 50 Cross |
@@ -216,19 +217,22 @@ SMA 50 Cross uses a separate daily lifecycle: a 10% emergency stop has priority,
 
 ## Performance Summary
 
-Backtested on NVDA, AMZN, META, AMD, ARM. $200 per trade, max $1,000 deployed at once.
+Backtested on NVDA, AMZN, META, AMD, ARM. Each annual run starts at $1,000,
+uses whole-share positions capped at 20% of realized equity, compounds within
+the year, and resets to $1,000 for the next year.
 
 | Strategy | 2025 P&L | 2026 P&L | Combined |
 |----------|----------|----------|----------|
-| Trend Pullback | +$71.37 | +$142.02 | **+$213.39** |
-| Breakout | -$26.51 | +$117.66 | +$91.15 |
-| Mean Reversion | -$26.31 | +$26.68 | +$0.37 |
-| MACD Momentum | +$13.31 | +$35.99 | +$49.30 |
-| **Ensemble** | **+$199.92** | **+$331.78** | **+$531.70** |
-| Regime Adaptive | +$85.69 | +$239.86 | **+$325.55** |
-| **SMA 50 Cross (daily)** | **+$262.87** | **+$392.68** | **+$655.55** |
+| Trend Pullback | +$87.46 | +$59.22 | **+$146.68** |
+| Breakout | +$78.64 | +$3.95 | +$82.59 |
+| Mean Reversion | +$35.10 | -$23.15 | +$11.95 |
+| MACD Momentum | +$29.89 | +$3.99 | +$33.88 |
+| **Ensemble** | **+$91.83** | **+$243.87** | **+$335.70** |
+| **Regime Adaptive** | **+$196.45** | **+$207.28** | **+$403.73** |
+| **SMA 50 Cross (daily)** | **+$117.12** | **+$146.19** | **+$263.31** |
 
-*Legacy strategy results are the 2026-06-02 baseline. SMA 50 Cross results were generated from Alpaca daily bars on 2026-07-18. Run the backtest scripts to regenerate every row with current data.*
+*Generated 2026-07-18 from Alpaca SIP bars. The 2026 column is year-to-date
+through the latest completed data, not a full calendar year.*
 
 ---
 

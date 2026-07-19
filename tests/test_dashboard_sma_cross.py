@@ -29,3 +29,35 @@ def test_generated_ui_labels_do_not_hardcode_the_old_strategy_count():
     assert '>6</div><div class="sub">V1 + V2 active' not in (
         root / "dashboard" / "index.html"
     ).read_text(encoding="utf-8")
+
+
+def test_dashboard_summary_exposes_percentage_sizing(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from dashboard import server
+
+    monkeypatch.setattr(server.db_mod, "portfolio_stats", lambda: {})
+    monkeypatch.setattr(server, "_get_trading", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        server.db_mod,
+        "sync_positions_from_alpaca",
+        lambda _client: {"positions": [], "deployed": 0.0},
+    )
+
+    summary = asyncio.run(server.get_summary())
+
+    assert summary["position_size_pct"] == 0.20
+    assert summary["initial_backtest_equity"] == 1_000.0
+    assert summary["max_concurrent_positions"] == 5
+
+
+def test_dashboard_home_labels_percentage_sizing():
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[1] / "dashboard" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert "equity/trade" in html
+    assert "dollars_per_trade" not in html

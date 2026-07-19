@@ -2,7 +2,7 @@
 
 **System:** Multi-strategy swing trader on ALIENWARE 16 (RTX 5050 4GB, Intel i9)
 **Universe:** NVDA · AMZN · META · AMD · ARM (same as V1)
-**Live:** Alpaca paper trading, $200/trade, $1,000 cap
+**Live:** Alpaca paper trading, 20% of current equity per whole-share position, 5 positions max, no margin
 **Dashboard:** http://localhost:8004 (LAN: http://192.168.0.191:8004) — Home · Strategies · 2024/2025/2026 Reports
 
 ## Research Loop (autoresearch-inspired)
@@ -24,19 +24,25 @@ The agent follows this cycle autonomously:
 4. **Win rate > 55%** — Consistency matters
 5. **At least 20 trades/year** — Statistical significance
 
-## Current baseline (all 7 strategies; SMA 50 Cross added 2026-07-18):
+## Current baseline (all 7 strategies; annual $1,000 reset):
 
-Changes since last baseline: breakeven-gated time stop (no hard time stop — only exits at time stop if position is profitable), TP reachability filter raised from days=2 to days=4 (fixed breakout and momentum_macd being blocked by miscalibrated filter).
+Each year starts with $1,000, uses whole-share positions capped at 20% of
+realized equity, compounds gains and losses within that year, and resets before
+the next year. The baseline also includes the breakeven-gated time stop and
+four-day TP reachability filter.
 
 | Strategy | 2024 P&L | 2025 P&L | 2026 P&L | 3-Year |
 |----------|----------|----------|----------|--------|
-| Trend Pullback | +$196.16 | +$12.30 | +$82.17 | +$290.63 |
-| Breakout | +$26.73 | -$8.04 | +$114.66 | +$133.35 |
-| Mean Reversion | +$69.16 | -$5.39 | +$20.17 | +$83.94 |
-| MACD Momentum | +$55.59 | +$19.81 | +$16.92 | +$92.32 |
-| **Ensemble** | **+$340.02** | **+$180.87** | **+$308.00** | **+$828.89** 🏆 |
-| **Regime Adaptive** | **+$335.67** | **+$173.75** | **+$233.92** | **+$743.34** |
-| **SMA 50 Cross (daily)** | **+$8.15** | **+$262.87** | **+$392.68** | **+$663.70** |
+| Trend Pullback | +$116.96 | +$87.46 | +$59.22 | +$263.64 |
+| Breakout | +$63.26 | +$78.64 | +$3.95 | +$145.85 |
+| Mean Reversion | -$7.40 | +$35.10 | -$23.15 | +$4.55 |
+| MACD Momentum | +$90.73 | +$29.89 | +$3.99 | +$124.61 |
+| **Ensemble** | **+$265.12** | **+$91.83** | **+$243.87** | **+$600.82** 🏆 |
+| **Regime Adaptive** | **+$150.44** | **+$196.45** | **+$207.28** | **+$554.17** |
+| **SMA 50 Cross (daily)** | **+$44.56** | **+$117.12** | **+$146.19** | **+$307.87** |
+
+*Generated 2026-07-18 from Alpaca SIP bars. Each column is an independent
+$1,000 annual account; 2026 is year-to-date through the latest completed bar.*
 
 ## Research ideas to explore:
 
