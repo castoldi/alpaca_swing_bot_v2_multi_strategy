@@ -113,6 +113,15 @@ switch (−3% vs yesterday's closing equity halts new entries for the day), and
 one protected bracket exit (TP3 + SL) per entry regardless of quantity. Annual
 backtests start at $1,000, compound within the year, and reset each January.
 
+**Leveraged exposure cap**: total notional across `LEVERAGED_TICKERS` is capped
+at `max_leveraged_exposure_pct` (default 20%) of equity, enforced identically in
+live sizing and `run_annual_portfolio`. The 5-position limit is count-based and
+correlation-blind — 5 × 20% = 100% of equity — so without this cap a multi-ETF
+leveraged universe could put the whole account into 3x instruments at once.
+The default equals one 20% position, so **adding a leveraged ticker cannot raise
+risk until this number is deliberately raised**. `bot._open_leveraged_notional`
+fails closed: an unreadable position is charged the full cap.
+
 **Ensemble warmup**: needs 60+ bars before first signal. Regime needs 50+ for EMA(50).
 
 ## Bot trading hours

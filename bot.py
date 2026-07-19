@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import PARAMS, TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
+from config import PARAMS, TICKERS, LEVERAGED_TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
 from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days, strategy_universe
 from dashboard import db as db_mod
@@ -29,7 +29,7 @@ from dashboard import bot_hooks
 from notifier import send_notification
 import data_feed
 import runtime
-from position_sizing import whole_share_position_size
+from position_sizing import leveraged_headroom, whole_share_position_size
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
@@ -47,6 +47,9 @@ class LiveSizingState:
     equity: float
     remaining_cash: float
     remaining_slots: int
+    # Market value of every open leveraged-ETF position, whoever opened it —
+    # the cap is about account risk, not about which orders the bot owns.
+    leveraged_notional: float = 0.0
 
 
 def _daily_loss_pct(account) -> float | None:
@@ -93,6 +96,33 @@ def _announce_kill_switch(loss_pct: float, equity: float) -> None:
     )
 
 
+def _open_leveraged_notional(positions) -> float:
+    """Market value of open leveraged-ETF positions.
+
+    Fails closed: a position whose value cannot be read is charged its full
+    cap, so an unreadable position blocks further leveraged entries rather than
+    silently freeing headroom.
+    """
+    leveraged = set(LEVERAGED_TICKERS)
+    total = 0.0
+    for pos in positions or []:
+        symbol = str(getattr(pos, "symbol", "") or "")
+        if symbol not in leveraged:
+            continue
+        try:
+            value = abs(float(getattr(pos, "market_value", None)))
+            if not math.isfinite(value):
+                raise ValueError("non-finite market value")
+            total += value
+        except (TypeError, ValueError):
+            log.warning(
+                "  %s: market value unreadable — treating as full leveraged cap",
+                symbol,
+            )
+            return float("inf")
+    return total
+
+
 def _load_live_sizing(tc) -> LiveSizingState | None:
     """Read one safe, non-margin sizing snapshot for the current bot cycle."""
     try:
@@ -120,6 +150,7 @@ def _load_live_sizing(tc) -> LiveSizingState | None:
             remaining_slots=max(
                 0, PARAMS.max_concurrent_positions - open_position_count
             ),
+            leveraged_notional=_open_leveraged_notional(positions),
         )
     except Exception as exc:
         log.warning("New entries disabled this cycle: account sizing unavailable (%s)", exc)
@@ -585,14 +616,36 @@ def run_once(strategy: StrategyType) -> int:
                             )
                             continue
 
+                    is_leveraged = ticker in set(LEVERAGED_TICKERS)
+                    headroom = (
+                        leveraged_headroom(
+                            sizing_state.equity,
+                            sizing_state.leveraged_notional,
+                            PARAMS.max_leveraged_exposure_pct,
+                        )
+                        if is_leveraged
+                        else None
+                    )
                     size = whole_share_position_size(
                         sizing_state.equity,
                         sizing_state.remaining_cash,
                         market_ref,
                         PARAMS.position_size_pct,
+                        max_notional=headroom,
                     )
                     qty = size.quantity
                     if qty < 1:
+                        if size.reason == "group_exposure_cap":
+                            log.info(
+                                "  %s: entry skipped — leveraged exposure cap "
+                                "(%.0f%% of equity) leaves $%.2f headroom, "
+                                "below one share @ $%.2f",
+                                ticker,
+                                PARAMS.max_leveraged_exposure_pct * 100,
+                                headroom,
+                                market_ref,
+                            )
+                            continue
                         log.info(
                             "  %.0f%% equity budget $%.2f buys <1 whole share of "
                             "%s @ $%.2f — skipping (no order, no notify)",
@@ -644,6 +697,11 @@ def run_once(strategy: StrategyType) -> int:
                             0.0, sizing_state.remaining_cash - size.notional
                         )
                         sizing_state.remaining_slots -= 1
+                        if is_leveraged:
+                            # Reserve within this cycle too: correlated ETFs
+                            # signal together, so later tickers in the same
+                            # pass must see this entry's exposure.
+                            sizing_state.leveraged_notional += size.notional
                         if entry_db_id is not None:
                             try:
                                 db_mod.set_entry_order_id(

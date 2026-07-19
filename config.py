@@ -85,6 +85,20 @@ class StrategyParams:
     # equity, no new entries are placed for the rest of the day (exits and
     # broker-held protection keep working).
     max_daily_loss_pct: float = 0.03
+    # Total notional allowed across LEVERAGED_TICKERS, as a fraction of equity.
+    #
+    # max_concurrent_positions (5) x position_size_pct (20%) = 100% of equity,
+    # and that limit is count-based, so it cannot see correlation. Leveraged
+    # ETFs move together and their entry signals fire together, so without this
+    # cap a multi-ETF leveraged universe could put the whole account into 3x
+    # instruments at once — roughly 3x account beta, cash-funded, with no margin
+    # call to stop it.
+    #
+    # Default 0.20 equals exactly one 20% position, which is the exposure a
+    # single-ticker leveraged universe already has: adding a second leveraged
+    # ticker therefore cannot raise risk until this number is deliberately
+    # raised. Enforced identically in live sizing and in run_annual_portfolio.
+    max_leveraged_exposure_pct: float = 0.20
 
     # ── Shared data window ────────────────────────────────────────────
     history_days: int = 90

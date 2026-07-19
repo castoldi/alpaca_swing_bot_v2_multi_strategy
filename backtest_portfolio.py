@@ -8,8 +8,8 @@ from itertools import groupby
 
 import pandas as pd
 
-from config import PARAMS, StrategyParams
-from position_sizing import whole_share_position_size
+from config import LEVERAGED_TICKERS, PARAMS, StrategyParams
+from position_sizing import leveraged_headroom, whole_share_position_size
 from strategies.base import (
     BaseStrategy,
     ExitLeg,
@@ -95,8 +95,16 @@ def run_annual_portfolio(
     initial_equity: float,
     position_fraction: float,
     max_positions: int,
+    leveraged_tickers: frozenset[str] | None = None,
+    max_leveraged_fraction: float | None = None,
 ) -> PortfolioResult:
-    """Run one unlevered annual portfolio with realized-P&L compounding."""
+    """Run one unlevered annual portfolio with realized-P&L compounding.
+
+    Total notional across ``leveraged_tickers`` is capped at
+    ``max_leveraged_fraction`` of equity — the same rule the live bot applies,
+    so backtests cannot show exposure the bot would refuse to take. Both
+    default to the configured values.
+    """
     if not math.isfinite(initial_equity) or initial_equity <= 0:
         raise ValueError("initial_equity must be finite and positive")
     if not math.isfinite(position_fraction) or not 0 < position_fraction <= 1:
@@ -108,8 +116,14 @@ def run_annual_portfolio(
     ):
         raise ValueError("max_positions must be a positive integer")
 
+    if leveraged_tickers is None:
+        leveraged_tickers = frozenset(LEVERAGED_TICKERS)
+    if max_leveraged_fraction is None:
+        max_leveraged_fraction = PARAMS.max_leveraged_exposure_pct
+
     cash = float(initial_equity)
     realized_pnl = 0.0
+    open_leveraged_notional = 0.0
     accepted_positions = 0
     skipped_positions = 0
     accepted_trades: list[Trade] = []
@@ -123,13 +137,18 @@ def run_annual_portfolio(
     position_sequence = 0
 
     def realize_before(timestamp: pd.Timestamp | None) -> None:
-        nonlocal cash, realized_pnl
+        nonlocal cash, realized_pnl, open_leveraged_notional
         while exit_events and (
             timestamp is None or exit_events[0][0] < timestamp
         ):
             _, _, position_id, trade = heapq.heappop(exit_events)
             cash += trade.shares * trade.exit_price
             realized_pnl += trade.pnl_dollars
+            if trade.ticker in leveraged_tickers:
+                # Release exactly the cost basis reserved at entry.
+                open_leveraged_notional = max(
+                    0.0, open_leveraged_notional - trade.shares * trade.entry_price
+                )
             equity_curve.append(
                 (pd.Timestamp(trade.exit_date), initial_equity + realized_pnl)
             )
@@ -155,11 +174,20 @@ def run_annual_portfolio(
                 skipped_positions += 1
                 continue
 
+            equity = initial_equity + realized_pnl
+            is_leveraged = candidate.ticker in leveraged_tickers
             size = whole_share_position_size(
-                initial_equity + realized_pnl,
+                equity,
                 cash,
                 candidate.entry_price,
                 position_fraction,
+                max_notional=(
+                    leveraged_headroom(
+                        equity, open_leveraged_notional, max_leveraged_fraction
+                    )
+                    if is_leveraged
+                    else None
+                ),
             )
             if size.quantity < 1:
                 skipped_positions += 1
@@ -174,6 +202,8 @@ def run_annual_portfolio(
             position_id = position_sequence
             accepted_positions += 1
             cash -= size.notional
+            if is_leveraged:
+                open_leveraged_notional += size.notional
             open_remaining[position_id] = size.quantity
             open_tickers[candidate.ticker] = position_id
             position_tickers[position_id] = candidate.ticker

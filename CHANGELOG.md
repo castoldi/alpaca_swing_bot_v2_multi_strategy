@@ -17,6 +17,45 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 
+## [0.14.0] - 2026-07-19
+
+### Added
+- **Leveraged-ETF exposure cap** (`max_leveraged_exposure_pct`, default 0.20).
+  Total notional across `LEVERAGED_TICKERS` is capped as a fraction of equity,
+  enforced identically in live sizing and in `run_annual_portfolio`.
+
+  The account position limit is count-based — `max_concurrent_positions` (5) x
+  `position_size_pct` (20%) = 100% of equity — so it cannot see correlation.
+  Leveraged ETFs track correlated underlyings and their entry signals fire
+  together, so a multi-ETF leveraged universe could put the entire account into
+  3x instruments simultaneously: roughly 3x account beta, cash-funded, with no
+  margin call to stop it. This closes that hole before the universe can grow.
+
+  The 0.20 default equals exactly one 20% position — the exposure a
+  single-leveraged-ticker universe already has — so **behaviour is unchanged
+  today** (2024/2025/2026 `tqqq_momentum` backtests are byte-identical), and
+  adding a second leveraged ticker cannot raise risk until the cap is
+  deliberately raised.
+- `position_sizing.leveraged_headroom()` and an optional `max_notional`
+  ceiling on `whole_share_position_size()`, for group-level limits the
+  per-position fraction cannot express.
+- `LiveSizingState.leveraged_notional`, read from real broker positions
+  (whoever opened them — the cap is about account risk, not order ownership)
+  and reserved within a cycle as entries are placed.
+- 19 tests in `tests/test_leveraged_exposure_cap.py`.
+
+### Notes
+- `_open_leveraged_notional()` **fails closed**: a position whose market value
+  cannot be read is charged the full cap, blocking further leveraged entries
+  rather than silently freeing headroom.
+- Research (not shipped): the strategy was run unmodified on 8 3x ETFs over
+  2016-2026 — all 8 profitable, median PF 1.66, median max DD 5.8%, 77% of
+  years positive. TECL (+$582) and SOXL (+$537) both beat TQQQ (+$523), so the
+  rule is not curve-fit to TQQQ. It degrades on choppy underlyings (TNA small
+  caps PF 1.06). TQQQ's -$2.58 worst year is the family outlier; a typical
+  worst year is -$25 to -$50.
+
+
 ## [0.13.0] - 2026-07-19
 
 ### Added
@@ -414,6 +453,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
