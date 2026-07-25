@@ -123,15 +123,58 @@ def _open_leveraged_notional(positions) -> float:
     return total
 
 
+def _bot_owned_symbols() -> set[str] | None:
+    """Symbols this bot currently tracks as open, or None when unreadable."""
+    try:
+        return {
+            str(trade.get("ticker") or "")
+            for trade in (db_mod.get_open_trades() or [])
+        }
+    except Exception as exc:
+        log.warning(
+            "Position ownership unavailable (%s) — charging every account "
+            "position to this bot",
+            exc,
+        )
+        return None
+
+
+def _our_open_position_count(positions, owned: set[str] | None) -> int:
+    """How many open account positions belong to this bot.
+
+    The Alpaca key may be shared with other bots, so the raw account position
+    count is not this bot's slot usage: another bot's symbols would silently
+    consume `max_concurrent_positions` and, at five of them, stop this bot
+    entering anything while still looking healthy.
+
+    Fails closed — when ownership cannot be determined every position is
+    charged to this bot, costing capacity rather than risking an over-allocation.
+    """
+    if owned is None:
+        return len(positions or [])
+    return sum(
+        1
+        for pos in (positions or [])
+        if str(getattr(pos, "symbol", "") or "") in owned
+    )
+
+
 def _load_live_sizing(tc) -> LiveSizingState | None:
-    """Read one safe, non-margin sizing snapshot for the current bot cycle."""
+    """Read one safe, non-margin sizing snapshot for the current bot cycle.
+
+    Cash, equity and leveraged notional stay account-wide on purpose — they are
+    genuinely shared with anything else trading this key. Only the position-slot
+    count is scoped to what this bot owns.
+    """
     try:
         account = tc.get_account()
         equity = float(account.equity)
         cash = float(account.cash)
         get_positions = getattr(tc, "get_all_positions", None)
         positions = get_positions() if callable(get_positions) else []
-        open_position_count = len(positions or [])
+        open_position_count = _our_open_position_count(
+            positions, _bot_owned_symbols()
+        )
         if (
             not math.isfinite(equity)
             or not math.isfinite(cash)

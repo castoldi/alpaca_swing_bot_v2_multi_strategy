@@ -57,6 +57,52 @@ _Changes landed but not yet released under a new version number go here._
   systematic-strategies.md §3.1; that section now carries a pointer.
 
 
+
+## [0.14.1] - 2026-07-25
+
+### Fixed
+- **Another bot sharing the Alpaca key no longer consumes this bot's position
+  slots.** `_load_live_sizing` counted *every* open account position against
+  `max_concurrent_positions`, so a second bot day-trading SPY/QQQ on the same
+  key silently reduced this bot's capacity — and at five foreign positions
+  would have stopped it entering anything at all while still logging a healthy
+  cycle and reporting "5-position account limit reached".
+
+  Slot usage is now scoped to positions this bot actually owns, matched against
+  the tickers in its own open-trade records.
+
+  **Deliberately left account-wide**, because they are genuinely shared:
+  - `equity` and `cash` — another bot spending cash really does reduce what
+    this one can deploy.
+  - `_open_leveraged_notional` — unchanged from 0.14.0, where counting
+    positions "whoever opened them" is the documented intent: the leveraged cap
+    is about account risk, not order ownership.
+  - the daily-loss kill switch, which reads account equity and therefore
+    couples the two bots' drawdowns in both directions.
+
+  The scoping **fails closed**: when open trades cannot be read, every position
+  is charged to this bot, costing capacity rather than risking over-allocation.
+
+### Added
+- `bot._bot_owned_symbols()` and `bot._our_open_position_count()`.
+- `tests/test_bot_shared_account.py` — 10 tests covering both the shared-key
+  slot accounting and the duplicate-entry guards that had no coverage:
+  - foreign positions do not consume slots; our own still do; an account full
+    of foreign positions still leaves five slots free
+  - unreadable ownership falls back to the conservative full count
+  - cash and equity stay account-wide
+  - an open DB trade blocks a second entry — the guard whose upstream failure
+    produced 21 real NVDA orders for one signal (live trades 14–34)
+  - an untracked broker position blocks stacking
+  - a non-404 position-lookup failure fails closed
+  - control: a clear ticker still enters
+
+### Notes
+- Related operational risk, not addressed here: if the shared key is ever used
+  on a **live** account under $25k, the other bot's day trades can trigger
+  pattern-day-trader restrictions that block *this* bot's exits, stranding
+  positions past their stops. Paper-only today, so latent.
+
 ## [0.14.0] - 2026-07-19
 
 ### Added
@@ -493,6 +539,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

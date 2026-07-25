@@ -219,6 +219,31 @@ def test_account_failure_disables_entries_but_still_reconciles(monkeypatch):
     assert len(reconciled) == 1
 
 
+def _own_positions(monkeypatch, count):
+    """Make the _AccountClient's OPEN* positions belong to this bot.
+
+    Slot usage counts only positions this bot opened, so a test that means
+    "the bot already holds N positions" has to say so in the DB too. Their
+    parent orders are long settled, which is what the capacity gate is for and
+    is covered by its own test, so it is short-circuited here to keep these
+    tests about slot arithmetic.
+    """
+    monkeypatch.setattr(bot, "_entry_capacity_is_unsettled", lambda _tc: False)
+    monkeypatch.setattr(
+        bot.db_mod,
+        "get_open_trades",
+        lambda: [
+            {
+                "id": 100 + index,
+                "ticker": f"OPEN{index}",
+                "strategy": "ensemble",
+                "entry_state": "filled",
+            }
+            for index in range(count)
+        ],
+    )
+
+
 def test_live_cycle_never_exceeds_five_account_positions(monkeypatch):
     placed, _, reconciled = _configure_cycle(
         monkeypatch,
@@ -226,6 +251,7 @@ def test_live_cycle_never_exceeds_five_account_positions(monkeypatch):
         ["A", "B"],
         {"A": 100.0, "B": 100.0},
     )
+    _own_positions(monkeypatch, 4)
 
     bot.run_once(StrategyType.ENSEMBLE)
 
@@ -278,6 +304,7 @@ def test_persistence_failure_prevents_broker_submission(monkeypatch):
         ["A", "B"],
         {"A": 101.0, "B": 101.0},
     )
+    _own_positions(monkeypatch, 4)
 
     def fail_save(*_args, **_kwargs):
         raise RuntimeError("database unavailable")
