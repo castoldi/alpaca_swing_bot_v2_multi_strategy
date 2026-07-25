@@ -108,6 +108,16 @@ Ordered by my estimate of value-per-unit-effort for this specific system.
 
 ### 3.1 Volatility-targeted position sizing
 
+> **Updated 2026-07-25 by [markov-and-garch.md](markov-and-garch.md):** the
+> volatility estimator recommended below has changed. An out-of-sample forecast
+> race on this bot's own cached data found ATR to be the **worst** of five
+> estimators tested (worst on all four tickers, p < 0.0001 against EWMA), because
+> ATR is a range measure built for stop placement, not a variance forecast. Use
+> **EWMA (RiskMetrics, λ = 0.94)** for the sizing scalar instead. GARCH was also
+> tested and was *not* significantly better than EWMA (p = 0.12), so the extra
+> complexity is not justified. Keep ATR for TP/SL geometry, where it is the right
+> tool. The rest of this section stands as written.
+
 **The idea.** Instead of a fixed fraction of equity per position, size each
 position inversely to its recent volatility, so every position contributes
 roughly equal *risk* rather than equal *dollars*. Position size ∝ target_vol /
@@ -457,8 +467,9 @@ Ordered so that each step makes the next one more trustworthy.
 | # | Item | Why this order | Effort |
 |---|---|---|---|
 | 1 | **3.7 Validation methodology** | Nothing else can be evaluated honestly until this exists. Held-out period + trial logging first. | Moderate |
-| 2 | **3.3 Index regime filter** | Closes the identified bear-market gap; small, self-contained, mirrors the existing kill-switch pattern. | Low |
-| 3 | **3.1 Volatility-targeted sizing** | Largest documented risk-adjusted-return gain; ATR already computed and unused for sizing. | Moderate |
+| 2 | **3.3 Index regime filter** | Closes the identified bear-market gap; small, self-contained, mirrors the existing kill-switch pattern. Now empirically confirmed as the right choice — it beat a Hidden Markov Model regime filter on this data ([markov-and-garch.md §1.3](markov-and-garch.md)). | Low |
+| 3 | **3.1 Volatility-targeted sizing** | Largest documented risk-adjusted-return gain. Use **EWMA**, not ATR — see the forecast race in [markov-and-garch.md §2.3](markov-and-garch.md). | Moderate |
+| 3b | **Vol-scaled daily-loss kill switch** | Falls out of the same EWMA series for almost no extra work; the fixed −3% threshold is currently regime-blind. See [markov-and-garch.md §2.5(b)](markov-and-garch.md). | Low |
 | 4 | **3.2 Correlation-aware caps** | Generalizes `leveraged_headroom()`, which already exists; the 0.66 stress correlation justifies it. | Low |
 | 5 | **3.4 Ranked slot allocation** | Removes arbitrary first-come slot filling. Cheap. Full cross-sectional momentum waits for #6. | Low |
 | 6 | **3.6 Universe expansion** | Precondition for real diversification and for #7. Do after caps exist so it cannot raise risk. | Low–High |

@@ -33,6 +33,28 @@ _Changes landed but not yet released under a new version number go here._
   coverage. The "keep if both backtest years improve" loop in `program.md` has no
   held-out period and does not record the number of configurations tried, so
   selection bias cannot currently be estimated.
+- **[docs/markov-and-garch.md](docs/markov-and-garch.md)** — deep dive on Markov
+  regime-switching (HMM) and GARCH, with both models implemented from scratch in
+  scipy and tested walk-forward on the cached 2016–2026 daily bars. No new
+  dependencies; docs-only, no behaviour change.
+
+  Three measured findings:
+  - **GARCH is not worth building.** GARCH(1,1) beats the ATR the bot currently
+    computes, decisively (pooled Diebold-Mariano −7.84, p < 0.0001), but does
+    **not** significantly beat a three-line EWMA (p = 0.12). EWMA captures ~96%
+    of the available improvement. Recommendation is EWMA for sizing, keeping ATR
+    for TP/SL geometry where a range measure is correct.
+  - **An HMM entry gate lost to a 200-day SMA filter.** The 2-state model
+    separates regimes cleanly (calm: +0.30%/day at 22% vol; turbulent: −0.01%/day
+    at 51% vol, both ~95% persistent), but as an honest walk-forward filter it
+    scored Sharpe 0.98 vs 1.20 for the SMA filter on the bot's universe. It did
+    cut max drawdown the most (−24.7% vs −60.8% buy-and-hold).
+  - **The HMM lookahead trap is worth 2.4×–4.4× fabricated Sharpe.** Scoring the
+    identical model with smoothed instead of filtered state probabilities lifted
+    Sharpe from 0.98 to 2.38 (bot universe) and 0.56 to 2.45 (S&P proxy).
+
+  Supersedes the ATR-based estimator originally proposed in
+  systematic-strategies.md §3.1; that section now carries a pointer.
 
 
 ## [0.14.0] - 2026-07-19
