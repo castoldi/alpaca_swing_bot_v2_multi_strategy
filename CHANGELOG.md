@@ -16,6 +16,24 @@ semantic (`MAJOR.MINOR.PATCH`).
 
 _Changes landed but not yet released under a new version number go here._
 
+### Added
+- **[docs/systematic-strategies.md](docs/systematic-strategies.md)** — research
+  survey of systematic-trading techniques and how each maps onto this codebase.
+  Documents-only; no behaviour change.
+
+  Includes a measured diagnostic of the trading universe from the cached daily
+  bars: mean pairwise correlation across NVDA/AMZN/META/AMD is **0.50** over
+  2016–2026, rising to **0.66** in the top-quintile-volatility regime and
+  **0.86** during the Feb–Apr 2020 crash. Five equal positions therefore behave
+  as ~1.7 independent bets normally and ~1.1 in a crash, so the count-based
+  `max_concurrent_positions` limit overstates diversification for the core
+  universe the same way it did for leveraged ETFs before 0.14.0.
+
+  Priority conclusion: the largest gap is **validation methodology**, not signal
+  coverage. The "keep if both backtest years improve" loop in `program.md` has no
+  held-out period and does not record the number of configurations tried, so
+  selection bias cannot currently be estimated.
+
 
 ## [0.14.0] - 2026-07-19
 
