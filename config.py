@@ -114,6 +114,47 @@ class StrategyParams:
     tax_year_end_guard: bool = True
     tax_guard_start_month: int = 12
     tax_guard_start_day: int = 1
+    # Conservative alternative to the surgical guard above: refuse ALL entries
+    # for a flat window spanning 31 December, which is the standard way an
+    # active trader sidesteps §1091 entirely. Off by default because it costs a
+    # month of trading a year; `tax_hard_block_days` is centred on 31 December,
+    # so 31 days runs ~16 Dec to ~15 Jan.
+    tax_hard_block: bool = False
+    tax_hard_block_days: int = 31
+
+    # §475(f) mark-to-market election. When elected, trading is EXEMPT from the
+    # wash-sale rule and from the capital-loss limitation, and gains/losses
+    # become ordinary income. Defaults off: the election is irrevocable without
+    # IRS consent, requires qualifying for Trader Tax Status, and is a decision
+    # for the account owner and a CPA — never for the bot.
+    tax_mtm_475f: bool = False
+
+    # Wash-sale matching is EXACT SYMBOL by default. Each tuple here declares a
+    # set of tickers to treat as substantially identical to one another — e.g.
+    # two share classes, or a fund and its own successor. Deliberately empty:
+    # whether a leveraged ETF is substantially identical to its underlying index
+    # fund (TQQQ vs QQQ) is genuinely unsettled, and the bot should not assert a
+    # position on it.
+    tax_identical_groups: tuple[tuple[str, ...], ...] = ()
+
+    # §1091 applies to "stocks or securities". Digital assets are property, so
+    # the wash-sale rule does not currently reach them; gains/losses are still
+    # tracked and taxed. Legislation to extend §1091 to digital assets has been
+    # proposed repeatedly — revisit before relying on this.
+    tax_crypto_symbols: tuple[str, ...] = ()
+
+    # Lot relief method for partial sales. FIFO is the IRS default when no
+    # specific identification is made at the time of sale.
+    tax_lot_method: str = "fifo"        # fifo | lifo | specific
+
+    # Progressive brackets, NIIT and quarterly estimates. Off by default so the
+    # dashboard keeps using the two flat rates above and existing figures do not
+    # move; turn on for a materially better estimate.
+    tax_use_brackets: bool = False
+    tax_filing_status: str = "single"   # single | married_joint
+    tax_other_income: float = 0.0       # wages etc., sets the starting bracket
+    tax_niit: bool = True               # 3.8% net investment income tax
+    tax_estimated_payments: bool = True  # quarterly safe-harbour schedule
 
     # ── Shared data window ────────────────────────────────────────────
     history_days: int = 90

@@ -174,6 +174,10 @@ def _tax_entry_block(ticker: str) -> str | None:
             guard_start_month=PARAMS.tax_guard_start_month,
             guard_start_day=PARAMS.tax_guard_start_day,
             enabled=PARAMS.tax_year_end_guard,
+            hard_block=PARAMS.tax_hard_block,
+            hard_block_days=PARAMS.tax_hard_block_days,
+            mtm_475f=PARAMS.tax_mtm_475f,
+            crypto_symbols=PARAMS.tax_crypto_symbols,
         )
     except Exception as exc:
         log.warning("  %s: tax guard skipped (%s)", ticker, exc)

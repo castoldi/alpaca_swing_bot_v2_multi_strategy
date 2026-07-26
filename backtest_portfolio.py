@@ -10,6 +10,7 @@ import pandas as pd
 
 from config import LEVERAGED_TICKERS, PARAMS, StrategyParams
 from position_sizing import leveraged_headroom, whole_share_position_size
+import tax as tax_mod
 from strategies.base import (
     BaseStrategy,
     ExitLeg,
@@ -44,6 +45,14 @@ class PortfolioResult:
     accepted_positions: int
     skipped_positions: int
     equity_curve: tuple[tuple[pd.Timestamp, float], ...]
+    # Tax view. `tax_estimate` is the liability the year's realized P&L would
+    # attract; `after_tax_pnl` is gross realized P&L less that. Both are zero
+    # when tax reporting is switched off, so the gross figures are unchanged.
+    tax_estimate: float = 0.0
+    after_tax_pnl: float = 0.0
+    wash_sale_count: int = 0
+    disallowed_loss: float = 0.0
+    tax_blocked_entries: int = 0
 
 
 def _trade_from_leg(
@@ -97,6 +106,7 @@ def run_annual_portfolio(
     max_positions: int,
     leveraged_tickers: frozenset[str] | None = None,
     max_leveraged_fraction: float | None = None,
+    apply_tax: bool | None = None,
 ) -> PortfolioResult:
     """Run one unlevered annual portfolio with realized-P&L compounding.
 
@@ -120,6 +130,11 @@ def run_annual_portfolio(
         leveraged_tickers = frozenset(LEVERAGED_TICKERS)
     if max_leveraged_fraction is None:
         max_leveraged_fraction = PARAMS.max_leveraged_exposure_pct
+    # The live bot refuses tax-blocked entries, so the backtest must too or the
+    # two diverge — the same discipline the leveraged cap already follows.
+    if apply_tax is None:
+        apply_tax = PARAMS.tax_year_end_guard
+    tax_blocked_entries = 0
 
     cash = float(initial_equity)
     realized_pnl = 0.0
@@ -174,6 +189,36 @@ def run_annual_portfolio(
                 skipped_positions += 1
                 continue
 
+            # Year-end wash-sale guard, evaluated against trades already
+            # realized at this point in the simulation — never the full history,
+            # which would be lookahead.
+            if apply_tax:
+                realized_so_far = [
+                    {
+                        "ticker": t.ticker,
+                        "status": "closed",
+                        "exit_date": pd.Timestamp(t.exit_date).isoformat(),
+                        "pnl_dollars": t.pnl_dollars,
+                    }
+                    for t in accepted_trades
+                    if pd.Timestamp(t.exit_date) < entry_date
+                ]
+                if tax_mod.year_end_entry_block(
+                    candidate.ticker,
+                    entry_date.to_pydatetime(),
+                    realized_so_far,
+                    guard_start_month=PARAMS.tax_guard_start_month,
+                    guard_start_day=PARAMS.tax_guard_start_day,
+                    enabled=PARAMS.tax_year_end_guard,
+                    hard_block=PARAMS.tax_hard_block,
+                    hard_block_days=PARAMS.tax_hard_block_days,
+                    mtm_475f=PARAMS.tax_mtm_475f,
+                    crypto_symbols=PARAMS.tax_crypto_symbols,
+                ):
+                    tax_blocked_entries += 1
+                    skipped_positions += 1
+                    continue
+
             equity = initial_equity + realized_pnl
             is_leveraged = candidate.ticker in leveraged_tickers
             size = whole_share_position_size(
@@ -223,6 +268,9 @@ def run_annual_portfolio(
 
     realize_before(None)
     ending_equity = initial_equity + realized_pnl
+
+    tax_estimate, wash_count, disallowed = _tax_view(accepted_trades)
+
     return PortfolioResult(
         trades=tuple(accepted_trades),
         starting_equity=float(initial_equity),
@@ -231,6 +279,67 @@ def run_annual_portfolio(
         accepted_positions=accepted_positions,
         skipped_positions=skipped_positions,
         equity_curve=tuple(equity_curve),
+        tax_estimate=round(tax_estimate, 2),
+        after_tax_pnl=round(realized_pnl - tax_estimate, 2),
+        wash_sale_count=wash_count,
+        disallowed_loss=round(disallowed, 2),
+        tax_blocked_entries=tax_blocked_entries,
+    )
+
+
+def _tax_view(trades: list[Trade]) -> tuple[float, int, float]:
+    """Liability, wash-sale count and deferred loss for a set of trades.
+
+    Reported alongside gross P&L rather than deducted from the equity curve:
+    tax is assessed per year and paid the following April, so it never reduces
+    the capital compounding inside the simulated year.
+    """
+    if not trades:
+        return 0.0, 0, 0.0
+    rows = [
+        {
+            "id": index,
+            "ticker": t.ticker,
+            "status": "closed",
+            "entry_date": pd.Timestamp(t.entry_date).isoformat(),
+            "exit_date": pd.Timestamp(t.exit_date).isoformat(),
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "shares": t.shares,
+            "pnl_dollars": t.pnl_dollars,
+        }
+        for index, t in enumerate(trades, start=1)
+    ]
+    records = tax_mod.compute_tax_records(
+        rows,
+        mtm_475f=PARAMS.tax_mtm_475f,
+        identical_groups=PARAMS.tax_identical_groups,
+        crypto_symbols=PARAMS.tax_crypto_symbols,
+    )
+    if not records:
+        return 0.0, 0, 0.0
+
+    total_tax = 0.0
+    years = {
+        d.year for d in (tax_mod.parse_dt(r.sale_date) for r in records)
+        if d is not None
+    }
+    for year in years:
+        summary = tax_mod.summarize_year(
+            records, year,
+            PARAMS.tax_short_term_rate, PARAMS.tax_long_term_rate,
+            use_brackets=PARAMS.tax_use_brackets,
+            filing_status=PARAMS.tax_filing_status,
+            other_income=PARAMS.tax_other_income,
+            apply_niit=PARAMS.tax_niit,
+            mtm_475f=PARAMS.tax_mtm_475f,
+        )
+        total_tax += summary["estimated_tax"]
+
+    return (
+        total_tax,
+        sum(1 for r in records if r.is_wash_sale),
+        sum(r.disallowed_loss for r in records),
     )
 
 

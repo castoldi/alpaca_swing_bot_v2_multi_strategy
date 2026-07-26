@@ -122,8 +122,48 @@ def test_partial_replacement_disallows_proportionally():
         _trade(2, "NVDA", "2026-03-08", "2026-03-12", shares=4, exit_px=95.0),
     ]
     recs = {r.trade_id: r for r in tax.compute_tax_records(trades)}
-    assert recs[1].disallowed_loss == pytest.approx(40.0)   # 4/10 of $100
-    assert recs[1].deductible_pnl == pytest.approx(-60.0)
+    # Only 4 of the 10 sold shares are replaced, so 4/10 of the $100 loss defers.
+    assert recs[1].disallowed_loss == pytest.approx(40.0)
+    # Both sales are losses inside each other's window, so each defers into the
+    # other's basis. What must hold is conservation: deferrals move income
+    # between lots, they never create or destroy it.
+    assert sum(r.deductible_pnl for r in recs.values()) == pytest.approx(
+        sum(r.realized_pnl for r in recs.values())
+    )
+
+
+def test_wash_sale_conserves_total_deductible_income():
+    """A deferral moves a loss between lots; it must not vanish.
+
+    Regression for a bug where the disallowance was removed from the loss sale
+    but never added to the replacement lot's basis, overstating taxable income
+    by the disallowed total — enough to report tax exceeding actual profit.
+    """
+    trades = [
+        _trade(1, "X", "2026-03-01", "2026-03-05", shares=10, exit_px=90.0),
+        _trade(2, "X", "2026-03-08", "2026-03-20", shares=10,
+               entry_px=90.0, exit_px=95.0),
+    ]
+    recs = tax.compute_tax_records(trades)
+    economic = sum(r.realized_pnl for r in recs)
+    assert economic == pytest.approx(-50.0)          # -100 then +50
+    assert sum(r.deductible_pnl for r in recs) == pytest.approx(economic)
+
+    s = tax.summarize_year(recs, 2026, 0.24, 0.15)
+    assert s["net_capital_gain"] == pytest.approx(-50.0)
+    assert s["estimated_tax"] == 0.0                 # a real loss owes nothing
+
+
+def test_deferral_carries_when_replacement_is_still_open():
+    """With the replacement unsold, the loss legitimately does not come back."""
+    trades = [
+        _trade(1, "X", "2026-03-01", "2026-03-05", shares=10, exit_px=90.0),
+        _trade(2, "X", "2026-03-08", None, shares=10, status="open"),
+    ]
+    recs = tax.compute_tax_records(trades)
+    assert len(recs) == 1
+    assert recs[0].disallowed_loss == pytest.approx(100.0)
+    assert recs[0].deductible_pnl == pytest.approx(0.0)
 
 
 def test_broker_fill_price_preferred_over_signal_price():
@@ -193,8 +233,14 @@ def test_summary_taxes_short_and_long_at_their_own_rates():
     assert s["estimated_tax"] == pytest.approx(100 * 0.24 + 100 * 0.15)
 
 
-def test_disallowed_loss_raises_taxable_income():
-    """A washed loss cannot shelter a gain in the same year."""
+def test_washed_loss_still_shelters_a_gain_once_the_replacement_closes():
+    """A wash sale defers within the year — it does not raise the year's tax.
+
+    This previously asserted the opposite (net +$100, tax $24) and was encoding
+    a bug: the disallowance was booked without ever crediting the replacement
+    lot's basis. Because the replacement closes in the same year, the loss comes
+    back and the year nets to its true economic result.
+    """
     trades = [
         _trade(1, "NVDA", "2026-01-01", "2026-01-10", shares=10, exit_px=90.0),
         _trade(2, "NVDA", "2026-01-12", "2026-01-20", shares=10, exit_px=100.0),
@@ -203,10 +249,9 @@ def test_disallowed_loss_raises_taxable_income():
     s = tax.summarize_year(tax.compute_tax_records(trades), 2026, 0.24, 0.15)
     assert s["wash_sale_count"] == 1
     assert s["disallowed_loss_total"] == pytest.approx(100.0)
-    # gross is 0 (-100 +0 +100) but the washed loss is not deductible
     assert s["gross_realized_pnl"] == pytest.approx(0.0)
-    assert s["net_capital_gain"] == pytest.approx(100.0)
-    assert s["estimated_tax"] == pytest.approx(24.0)
+    assert s["net_capital_gain"] == pytest.approx(0.0)
+    assert s["estimated_tax"] == pytest.approx(0.0)
 
 
 def test_net_loss_is_capped_at_the_annual_deduction_limit():

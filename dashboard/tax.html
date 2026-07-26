@@ -59,6 +59,20 @@
 
   <div class="grid" id="cards"></div>
 
+  <h2>Estimated payments</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Quarter</th><th>Due</th><th>Amount</th></tr></thead>
+    <tbody id="payments"></tbody>
+  </table></div>
+
+  <h2>Open lots</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Lot</th><th>Ticker</th><th>Acquired</th><th>Qty</th>
+      <th>Remaining</th><th>Cost/share</th><th>Wash basis add</th>
+      <th>Adjusted cost/share</th></tr></thead>
+    <tbody id="lots"></tbody>
+  </table></div>
+
   <h2>By ticker</h2>
   <div class="scroll"><table>
     <thead><tr><th>Ticker</th><th>Trades</th><th>Realized P&amp;L</th>
@@ -112,8 +126,26 @@ async function load() {
      ${guard}<br><br>
      A wash sale <b>defers</b> a loss rather than destroying it: the disallowed amount is
      added to the replacement lot's basis and comes back on the next sale. Rates are
-     assumptions from <code>config.py</code> (short ${(s.short_term_rate*100).toFixed(0)}%,
-     long ${(s.long_term_rate*100).toFixed(0)}%), not your actual bracket.
+     ${d.election.uses_brackets
+        ? `Liability uses <b>progressive brackets</b> (${d.election.filing_status})${
+            d.election.niit ? " plus the 3.8% NIIT" : ""}. Bracket thresholds in
+            <code>tax.py</code> are illustrative — verify against the IRS tables
+            for the filing year.`
+        : `Rates are flat assumptions from <code>config.py</code>
+           (short ${(s.short_term_rate*100).toFixed(0)}%,
+           long ${(s.long_term_rate*100).toFixed(0)}%), not your actual bracket.
+           Set <code>tax_use_brackets</code> for a progressive estimate.`}
+     ${d.election.mtm_475f
+        ? `<br><br><b class="warn">§475(f) mark-to-market is ELECTED.</b> Wash sales
+           are not applied, gains are ordinary, and the capital-loss limit does not bind.`
+        : ""}
+     Lot relief: <b>${d.election.lot_method.toUpperCase()}</b>.
+     ${d.election.crypto_symbols.length
+        ? `Crypto (§1091 not applied): ${d.election.crypto_symbols.join(", ")}.` : ""}
+     ${d.election.identical_groups.length
+        ? `Substantially-identical groups: ${
+            d.election.identical_groups.map(g => g.join("/")).join("; ")}.`
+        : "Wash matching is exact-symbol only."}
      <b>Not tax advice</b> — have a CPA review before filing.`;
 
   document.getElementById("cards").innerHTML =
@@ -130,6 +162,25 @@ async function load() {
       ? card("Loss carryforward", money(s.loss_carryforward),
              money(s.loss_deductible_this_year) + " usable this year")
       : "");
+
+  const pay = document.getElementById("payments");
+  pay.innerHTML = (s.estimated_payments || []).length
+    ? s.estimated_payments.map(p => `<tr><td>${p.quarter}</td><td>${p.due}</td>
+        <td>${money(p.amount)}</td></tr>`).join("")
+    : `<tr><td colspan="3" class="empty">No liability to prepay${
+        d.election.uses_brackets ? "" : " (flat-rate mode)"}.</td></tr>`;
+
+  const lots = document.getElementById("lots");
+  lots.innerHTML = d.lots.length ? d.lots.map(l => `<tr>
+      <td>${l.lot_id}</td><td>${l.ticker}</td>
+      <td>${(l.acquired || "").slice(0, 10)}</td>
+      <td>${l.quantity}</td><td>${l.remaining}</td>
+      <td>${money(l.cost_per_share)}</td>
+      <td class="${l.basis_adjustment ? "warn" : ""}">${
+        l.basis_adjustment ? money(l.basis_adjustment) : "—"}</td>
+      <td>${money(l.adjusted_cost_per_share)}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="8" class="empty">No open lots — the bot is flat.</td></tr>`;
 
   const tb = document.getElementById("tickers");
   tb.innerHTML = d.by_ticker.length ? d.by_ticker.map(t => `<tr>

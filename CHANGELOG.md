@@ -60,6 +60,82 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.16.0] - 2026-07-26
+
+### Fixed
+- **Wash-sale deferrals were booked but never recovered, overstating taxable
+  income by the disallowed total.** A wash sale defers a loss into the
+  replacement lot's basis; the loss was removed from the sale but never added to
+  the replacement, so it vanished. Bad enough that backtests reported **tax
+  exceeding profit** — `mean_reversion` showed $4.54 gross P&L against $44.66 of
+  tax; it is $8.42 now. Reproduced minimally: a −$100 loss washed by a
+  replacement later sold for +$50 is a −$50 economic result, and was being
+  reported as a **+$50 taxable gain**.
+
+  `_return_deferred_losses` now credits each disallowance to its replacement
+  record. When the replacement is still open the deferral correctly carries
+  forward instead.
+
+  Two tests had encoded the wrong behaviour and were rewritten around a
+  conservation property — deferrals move income between lots, they never create
+  or destroy it. `basis_adjustment` was also being used for both "deferred out"
+  and "received in", double-counting it; it now means only the latter.
+
+### Added
+- **§475(f) mark-to-market switch** (`tax_mtm_475f`, **default off**). Elected:
+  no loss is disallowed, the entry guard becomes a no-op, positions are marked
+  `ordinary`, and the $3,000 capital-loss limit stops binding. Off by default —
+  irrevocable without IRS consent, requires Trader Tax Status, and is the
+  owner's decision with a CPA.
+- **Configurable substantially-identical groups** (`tax_identical_groups`,
+  default empty). Matching stays **exact-symbol** unless a group says otherwise;
+  nothing is inferred, and TQQQ-vs-QQQ remains a view the operator must assert.
+- **Crypto tracking without §1091** (`tax_crypto_symbols`, default empty).
+  Listed symbols have gains and losses tracked in full but are never washed,
+  since digital assets are property rather than securities.
+- **Conservative hard block** (`tax_hard_block`, default off). Refuses *all*
+  entries for a flat window centred on 31 December — `tax_hard_block_days` (31)
+  runs ~16 Dec to ~15 Jan — alongside the existing surgical per-ticker guard.
+- **FIFO / LIFO / specific-lot ledger** (`build_lot_ledger`, `tax_lot_method`,
+  default `fifo`). Every entry opens a lot, every exit consumes lots in the
+  configured order, sales spanning multiple lots split correctly, and
+  `apply_wash_basis_adjustments` rolls deferrals into `adjusted_cost_per_share`.
+  Previously one trade was *assumed* to be one lot; partial fills already occur
+  and would have silently corrupted basis.
+- **Progressive brackets, NIIT and estimated payments** (`tax_use_brackets`,
+  default off; `tax_filing_status`, `tax_other_income`, `tax_niit`,
+  `tax_estimated_payments`). Ordinary brackets stack on other income, LTCG
+  breakpoints apply above them, NIIT adds 3.8% on the lesser of net investment
+  income and MAGI over $200k single / $250k married-joint, and a four-instalment
+  safe-harbour schedule is produced with Q4 falling in January.
+- **Tax in backtests.** `run_annual_portfolio` now simulates the year-end guard
+  (evaluated only against trades realized *before* each entry, never the full
+  history) and reports `tax_estimate`, `after_tax_pnl`, `wash_sale_count`,
+  `disallowed_loss` and `tax_blocked_entries`. This closes a live/backtest
+  divergence: the guard changed live trading in 0.15.0 without ever being
+  measured.
+- `/api/tax` and the `/tax` page now expose open lots with wash-adjusted basis,
+  the estimated-payment schedule, and the active election/guard configuration.
+- 33 tests in `tests/test_tax_advanced.py`, plus 3 in `tests/test_tax.py` for
+  the deferral-conservation regression.
+
+### Notes
+- **Measured cost of the year-end guard**, on vs off, 2024–2026 three-year
+  totals: ensemble −$3.98, regime **+$48.04**, trend_pullback −$1.74, breakout
+  −$13.91, momentum_macd −$7.57, mean_reversion $0.00, tqqq_momentum +$4.84.
+  Mixed in sign and net slightly positive — the guard is close to free, and is a
+  tax-timing control rather than a P&L improvement.
+- Every new switch defaults to neutral, so no figure moves without opting in.
+  The one intended change is the deferral fix above: the current database now
+  reports $64.95 net capital gain and $15.59 tax, versus $66.53 / $15.97 before.
+- **Bracket thresholds in `tax.py` are illustrative** and must be verified
+  against the IRS revenue procedure for the filing year. Rates and the NIIT
+  thresholds are stable; the bracket boundaries move annually.
+- Still not implemented: cross-account matching against the other bot on the
+  shared Alpaca key.
+- Not tax advice; have a CPA review before relying on these numbers.
+
 ## [0.15.1] - 2026-07-26
 
 ### Fixed
@@ -644,6 +720,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

@@ -456,11 +456,17 @@ def rebuild_tax_records() -> int:
     recomputed over the whole history rather than patched per close.
     """
     import tax as tax_mod
+    from config import PARAMS
 
     _ensure_tables()
     with _con() as c:
         trades = [dict(r) for r in c.execute("SELECT * FROM trades").fetchall()]
-    return save_tax_records(tax_mod.compute_tax_records(trades))
+    return save_tax_records(tax_mod.compute_tax_records(
+        trades,
+        mtm_475f=PARAMS.tax_mtm_475f,
+        identical_groups=PARAMS.tax_identical_groups,
+        crypto_symbols=PARAMS.tax_crypto_symbols,
+    ))
 
 
 # ── Signals ───────────────────────────────────────────────────────────────────

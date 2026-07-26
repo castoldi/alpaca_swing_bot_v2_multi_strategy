@@ -310,7 +310,14 @@ async def tax_summary(year: int | None = None):
         pass  # stale records are better than a broken page
 
     trades = db_mod.get_all_trades(limit=5000)
-    records = tax_mod.compute_tax_records(trades)
+    records = tax_mod.compute_tax_records(
+        trades,
+        mtm_475f=PARAMS.tax_mtm_475f,
+        identical_groups=PARAMS.tax_identical_groups,
+        crypto_symbols=PARAMS.tax_crypto_symbols,
+    )
+    lots, disposals = tax_mod.build_lot_ledger(trades, PARAMS.tax_lot_method)
+    tax_mod.apply_wash_basis_adjustments(lots, records)
     now = datetime.now(timezone.utc)
     target = year or now.year
 
@@ -323,7 +330,13 @@ async def tax_summary(year: int | None = None):
         reverse=True,
     )
     summary = tax_mod.summarize_year(
-        records, target, PARAMS.tax_short_term_rate, PARAMS.tax_long_term_rate
+        records, target, PARAMS.tax_short_term_rate, PARAMS.tax_long_term_rate,
+        use_brackets=PARAMS.tax_use_brackets,
+        filing_status=PARAMS.tax_filing_status,
+        other_income=PARAMS.tax_other_income,
+        apply_niit=PARAMS.tax_niit,
+        estimated_payments=PARAMS.tax_estimated_payments,
+        mtm_475f=PARAMS.tax_mtm_475f,
     )
 
     by_ticker: dict[str, dict] = {}
@@ -359,7 +372,23 @@ async def tax_summary(year: int | None = None):
             "enabled": PARAMS.tax_year_end_guard,
             "active_now": bool(PARAMS.tax_year_end_guard and guard_active),
             "starts": f"{PARAMS.tax_guard_start_month:02d}-{PARAMS.tax_guard_start_day:02d}",
+            "hard_block": PARAMS.tax_hard_block,
+            "hard_block_days": PARAMS.tax_hard_block_days,
         },
+        "election": {
+            "mtm_475f": PARAMS.tax_mtm_475f,
+            "identical_groups": [list(g) for g in PARAMS.tax_identical_groups],
+            "crypto_symbols": list(PARAMS.tax_crypto_symbols),
+            "lot_method": PARAMS.tax_lot_method,
+            "uses_brackets": PARAMS.tax_use_brackets,
+            "filing_status": PARAMS.tax_filing_status,
+            "niit": PARAMS.tax_niit,
+        },
+        "lots": [
+            l.as_dict() for l in lots
+            if not l.closed or l.basis_adjustment
+        ][:200],
+        "open_lot_count": sum(1 for l in lots if not l.closed),
         "paper_account": True,
         "generated_at": now.isoformat(),
     }

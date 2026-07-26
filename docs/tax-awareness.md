@@ -106,6 +106,86 @@ breakdown, and every closed trade with its wash-sale linkage. Refreshes every
 Rates come from `config.py` (`tax_short_term_rate` 0.24, `tax_long_term_rate`
 0.15) and are **assumptions, not your bracket** — set them to your own.
 
+### 4. Lot ledger (`build_lot_ledger`)
+
+Every entry opens a `Lot`; every exit consumes lots under `tax_lot_method` —
+**FIFO** (the IRS default absent specific identification), LIFO, or `specific`
+with an explicit lot ordering. Sales spanning several lots are split correctly,
+and `apply_wash_basis_adjustments` rolls each disallowed loss into the
+replacement lot's basis so `adjusted_cost_per_share` reflects it.
+
+Until now, one trade was assumed to be one lot. That happened to hold because
+the bot opens one whole-share position per ticker and exits it in full — but
+partial fills already occur (`trade_exit_fills`) and would have silently
+corrupted basis. This makes it explicit rather than incidental.
+
+### 5. §475(f) mark-to-market switch (`tax_mtm_475f`, default **off**)
+
+When elected: no loss is ever disallowed, the entry guard becomes a no-op, every
+position is marked `ordinary`, and the $3,000 capital-loss limit stops binding.
+Off by default because the election is irrevocable without IRS consent, requires
+Trader Tax Status, and is the account owner's decision with a CPA.
+
+### 6. Substantially-identical groups (`tax_identical_groups`, default empty)
+
+Wash matching is **exact symbol** unless a group says otherwise. Nothing is
+inferred: two funds tracking one index are not automatically identical, and
+TQQQ-vs-QQQ is unsettled. Populate the config to assert a view; the bot will not.
+
+### 7. Crypto (`tax_crypto_symbols`, default empty)
+
+§1091 reaches "stocks or securities". Digital assets are property, so listed
+symbols have gains and losses tracked in full but are never washed. Legislation
+extending §1091 to digital assets has been proposed repeatedly — revisit.
+
+### 8. Brackets, NIIT and estimated payments
+
+`tax_use_brackets` switches the forecast from two flat rates to progressive
+ordinary brackets, LTCG breakpoints, and the 3.8% NIIT on the lesser of net
+investment income and MAGI above $200k single / $250k married-joint. Off by
+default so existing figures do not move. `tax_estimated_payments` adds a
+four-instalment safe-harbour schedule, the fourth falling in January.
+
+> The bracket **thresholds** in `tax.py` are illustrative and must be verified
+> against the IRS revenue procedure for the filing year. The rates and the NIIT
+> thresholds are stable; the bracket boundaries move annually.
+
+### 9. Conservative hard block (`tax_hard_block`, default off)
+
+The surgical guard blocks only a ticker with a recent loss. The hard block
+refuses **all** entries for a flat window centred on 31 December —
+`tax_hard_block_days` (31) runs roughly 16 Dec to 15 Jan. Being wholly out of the
+market for 31 consecutive days spanning year end is the standard way an active
+trader sidesteps §1091 rather than merely tracking it.
+
+## Measured cost of the guard
+
+Guard on vs off, cached bars, 2024–2026, three-year totals:
+
+| Strategy | Gross OFF | Gross ON | Delta | Entries blocked |
+|---|---:|---:|---:|---:|
+| ensemble | $611.09 | $607.11 | −$3.98 | 174 |
+| regime | $596.50 | $644.54 | **+$48.04** | 143 |
+| trend_pullback | $280.83 | $279.09 | −$1.74 | 63 |
+| breakout | $155.88 | $141.97 | −$13.91 | 19 |
+| momentum_macd | $126.70 | $119.12 | −$7.57 | 2 |
+| mean_reversion | $4.54 | $4.54 | $0.00 | 0 |
+| tqqq_momentum | $243.78 | $248.62 | +$4.84 | 1 |
+
+The guard is close to free: the deltas are mixed in sign and net slightly
+positive overall, which is noise rather than edge. It is not a P&L improvement —
+it is a tax-timing control that costs approximately nothing.
+
+## A correction worth recording
+
+The first implementation booked each disallowed loss but never credited it to
+the replacement lot's basis — the "defers" half of the rule without the "comes
+back" half. Taxable income was overstated by the disallowed total, badly enough
+that backtests reported **tax exceeding profit** (mean_reversion: $4.54 gross,
+$44.66 tax). Corrected in 0.16.0; the same backtest now shows $8.42. Two tests
+had encoded the wrong behaviour and were rewritten around a conservation
+property: deferrals move income between lots, they never create or destroy it.
+
 ## Facts this surfaces that are worth knowing
 
 - **100% of gains are short-term**, taxed at ordinary income rates. With a 3–7
