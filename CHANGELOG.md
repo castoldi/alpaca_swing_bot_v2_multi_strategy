@@ -59,6 +59,45 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.15.1] - 2026-07-26
+
+### Fixed
+- **The year-end wash-sale guard switched itself off in January — exactly when
+  a December loss is most exposed.** `year_end_entry_block` compared `now`
+  against 1 December *of the current year*, so on 10 January that test became
+  "is 10 Jan 2027 after 1 Dec 2027", which is false, and the guard returned
+  "allow".
+
+  The result was the precise case the guard exists to prevent: a loss realised
+  20 December followed by a repurchase on 10 January is 21 days later, inside
+  the 30-day replacement window, so it **is** a wash sale — and the bot would
+  have taken it, pulling a deduction out of the prior tax year and rolling it
+  forward.
+
+  The guard now stays armed across the year boundary. A trailing-30-day loss
+  booked in an earlier tax year is always guard-relevant, independent of the
+  December window, because re-entering disallows a deduction already counted
+  against that year.
+
+  Verified against the reported scenario (20 Dec loss):
+
+  | Re-entry attempt | Days after loss | Before | After |
+  |---|---|---|---|
+  | 28 Dec | +8 | blocked | blocked |
+  | 10 Jan | +21 | **allowed** | **blocked** |
+  | 19 Jan | +30 | **allowed** | **blocked** |
+  | 20 Jan | +31 | allowed | allowed |
+
+  Safe re-entry is 31 days after the loss sale, which for a late-December loss
+  lands in the following January.
+
+### Added
+- 7 tests in `tests/test_tax.py` covering the January tail: a parametrised
+  boundary sweep across the year change, the block message naming which tax
+  year the deduction would leave, and confirmation that a prior-year *gain*
+  does not trigger the guard.
+
 ## [0.15.0] - 2026-07-26
 
 ### Added
@@ -605,6 +644,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

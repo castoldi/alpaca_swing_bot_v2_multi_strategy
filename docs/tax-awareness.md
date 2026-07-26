@@ -78,10 +78,18 @@ rebuilds on request.
 
 ### 2. Year-end guard (`tax.year_end_entry_block`)
 
-Active only from **1 December** (`tax_guard_start_month` / `_day`). Within the
-window it blocks a new entry into a ticker that realised a loss in the trailing
-30 days, so no fresh wash sale can leave a replacement open across 31 December.
-Outside December it never fires, so 11 months of trading are unchanged.
+Active from **1 December** (`tax_guard_start_month` / `_day`) **and across the
+year boundary for as long as a prior-year loss is still inside its 30-day
+replacement window**. Within either window it blocks a new entry into a ticker
+that realised a loss in the trailing 30 days. The rest of the year it never
+fires, so ~11 months of trading are unchanged.
+
+The January half is not optional, and getting it wrong was a real bug (fixed in
+0.15.1): a loss realised **20 December** is still washed by a repurchase on
+**10 January** — 21 days later, inside the window. Buying then disallows a
+deduction already counted against the prior year and rolls it forward. **Safe
+re-entry is 31 days after the loss sale**, which for a late-December loss falls
+in the following January.
 
 The guard **fails open**: if the trade history cannot be read it logs and allows
 the entry, because deferring a deduction is an optimisation, not a safety rule.

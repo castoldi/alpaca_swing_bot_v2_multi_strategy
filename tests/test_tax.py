@@ -259,6 +259,34 @@ def test_guard_allows_reentry_once_31_days_have_passed():
     assert tax.year_end_entry_block("NVDA", _d("2027-01-03"), trades) is None
 
 
+# The January tail. A Dec 20 loss is still washed by a Jan 10 repurchase — 21
+# days later, inside the 30-day window — and buying then pulls a deduction out
+# of the prior tax year. The guard must stay armed across the year boundary.
+
+@pytest.mark.parametrize("when,blocked", [
+    ("2026-12-28", True),    # 8 days after  — December side
+    ("2027-01-10", True),    # 21 days after — the case that regressed
+    ("2027-01-19", True),    # 30 days after — last blocked day
+    ("2027-01-20", False),   # 31 days after — safe re-entry
+    ("2027-02-01", False),   # well clear
+])
+def test_guard_spans_the_year_boundary(when, blocked):
+    trades = [_trade(1, "NVDA", "2026-12-15", "2026-12-20", exit_px=90.0)]
+    reason = tax.year_end_entry_block("NVDA", _d(when), trades)
+    assert (reason is not None) is blocked
+
+
+def test_january_block_names_the_year_the_deduction_would_leave():
+    trades = [_trade(1, "NVDA", "2026-12-15", "2026-12-20", exit_px=90.0)]
+    reason = tax.year_end_entry_block("NVDA", _d("2027-01-10"), trades)
+    assert "2026 tax year" in reason
+
+
+def test_january_tail_ignores_a_prior_year_gain():
+    trades = [_trade(1, "NVDA", "2026-12-15", "2026-12-20", exit_px=110.0)]
+    assert tax.year_end_entry_block("NVDA", _d("2027-01-10"), trades) is None
+
+
 def test_guard_ignores_profitable_trades():
     trades = [_trade(1, "NVDA", "2026-12-01", "2026-12-10", exit_px=110.0)]
     assert tax.year_end_entry_block("NVDA", _d("2026-12-15"), trades) is None

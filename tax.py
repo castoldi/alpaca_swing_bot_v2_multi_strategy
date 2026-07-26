@@ -323,11 +323,18 @@ def year_end_entry_block(
     replacement lot's basis and is recovered on the next sale within the same
     tax year.
 
-    The guard therefore only runs from `guard_start_*` (default 1 December)
-    through year end, where a fresh wash sale would leave a replacement position
-    open across 31 December and push the deduction into the next tax year. This
-    is the standard practice for active traders: be clear of a loss ticker for
-    31 days spanning year end.
+    The guard therefore runs on **both sides of the year boundary**:
+
+    * from `guard_start_*` (default 1 December) to year end, where a fresh wash
+      sale would leave a replacement open across 31 December; and
+    * into the new year for as long as a loss realised in the *previous* tax
+      year is still inside its 30-day replacement window.
+
+    The second half is not optional. A loss taken on 20 December is still washed
+    by a repurchase on 10 January — that is 21 days later, inside the window —
+    and buying then disallows a prior-year deduction and carries it forward.
+    Safe re-entry is 31 days after the loss sale, which for a late-December loss
+    falls in the following January.
     """
     if not enabled:
         return None
@@ -335,8 +342,7 @@ def year_end_entry_block(
     guard_start = datetime(
         now.year, guard_start_month, guard_start_day, tzinfo=timezone.utc
     )
-    if now < guard_start:
-        return None
+    in_year_end_window = now >= guard_start
 
     cutoff = now - timedelta(days=WASH_SALE_DAYS)
     for trade in trades or []:
@@ -351,12 +357,24 @@ def year_end_entry_block(
             pnl = float(trade.get("pnl_dollars") or 0)
         except (TypeError, ValueError):
             continue
-        if pnl < 0:
-            days_clear = WASH_SALE_DAYS + 1 - (now - sold).days
-            return (
-                f"wash-sale year-end guard: {ticker} realised a "
-                f"${abs(pnl):.2f} loss on {sold.date()}; re-entering now would "
-                f"defer that loss into next tax year "
-                f"(clear in ~{max(0, days_clear)}d)"
-            )
+        if pnl >= 0:
+            continue
+
+        # A trailing loss booked in an earlier tax year is always guard-relevant:
+        # re-entering now disallows a deduction that has already been counted
+        # against last year and rolls it forward.
+        crosses_year_boundary = sold.year < now.year
+        if not (in_year_end_window or crosses_year_boundary):
+            continue
+
+        days_clear = WASH_SALE_DAYS + 1 - (now - sold).days
+        whose_year = (
+            f"the {sold.year} tax year" if crosses_year_boundary else "next tax year"
+        )
+        return (
+            f"wash-sale year-end guard: {ticker} realised a "
+            f"${abs(pnl):.2f} loss on {sold.date()}; re-entering now would "
+            f"defer that loss out of {whose_year} "
+            f"(safe re-entry in ~{max(0, days_clear)}d)"
+        )
     return None
