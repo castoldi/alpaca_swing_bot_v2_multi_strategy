@@ -1,0 +1,156 @@
+<meta charset="utf-8">
+<title>Tax — Alpaca Swing Bot V2</title>
+<style>
+  :root{--bg:#0f1117;--panel:#161922;--line:#2a2d35;--fg:#e1e7ef;--dim:#8892a4;
+        --green:#34d399;--red:#f87171;--amber:#fbbf24;--blue:#60a5fa}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  .nav{position:sticky;top:0;z-index:9;background:var(--bg);
+       border-bottom:1px solid var(--line);padding:10px 24px;display:flex;
+       align-items:center;gap:16px;flex-wrap:wrap}
+  .nav a{color:var(--dim);font-size:13px;font-weight:600;text-decoration:none}
+  .nav a.on{color:var(--blue)}
+  .wrap{padding:24px;max-width:1180px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+  .note{background:#1b1e28;border:1px solid var(--line);border-left:3px solid var(--amber);
+        border-radius:6px;padding:12px 14px;font-size:13px;color:var(--dim);margin-bottom:18px;
+        line-height:1.55}
+  .note b{color:var(--fg)}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+        margin-bottom:22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+  .card .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  .card .v{font-size:22px;font-weight:650;margin-top:6px;font-variant-numeric:tabular-nums}
+  .card .n{color:var(--dim);font-size:11px;margin-top:4px}
+  .pos{color:var(--green)} .neg{color:var(--red)} .warn{color:var(--amber)}
+  h2{font-size:14px;margin:22px 0 10px;color:var(--dim);text-transform:uppercase;
+     letter-spacing:.6px}
+  .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+  table{border-collapse:collapse;width:100%;font-size:13px;min-width:720px}
+  th,td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--line);
+        font-variant-numeric:tabular-nums;white-space:nowrap}
+  th{background:var(--panel);color:var(--dim);font-weight:600;font-size:11px;
+     text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0}
+  th:first-child,td:first-child{text-align:left}
+  tbody tr:hover{background:#1b1e28}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .tag.wash{background:rgba(251,191,36,.15);color:var(--amber)}
+  .tag.ok{background:rgba(52,211,153,.12);color:var(--green)}
+  select{background:var(--panel);color:var(--fg);border:1px solid var(--line);
+         border-radius:6px;padding:5px 9px;font-size:13px}
+  .empty{padding:26px;text-align:center;color:var(--dim);font-size:13px}
+</style>
+
+<div class="nav">
+  <a href="/">← Dashboard</a><span style="color:var(--line)">|</span>
+  <a href="/backtest-2024">2024</a><a href="/backtest-2025">2025</a>
+  <a href="/backtest-2026">2026</a><a href="/tax" class="on">Tax</a>
+  <span style="flex:1"></span>
+  <select id="year" onchange="load()"></select>
+</div>
+
+<div class="wrap">
+  <h1>Tax summary</h1>
+  <div class="sub" id="stamp">Loading…</div>
+
+  <div class="note" id="disclaimer"></div>
+
+  <div class="grid" id="cards"></div>
+
+  <h2>By ticker</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Ticker</th><th>Trades</th><th>Realized P&amp;L</th>
+      <th>Wash sales</th><th>Disallowed</th></tr></thead>
+    <tbody id="tickers"></tbody>
+  </table></div>
+
+  <h2>Closed trades</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Sold</th><th>Ticker</th><th>Qty</th><th>Basis</th><th>Proceeds</th>
+      <th>Realized</th><th>Held (d)</th><th>Term</th><th>Wash</th>
+      <th>Disallowed</th><th>Deductible</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+</div>
+
+<script>
+const money = v => (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(2);
+const cls = v => v > 0 ? "pos" : v < 0 ? "neg" : "";
+
+function card(k, v, n, c) {
+  return `<div class="card"><div class="k">${k}</div>
+          <div class="v ${c || ""}">${v}</div>
+          ${n ? `<div class="n">${n}</div>` : ""}</div>`;
+}
+
+async function load() {
+  const sel = document.getElementById("year");
+  const q = sel.value ? `?year=${sel.value}` : "";
+  const r = await fetch("/api/tax" + q);
+  const d = await r.json();
+  const s = d.summary;
+
+  if (!sel.options.length) {
+    sel.innerHTML = d.years.map(y => `<option>${y}</option>`).join("");
+    sel.value = s.year;
+  }
+
+  document.getElementById("stamp").textContent =
+    `Tax year ${s.year} · ${s.trades_closed} closed trades · updated ${new Date(d.generated_at).toLocaleString()}`;
+
+  const guard = d.guard.enabled
+    ? (d.guard.active_now
+        ? `<b class="warn">Year-end wash-sale guard is ACTIVE</b> — re-entry into a ticker that realised a loss in the last 30 days is blocked so the deduction stays in this tax year.`
+        : `Year-end wash-sale guard is enabled and starts <b>${d.guard.starts}</b>. Outside that window the bot trades normally.`)
+    : `<b>Year-end wash-sale guard is OFF.</b> Losses washed across 31 December will defer into next tax year.`;
+
+  document.getElementById("disclaimer").innerHTML =
+    `<b>This is a paper account — none of these trades create a real tax liability.</b>
+     The figures below are a forecast of what the same activity would produce live.
+     ${guard}<br><br>
+     A wash sale <b>defers</b> a loss rather than destroying it: the disallowed amount is
+     added to the replacement lot's basis and comes back on the next sale. Rates are
+     assumptions from <code>config.py</code> (short ${(s.short_term_rate*100).toFixed(0)}%,
+     long ${(s.long_term_rate*100).toFixed(0)}%), not your actual bracket.
+     <b>Not tax advice</b> — have a CPA review before filing.`;
+
+  document.getElementById("cards").innerHTML =
+    card("Net capital gain", money(s.net_capital_gain), "after wash-sale adjustment", cls(s.net_capital_gain)) +
+    card("Estimated tax", money(s.estimated_tax), "at configured rates", s.estimated_tax > 0 ? "warn" : "") +
+    card("Short-term net", money(s.short_term_net), "ordinary income rates", cls(s.short_term_net)) +
+    card("Long-term net", money(s.long_term_net), "preferential rates", cls(s.long_term_net)) +
+    card("Gross realized", money(s.gross_realized_pnl), "before adjustments", cls(s.gross_realized_pnl)) +
+    card("Wash sales", s.wash_sale_count, money(s.disallowed_loss_total) + " deferred", s.wash_sale_count ? "warn" : "") +
+    card("Straddling year end", s.year_end_straddle_count,
+         s.year_end_straddle_tickers.join(", ") || "none — nothing shifts years",
+         s.year_end_straddle_count ? "warn" : "pos") +
+    (s.net_capital_gain < 0
+      ? card("Loss carryforward", money(s.loss_carryforward),
+             money(s.loss_deductible_this_year) + " usable this year")
+      : "");
+
+  const tb = document.getElementById("tickers");
+  tb.innerHTML = d.by_ticker.length ? d.by_ticker.map(t => `<tr>
+      <td>${t.ticker}</td><td>${t.trades}</td>
+      <td class="${cls(t.realized)}">${money(t.realized)}</td>
+      <td>${t.wash_sales}</td><td class="warn">${money(t.disallowed)}</td>
+    </tr>`).join("") : `<tr><td colspan="5" class="empty">No closed trades this year.</td></tr>`;
+
+  const rows = document.getElementById("rows");
+  rows.innerHTML = d.records.length ? d.records.map(t => `<tr>
+      <td>${(t.sale_date || "").slice(0, 10)}</td><td>${t.ticker}</td>
+      <td>${t.shares}</td><td>${money(t.cost_basis)}</td><td>${money(t.proceeds)}</td>
+      <td class="${cls(t.realized_pnl)}">${money(t.realized_pnl)}</td>
+      <td>${t.holding_days.toFixed(2)}</td><td>${t.term}</td>
+      <td>${t.is_wash_sale
+            ? `<span class="tag wash">wash${t.replacement_trade_id ? " →#" + t.replacement_trade_id : ""}</span>`
+            : `<span class="tag ok">clean</span>`}</td>
+      <td class="warn">${t.disallowed_loss ? money(t.disallowed_loss) : "—"}</td>
+      <td class="${cls(t.deductible_pnl)}">${money(t.deductible_pnl)}</td>
+    </tr>`).join("") : `<tr><td colspan="11" class="empty">No closed trades this year.</td></tr>`;
+}
+load();
+setInterval(load, 60000);
+</script>

@@ -29,6 +29,7 @@ from dashboard import bot_hooks
 from notifier import send_notification
 import data_feed
 import runtime
+import tax as tax_mod
 from position_sizing import leveraged_headroom, whole_share_position_size
 
 log = get_logger(__name__)
@@ -157,6 +158,34 @@ def _our_open_position_count(positions, owned: set[str] | None) -> int:
         for pos in (positions or [])
         if str(getattr(pos, "symbol", "") or "") in owned
     )
+
+
+def _tax_entry_block(ticker: str) -> str | None:
+    """Year-end wash-sale reason to skip this entry, or None.
+
+    Never fails an entry on its own error: tax deferral is an optimisation, not
+    a safety rule, so an unreadable history logs and allows the trade.
+    """
+    try:
+        return tax_mod.year_end_entry_block(
+            ticker,
+            datetime.now(timezone.utc),
+            db_mod.get_closed_trades(limit=400),
+            guard_start_month=PARAMS.tax_guard_start_month,
+            guard_start_day=PARAMS.tax_guard_start_day,
+            enabled=PARAMS.tax_year_end_guard,
+        )
+    except Exception as exc:
+        log.warning("  %s: tax guard skipped (%s)", ticker, exc)
+        return None
+
+
+def _refresh_tax_records() -> None:
+    """Recompute tax records after exits. Never interrupts trading."""
+    try:
+        db_mod.rebuild_tax_records()
+    except Exception as exc:
+        log.warning("Tax records not refreshed (%s)", exc)
 
 
 def _load_live_sizing(tc) -> LiveSizingState | None:
@@ -597,6 +626,15 @@ def run_once(strategy: StrategyType) -> int:
                     log.info("  Bot already holds an open %s trade — skipping", ticker)
                     continue
 
+                # Year-end wash-sale guard. Only active from December: an
+                # intra-year wash sale defers a loss into the replacement lot's
+                # basis and is recovered on the next sale, but one still open on
+                # 31 December pushes the deduction into the next tax year.
+                tax_block = _tax_entry_block(ticker)
+                if tax_block:
+                    log.info("  %s", tax_block)
+                    continue
+
                 # Also avoid stacking on top of any pre-existing position (e.g. one a
                 # human opened). Only a definitive 404 proves "no position"; any
                 # other failure (network, outage) is unknown state, so skip the
@@ -862,6 +900,10 @@ def run_once(strategy: StrategyType) -> int:
 
         # Reconcile + apply exits — only on positions THIS bot opened
         _reconcile_and_exit(strat_name, frames)
+
+        # Tax records are recomputed over the whole history because a new
+        # purchase can retroactively wash an earlier loss.
+        _refresh_tax_records()
 
     except Exception as e:
         error = str(e)

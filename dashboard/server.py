@@ -298,6 +298,73 @@ async def experiments(limit: int = Query(50, ge=1, le=200)):
     return {"experiments": db_mod.get_experiments(limit)}
 
 
+@app.get("/api/tax")
+async def tax_summary(year: int | None = None):
+    """Realized tax picture, recomputed from the full trade history."""
+    import tax as tax_mod
+    from config import PARAMS
+
+    try:
+        db_mod.rebuild_tax_records()
+    except Exception:
+        pass  # stale records are better than a broken page
+
+    trades = db_mod.get_all_trades(limit=5000)
+    records = tax_mod.compute_tax_records(trades)
+    now = datetime.now(timezone.utc)
+    target = year or now.year
+
+    years = sorted(
+        {
+            d.year
+            for d in (tax_mod.parse_dt(r.sale_date) for r in records)
+            if d is not None
+        },
+        reverse=True,
+    )
+    summary = tax_mod.summarize_year(
+        records, target, PARAMS.tax_short_term_rate, PARAMS.tax_long_term_rate
+    )
+
+    by_ticker: dict[str, dict] = {}
+    for r in records:
+        sold = tax_mod.parse_dt(r.sale_date)
+        if sold is None or sold.year != target:
+            continue
+        slot = by_ticker.setdefault(
+            r.ticker,
+            {"ticker": r.ticker, "trades": 0, "realized": 0.0,
+             "wash_sales": 0, "disallowed": 0.0},
+        )
+        slot["trades"] += 1
+        slot["realized"] += r.realized_pnl
+        slot["wash_sales"] += int(r.is_wash_sale)
+        slot["disallowed"] += r.disallowed_loss
+    for slot in by_ticker.values():
+        slot["realized"] = round(slot["realized"], 2)
+        slot["disallowed"] = round(slot["disallowed"], 2)
+
+    guard_active = (now.month, now.day) >= (
+        PARAMS.tax_guard_start_month, PARAMS.tax_guard_start_day
+    )
+
+    return {
+        "summary": summary,
+        "years": years or [target],
+        "by_ticker": sorted(by_ticker.values(), key=lambda s: s["realized"]),
+        "records": [r.as_dict() for r in records if
+                    (lambda d: d is not None and d.year == target)(
+                        tax_mod.parse_dt(r.sale_date))][:300],
+        "guard": {
+            "enabled": PARAMS.tax_year_end_guard,
+            "active_now": bool(PARAMS.tax_year_end_guard and guard_active),
+            "starts": f"{PARAMS.tax_guard_start_month:02d}-{PARAMS.tax_guard_start_day:02d}",
+        },
+        "paper_account": True,
+        "generated_at": now.isoformat(),
+    }
+
+
 @app.get("/api/research/program")
 async def research_program():
     program_path = _PROJECT / "program.md"
@@ -313,12 +380,18 @@ async def index():
     return (_HERE / "index.html").read_text(encoding="utf-8")
 
 
+@app.get("/tax", response_class=HTMLResponse)
+async def tax_page():
+    return (_HERE / "tax.html").read_text(encoding="utf-8")
+
+
 _NAV_BAR = """<div style="position:sticky;top:0;z-index:999;background:#0f1117;border-bottom:1px solid #2a2d35;padding:10px 24px;display:flex;align-items:center;gap:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
   <a href="/" style="color:#60a5fa;font-size:13px;font-weight:600;text-decoration:none">← Dashboard</a>
   <span style="color:#2a2d35">|</span>
   <a href="/backtest-2024" style="color:#8892a4;font-size:13px;font-weight:600;text-decoration:none">2024</a>
   <a href="/backtest-2025" style="color:#8892a4;font-size:13px;font-weight:600;text-decoration:none">2025</a>
   <a href="/backtest-2026" style="color:#8892a4;font-size:13px;font-weight:600;text-decoration:none">2026</a>
+  <a href="/tax" style="color:#8892a4;font-size:13px;font-weight:600;text-decoration:none">Tax</a>
 </div>"""
 
 

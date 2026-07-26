@@ -58,6 +58,72 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.15.0] - 2026-07-26
+
+### Added
+- **Tax awareness: wash-sale tracking, per-trade tax records, and a `/tax`
+  dashboard page.** Full write-up in
+  [docs/tax-awareness.md](docs/tax-awareness.md).
+
+  **The premise was corrected first.** The wash-sale rule (IRC §1091) is not a
+  calendar window around 20 Dec – 10 Jan. It is a **61-day window centred on
+  each loss sale** — 30 days before, the sale day, 30 days after — applying
+  year-round, and the backward-looking half counts too.
+
+  **Measured on this bot's own 35 closed live trades: 7 of 7 losing trades
+  (100%) are already wash sales**, median hold 0.9 days, zero trades eligible
+  for long-term treatment. That follows directly from a 5-ticker universe with
+  sub-day holds, so year-round wash-sale avoidance would idle most of the
+  universe.
+
+  **A wash sale defers a loss rather than destroying it** — the disallowed
+  amount joins the replacement lot's basis and returns on the next sale — so
+  intra-year the effect largely cancels. The only case that truly costs is a
+  wash sale whose replacement is still open on 31 December, which moves the
+  deduction into the next tax year. That is what the guard targets.
+
+- `tax.py` — pure, dependency-free engine: 61-day wash-sale detection in both
+  directions, proportional disallowance for partial replacements, short/long
+  term classification, year-end straddle detection, and an annual forecast that
+  models the $3,000 capital-loss deduction limit and cross-bucket netting.
+- `tax_records` table keyed to `trades.id` (and therefore to the Alpaca order
+  IDs already stored there): cost basis, proceeds, realized P&L, holding days,
+  term, wash-sale flag, disallowed loss, basis adjustment, replacement trade
+  link, deductible P&L, year-end straddle flag. Records are **recomputed over
+  the whole history** on every refresh, never patched per trade, because a later
+  purchase can retroactively wash an earlier loss.
+- `bot._tax_entry_block()` — year-end guard, active only from 1 December
+  (`tax_guard_start_month` / `_day`), blocking re-entry into a ticker that
+  realised a loss in the trailing 30 days. **Fails open**: an unreadable history
+  logs and allows the trade, since deferring a deduction is an optimisation, not
+  a safety rule. Disable with `tax_year_end_guard = False`.
+- `bot._refresh_tax_records()` after each reconciliation pass.
+- `/tax` page and `/api/tax`: net capital gain, estimated liability, short/long
+  split, wash-sale count and deferred total, year-end straddle watchlist,
+  per-ticker breakdown, and every closed trade with its wash-sale linkage.
+- `tax_short_term_rate` (0.24) and `tax_long_term_rate` (0.15) in
+  `StrategyParams` — forecast assumptions only, they change no trading
+  behaviour.
+- 30 tests in `tests/test_tax.py`.
+
+### Notes
+- Against the current database: 34 tax records, 7 wash sales, $1.58 of deferred
+  loss, $66.53 short-term net, ~$15.97 estimated liability, and **zero**
+  straddling year end.
+- **This is a paper account, so no real tax liability exists.** Every figure is
+  a forecast of what the same activity would produce live.
+- **100% of gains are short-term**, taxed at ordinary income rates. With a 3–7
+  day max hold that is structural, not a tuning choice.
+- Deliberately not implemented: cross-account wash-sale matching against the
+  other bot on the shared key (whether TQQQ and QQQ are "substantially
+  identical" is unsettled, and the bot should not assert a position), and the
+  **§475(f) mark-to-market election**, which would exempt trading from the
+  wash-sale rule entirely and is very likely the correct structural answer at
+  this trade frequency — but is irrevocable without IRS consent and depends on
+  qualifying for Trader Tax Status. Both are flagged in the doc.
+- Not tax advice; have a CPA review before relying on these numbers.
+
 ## [0.14.1] - 2026-07-25
 
 ### Fixed
@@ -539,6 +605,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

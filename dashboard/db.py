@@ -91,6 +91,25 @@ def _ensure_tables():
                 combined_pnl REAL,
                 verdict TEXT DEFAULT 'pending'
             );
+            CREATE TABLE IF NOT EXISTS tax_records (
+                trade_id INTEGER PRIMARY KEY,
+                ticker TEXT NOT NULL,
+                sale_date TEXT,
+                shares REAL NOT NULL DEFAULT 0,
+                cost_basis REAL NOT NULL DEFAULT 0,
+                proceeds REAL NOT NULL DEFAULT 0,
+                realized_pnl REAL NOT NULL DEFAULT 0,
+                holding_days REAL NOT NULL DEFAULT 0,
+                term TEXT NOT NULL DEFAULT 'short',
+                is_wash_sale INTEGER NOT NULL DEFAULT 0,
+                disallowed_loss REAL NOT NULL DEFAULT 0,
+                basis_adjustment REAL NOT NULL DEFAULT 0,
+                replacement_trade_id INTEGER,
+                deductible_pnl REAL NOT NULL DEFAULT 0,
+                straddles_year_end INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (trade_id) REFERENCES trades(id)
+            );
             CREATE TABLE IF NOT EXISTS trade_exit_fills (
                 trade_id INTEGER NOT NULL,
                 alpaca_order_id TEXT NOT NULL,
@@ -377,6 +396,71 @@ def get_closed_trades(limit: int = 200) -> list[dict]:
             "SELECT * FROM trades WHERE status='closed' ORDER BY entry_date DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ── Tax records ───────────────────────────────────────────────────────────────
+
+def save_tax_records(records: list) -> int:
+    """Upsert one tax record per closed trade. Returns the number written."""
+    _ensure_tables()
+    now = datetime.now(timezone.utc).isoformat()
+    rows = [
+        (
+            r.trade_id, r.ticker, r.sale_date, r.shares, r.cost_basis, r.proceeds,
+            r.realized_pnl, r.holding_days, r.term, int(r.is_wash_sale),
+            r.disallowed_loss, r.basis_adjustment, r.replacement_trade_id,
+            r.deductible_pnl, int(r.straddles_year_end), now,
+        )
+        for r in records
+    ]
+    if not rows:
+        return 0
+    with _con() as c:
+        c.executemany(
+            "INSERT INTO tax_records (trade_id, ticker, sale_date, shares, "
+            "cost_basis, proceeds, realized_pnl, holding_days, term, is_wash_sale, "
+            "disallowed_loss, basis_adjustment, replacement_trade_id, "
+            "deductible_pnl, straddles_year_end, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(trade_id) DO UPDATE SET "
+            "ticker=excluded.ticker, sale_date=excluded.sale_date, "
+            "shares=excluded.shares, cost_basis=excluded.cost_basis, "
+            "proceeds=excluded.proceeds, realized_pnl=excluded.realized_pnl, "
+            "holding_days=excluded.holding_days, term=excluded.term, "
+            "is_wash_sale=excluded.is_wash_sale, "
+            "disallowed_loss=excluded.disallowed_loss, "
+            "basis_adjustment=excluded.basis_adjustment, "
+            "replacement_trade_id=excluded.replacement_trade_id, "
+            "deductible_pnl=excluded.deductible_pnl, "
+            "straddles_year_end=excluded.straddles_year_end, "
+            "updated_at=excluded.updated_at",
+            rows,
+        )
+    return len(rows)
+
+
+def get_tax_records(limit: int = 500) -> list[dict]:
+    _ensure_tables()
+    with _con() as c:
+        rows = c.execute(
+            "SELECT * FROM tax_records ORDER BY sale_date DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def rebuild_tax_records() -> int:
+    """Recompute every tax record from the full trade history.
+
+    Wash-sale status is not a property of one trade in isolation — a later
+    purchase can retroactively disallow an earlier loss — so records are always
+    recomputed over the whole history rather than patched per close.
+    """
+    import tax as tax_mod
+
+    _ensure_tables()
+    with _con() as c:
+        trades = [dict(r) for r in c.execute("SELECT * FROM trades").fetchall()]
+    return save_tax_records(tax_mod.compute_tax_records(trades))
 
 
 # ── Signals ───────────────────────────────────────────────────────────────────

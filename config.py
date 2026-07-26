@@ -100,6 +100,21 @@ class StrategyParams:
     # raised. Enforced identically in live sizing and in run_annual_portfolio.
     max_leveraged_exposure_pct: float = 0.20
 
+    # ── Tax awareness ─────────────────────────────────────────────────────
+    # Rates used only to forecast a liability on the dashboard; they change no
+    # trading behaviour. Defaults are a common federal bracket plus the 15%
+    # long-term rate — set them to your own marginal rates.
+    tax_short_term_rate: float = 0.24
+    tax_long_term_rate: float = 0.15
+    # Year-end wash-sale guard. Intra-year wash sales are harmless in aggregate
+    # (the disallowed loss rides in the replacement lot's basis and is recovered
+    # on the next sale), so the guard runs only from `tax_guard_start_*` through
+    # 31 December, where a new wash sale would push a deduction into next year.
+    # Turning this off never breaks a rule — it only forfeits the deferral.
+    tax_year_end_guard: bool = True
+    tax_guard_start_month: int = 12
+    tax_guard_start_day: int = 1
+
     # ── Shared data window ────────────────────────────────────────────
     history_days: int = 90
     one_position_per_ticker: bool = True
