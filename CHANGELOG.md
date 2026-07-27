@@ -62,6 +62,81 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.17.1] - 2026-07-27
+
+### Fixed
+- **Pre-existing report-generation crash**, found and flagged (not fixed) in
+  0.17.0: `build_report_2025.build_report_2025` sourced every ticker's price
+  chart from whichever strategy came first in `per_strategy_details`' *dict
+  insertion order*, regardless of whether that strategy traded the ticker at
+  all. Once strategies gained per-strategy universes (`tqqq_momentum` scoped to
+  TQQQ only, in 0.13.0), the first strategy in iteration order frequently had
+  no data for a given ticker, handing `ticker_chart` an empty `pd.DataFrame()`
+  with no `close` column and crashing `add_indicators` with `KeyError:
+  'close'` before `reports/backtest_20XX.html` could be written. Reproduced
+  identically on unmodified `main` via `git stash`, confirming it predates
+  both this fix and the slippage-guard work in 0.17.0.
+
+  Now searches every strategy's per-ticker data for the first one that
+  actually has it — any strategy that traded a ticker downloaded the same
+  OHLCV, so the first match is as good as any. `ticker_chart` also gained a
+  defensive fallback (a "no price data available" placeholder) for the
+  degenerate case where trades are recorded but no strategy retained a price
+  frame, so a similar gap can no longer crash report generation even if the
+  root cause recurs elsewhere.
+
+  4 regression tests in `tests/test_build_report_ticker_universe.py`,
+  confirmed to fail with the exact original `KeyError: 'close'` when the fix
+  is reverted.
+
+### Corrected
+- **The 0.17.0 changelog's "combined 2024 total" entry was wrong** — its
+  before/after numbers were transposed due to a `git stash`/`stash pop`
+  sequence used to check whether the report crash pre-existed. That check was
+  run correctly, but I mislabeled which resulting database rows corresponded
+  to which state, and reported the swap as if it were the guard's effect.
+
+  Verified now with a clean, unambiguous methodology — both variants run in
+  the same process from identical cached data, differing only in the `params`
+  object passed to `collect_backtest_candidates`, with no stash involved and
+  no reliance on database timestamps:
+
+  | | guard ON (1.5%, production) | guard OFF | delta |
+  |---|---:|---:|---:|
+  | ensemble, 2024 | $270.10 | $279.75 | **−$9.64** |
+  | ensemble, all 4 years | $1,037.99 | $935.72 | **+$102.27** |
+  | trend_pullback, all 4 years | $644.04 | $697.32 | −$53.28 |
+  | breakout / momentum_macd | unchanged | unchanged | $0.00 |
+  | mean_reversion, all 4 years | $91.22 | $83.84 | +$7.39 |
+  | regime, all 4 years | $920.56 | $922.21 | −$1.65 |
+
+  This is close to the isolated measurement 0.17.0 already reported correctly
+  (ensemble +$104.61 there vs +$102.27 here — the small difference is the tax
+  guard's production default now left on for both sides instead of forced off).
+  **The direction and rough magnitude in 0.17.0's "Notes" section were right;
+  only the single "$840.88 → $831.62" combined-total line was backwards.**
+
+  Confirmed by 5 repeated fresh process invocations (`PYTHONHASHSEED=random`)
+  of the exact production code path, all returning the identical $270.10 for
+  ensemble/2024 — the current numbers are reproducible and trustworthy. I do
+  not have a confirmed root cause for the original transposition; the
+  suspicion is a mislabeled comparison on my part while narrating the stash
+  sequence, not non-determinism in the engine itself, but I want to be honest
+  that I have not proven which.
+
+  Re-ran all three years fresh under the corrected understanding: **2024 =
+  $840.89, 2025 = $824.08, 2026 = $671.79** (3-year total $2,336.76). These
+  match what 0.17.0 already had for 2025/2026, and 2024 is unchanged from
+  0.17.0's own (correctly reported) "before" figure — i.e., today's real,
+  verified totals were the true state all along; only the "after" comparison
+  value in that one line was wrong.
+
+### Added
+- All three static reports (`reports/backtest_2024.html`,
+  `backtest_2025.html`, `backtest_2026.html`) now regenerate successfully and
+  are current as of this release.
+
 ## [0.17.0] - 2026-07-27
 
 ### Added
@@ -770,6 +845,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

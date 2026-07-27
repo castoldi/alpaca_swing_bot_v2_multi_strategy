@@ -112,6 +112,9 @@ def exit_reason_pie(all_trades: list[Trade]) -> str:
 
 
 def ticker_chart(ticker: str, df: pd.DataFrame, trades: list[Trade]) -> str:
+    if df is None or df.empty:
+        return (f"<div style='padding:40px;text-align:center;color:{TEXT_SECONDARY}'>"
+                f"No price data available for {ticker} in this range.</div>")
     df = add_indicators(df)
     view = df.loc[df.index >= pd.Timestamp(BACKTEST_START)]
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
@@ -358,7 +361,20 @@ def build_report_2025(
              for sname in sorted(per_strategy_details.keys())},
             annual_reset_aggregate=annual_reset_aggregate,
         )
-        tk_chart_html = ticker_chart(tk, per_strategy_details.get(list(per_strategy_details.keys())[0], {}).get(tk, (pd.DataFrame(), []))[0], tk_trades)
+        # Price data for the chart: use whichever strategy actually traded this
+        # ticker. Strategies scope themselves to different universes (e.g.
+        # tqqq_momentum trades only TQQQ), so "the first strategy in dict
+        # order" may never have downloaded this ticker at all - that produced
+        # an empty frame and crashed add_indicators (KeyError: 'close').
+        # Any strategy that traded it downloaded the same OHLCV, so the first
+        # match is as good as any.
+        tk_frame = pd.DataFrame()
+        for sname in sorted(per_strategy_details.keys()):
+            candidate_frame = per_strategy_details.get(sname, {}).get(tk, (pd.DataFrame(), []))[0]
+            if candidate_frame is not None and not candidate_frame.empty:
+                tk_frame = candidate_frame
+                break
+        tk_chart_html = ticker_chart(tk, tk_frame, tk_trades)
         tk_stats = per_ticker_stats(tk, tk_trades)
 
         # Per-strategy breakdown for this ticker
