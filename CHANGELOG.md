@@ -61,6 +61,56 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.17.0] - 2026-07-27
+
+### Added
+- **Entry slippage guard in backtests**, mirroring the live check in `bot.py`
+  exactly: signals whose next-bar open drifts more than
+  `entry_max_slippage_pct` (1.5%) from the signal bar's close are skipped, since
+  the SL/TP geometry computed off that close no longer matches. Applies only
+  where live applies it — bracket strategies (`has_take_profit=True`);
+  `signal_with_stop` strategies (`sma_50_cross`, `tqqq_momentum`) already fill
+  at the next bar's open with no guard, live and in the backtest, and are
+  untouched. The guard is symmetric (drift is checked in absolute value, so a
+  favourably cheaper fill invalidates the geometry same as an adverse one), and
+  a signal on the last bar of the backtest window has no next bar to price a
+  fill from and is skipped, matching the existing boundary rule for
+  `signal_with_stop` candidates.
+
+  Previously the backtest filled every bracket entry at the exact signal close
+  with zero friction — a "free lunch" the live bot has never had. There was no
+  live/backtest divergence report for this until now; it closes the same class
+  of gap as the tax guard's backtest wiring in 0.16.0.
+- 7 tests in `tests/test_backtest_portfolio.py`: admits within tolerance, skips
+  beyond it, symmetric for a downward gap, boundary is inclusive at exactly
+  1.5%, a signal on the last window bar is skipped, data past the window
+  boundary is never used to price a fill (would be lookahead), and
+  `signal_with_stop` strategies are confirmed unaffected by an extreme gap.
+
+### Notes
+- **Measured impact, isolated from the tax guard, 2020/2024/2025/2026, six
+  bracket strategies:** trend_pullback −$52.47, breakout $0.00, mean_reversion
+  +$7.39, momentum_macd $0.00, regime −$0.60, ensemble **+$104.61** — net
+  effect across the sample is small and mixed in sign, like the tax guard
+  before it. breakout and momentum_macd never triggered it in this sample.
+  ensemble's gain is concentrated in 2020, where skipping a few crash-window
+  entries whose fill gapped away from the signal price helped more than it
+  cost.
+- Combined with the tax guard (both apply their production defaults), the
+  2024 backtest total moves from $840.88 to $831.62 — a $9.26 net change
+  across all 8 strategies. 2025 and 2026 were re-run and refreshed the same
+  way; totals are $824.08 and $671.79 respectively.
+- `backtest_2024.py` / `backtest_2025.py` / `backtest_2026.py` were re-run so
+  `backtest_runs` (and therefore `/api/backtest-results`) reflect the guard.
+- **Found, not fixed: a pre-existing report-generation bug**, unrelated to this
+  change (reproduced identically on unmodified `main` via `git stash`).
+  `build_report_2025.build_report_2025`'s `ticker_chart` crashes with
+  `KeyError: 'close'` before writing `reports/backtest_20XX.html`, so those
+  three static report pages are stale from 2026-07-18 even though the
+  underlying `backtest_runs` rows (and the dashboard's numeric views) are
+  current. Left as a known issue — out of scope here.
+
 ## [0.16.0] - 2026-07-26
 
 ### Fixed
@@ -720,6 +770,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

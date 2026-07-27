@@ -321,3 +321,136 @@ def test_strategies_package_exports_candidate_api():
     assert ExportedCandidate is BacktestCandidate
     assert exported_collect is collect_backtest_candidates
     assert exported_materialize is materialize_candidate
+
+
+# ── Entry slippage guard ──────────────────────────────────────────────────────
+#
+# Mirrors bot.py's live check: the SL/TP geometry is computed off the signal
+# bar's close, and live only submits the order if the market has not drifted
+# more than entry_max_slippage_pct by execution time. The backtest has no
+# tick-level data, so the next bar's open stands in for "the price a live
+# snapshot would see shortly after the signal bar closed".
+
+def _bars_with_gap(gap_open_at: int, gap_open: float, periods=8):
+    """`_bars()` with one bar's open overridden to create an entry-fill gap."""
+    frame = _bars(periods)
+    frame = frame.copy()
+    frame.iloc[gap_open_at, frame.columns.get_loc("open")] = gap_open
+    return frame
+
+
+def test_slippage_within_tolerance_is_admitted():
+    # Signal at idx=1 (close=100); next bar (idx=2) opens 0.5% away - inside
+    # the default 1.5% tolerance.
+    frame = _bars_with_gap(gap_open_at=2, gap_open=100.5)
+    strategy = _RepeatedSignalStrategy({1})
+
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS, strategy,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].entry_date == frame.index[1]
+
+
+def test_slippage_beyond_tolerance_is_skipped():
+    # Same signal, but the next bar gaps 5% - well past the 1.5% tolerance.
+    frame = _bars_with_gap(gap_open_at=2, gap_open=105.0)
+    strategy = _RepeatedSignalStrategy({1})
+
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS, strategy,
+    )
+
+    assert candidates == []
+
+
+def test_slippage_guard_is_symmetric_for_gap_down():
+    # A favorable-looking cheaper fill invalidates the bracket geometry just as
+    # much as an adverse one - the guard checks absolute drift, not direction.
+    frame = _bars_with_gap(gap_open_at=2, gap_open=95.0)
+    strategy = _RepeatedSignalStrategy({1})
+
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS, strategy,
+    )
+
+    assert candidates == []
+
+
+def test_slippage_guard_boundary_is_exclusive():
+    # Exactly at the threshold is still admitted; PARAMS.entry_max_slippage_pct
+    # is 0.015, so 101.5 is a 1.5% gap - not strictly greater than the limit.
+    frame = _bars_with_gap(gap_open_at=2, gap_open=101.5)
+    strategy = _RepeatedSignalStrategy({1})
+
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS, strategy,
+    )
+
+    assert len(candidates) == 1
+
+
+def test_signal_on_the_last_window_bar_has_no_fill_and_is_skipped():
+    # No bar exists after the window's last eligible index to price a fill
+    # from - mirrors _signal_exit_candidate's identical boundary rule.
+    frame = _bars()
+    strategy = _RepeatedSignalStrategy({len(frame) - 1})
+
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS, strategy,
+    )
+
+    assert candidates == []
+
+
+def test_signal_on_last_window_bar_ignores_data_past_the_window():
+    # A next bar DOES exist in the underlying frame - it is just outside the
+    # requested window - and must not be used to price a fill (would be
+    # borrowing data the live bot would not yet have had at cycle time).
+    frame = _bars_with_gap(gap_open_at=4, gap_open=100.0)
+    strategy = _RepeatedSignalStrategy({3})
+
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[3], PARAMS, strategy,
+    )
+
+    assert candidates == []
+
+
+class _SignalWithStopStrategy(BaseStrategy):
+    """Minimal signal_with_stop strategy: never has_take_profit, so the live
+    guard - and this backtest's mirror of it - never gates its entries."""
+    name = "test_signal_with_stop"
+    exit_mode = "signal_with_stop"
+    has_take_profit = False
+
+    def __init__(self, signal_indexes):
+        super().__init__()
+        self.signal_indexes = set(signal_indexes)
+
+    def check_entry(self, df, idx, p=PARAMS):
+        if idx not in self.signal_indexes:
+            return None
+        return EntrySignal(
+            date=pd.Timestamp(df.index[idx]),
+            entry_price=float(df.iloc[idx]["close"]),
+            stop_loss=90.0, take_profit=0.0, atr=10.0, rsi=55.0,
+            strategy=self.name,
+        )
+
+
+def test_signal_with_stop_strategies_are_never_slippage_gated():
+    # A large gap would trip the guard for a bracket strategy, but
+    # signal_with_stop strategies (sma_50_cross, tqqq_momentum) have
+    # has_take_profit=False and take the _signal_exit_candidate path entirely,
+    # matching bot.py's `if strat_obj.has_take_profit` gate exactly.
+    frame = _bars_with_gap(gap_open_at=2, gap_open=150.0)
+    strategy = _SignalWithStopStrategy({1})
+
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS, strategy,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].entry_date == frame.index[2]   # next-bar-open entry

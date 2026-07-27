@@ -448,6 +448,26 @@ def collect_backtest_candidates(
         ):
             continue
 
+        # Entry slippage guard, mirroring bot.py's live check exactly (including
+        # its `has_take_profit` gate — signal_with_stop strategies never reach
+        # this branch). The SL/TP geometry was computed off the signal bar's
+        # close; live only submits the order if the market has not drifted more
+        # than entry_max_slippage_pct away by execution time. There is no
+        # tick-level data cached, so the next bar's open is the closest available
+        # proxy for "the price a live snapshot would see shortly after the
+        # signal bar closed" — the same convention already used for
+        # signal_with_stop entries below. A signal on the last bar of the window
+        # has no next bar to price a fill from and is skipped, matching
+        # `_signal_exit_candidate`'s identical boundary rule.
+        fill_idx = idx + 1
+        if fill_idx > end_idx:
+            continue
+        fill_price = float(data.iloc[fill_idx]["open"])
+        if signal.entry_price > 0:
+            slippage = abs(fill_price - signal.entry_price) / signal.entry_price
+            if slippage > params.entry_max_slippage_pct:
+                continue
+
         clipped = data.iloc[: end_idx + 1]
         exit_date, exit_price, exit_reason, bars_held = simulate_exit(
             clipped, idx, signal, params
