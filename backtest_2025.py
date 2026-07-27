@@ -186,6 +186,7 @@ def run_strategy_year(
         initial_equity=params.initial_backtest_equity,
         position_fraction=params.position_size_pct,
         max_positions=params.max_concurrent_positions,
+        price_frames=frames,
     )
     trades_by_ticker = {
         ticker: [trade for trade in result.trades if trade.ticker == ticker]

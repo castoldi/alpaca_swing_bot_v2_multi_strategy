@@ -53,6 +53,9 @@ class PortfolioResult:
     wash_sale_count: int = 0
     disallowed_loss: float = 0.0
     tax_blocked_entries: int = 0
+    # Daily-loss kill switch view. Zero when disabled or no price_frames given.
+    kill_switch_blocked_entries: int = 0
+    kill_switch_trip_days: int = 0
 
 
 def _trade_from_leg(
@@ -98,6 +101,58 @@ def materialize_candidate(
     ]
 
 
+def _price_asof(
+    frame: pd.DataFrame | None, as_of: pd.Timestamp, *, strict: bool = False
+) -> float | None:
+    """Last known close before (or at-or-before) ``as_of``, else None.
+
+    A boolean mask rather than ``Series.asof`` — ``asof`` casts ``as_of`` to
+    the index's own stored datetime64 resolution and raises if that cast would
+    lose precision (e.g. subtracting a nanosecond against a microsecond- or
+    second-resolution index, which is exactly how a cached frame is often
+    stored). A boolean comparison has no such restriction and never looks
+    forward, so this stays causal either way.
+    """
+    if frame is None or frame.empty:
+        return None
+    close = frame["close"]
+    mask = (close.index < as_of) if strict else (close.index <= as_of)
+    matched = close.loc[mask]
+    if matched.empty:
+        return None
+    value = matched.iloc[-1]
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    return float(value)
+
+
+def _mark_to_market_equity(
+    cash: float,
+    position_tickers: dict[int, str],
+    open_remaining: dict[int, int],
+    price_frames: dict[str, pd.DataFrame],
+    as_of: pd.Timestamp,
+    *,
+    strict: bool = False,
+) -> float:
+    """Net liquidation value: cash plus every open position's current value.
+
+    ``cash`` already had each position's cost basis deducted at entry, so this
+    needs no separate accounting for what was paid — only what it is worth now.
+    ``strict=True`` looks strictly before ``as_of`` (for "yesterday's close");
+    otherwise at-or-before (for "right now", where the current bar counts).
+    """
+    equity = cash
+    for position_id, qty in open_remaining.items():
+        if qty <= 0:
+            continue
+        ticker = position_tickers.get(position_id)
+        price = _price_asof(price_frames.get(ticker), as_of, strict=strict)
+        if price is not None:
+            equity += qty * price
+    return equity
+
+
 def run_annual_portfolio(
     candidates: list[BacktestCandidate],
     *,
@@ -107,6 +162,9 @@ def run_annual_portfolio(
     leveraged_tickers: frozenset[str] | None = None,
     max_leveraged_fraction: float | None = None,
     apply_tax: bool | None = None,
+    price_frames: dict[str, pd.DataFrame] | None = None,
+    apply_kill_switch: bool | None = None,
+    max_daily_loss_pct: float | None = None,
 ) -> PortfolioResult:
     """Run one unlevered annual portfolio with realized-P&L compounding.
 
@@ -114,6 +172,19 @@ def run_annual_portfolio(
     ``max_leveraged_fraction`` of equity — the same rule the live bot applies,
     so backtests cannot show exposure the bot would refuse to take. Both
     default to the configured values.
+
+    ``price_frames`` (ticker -> OHLCV, this call's own timeframe) enables the
+    daily-loss kill switch: mirrors ``bot.py``'s live check, which compares
+    Alpaca's mark-to-market ``account.equity`` right now against yesterday's
+    closing equity, and blocks new entries once the drop reaches
+    ``max_daily_loss_pct``. It re-evaluates fresh at every entry attempt rather
+    than latching for the rest of the day — that's what the live code actually
+    does, even though its comment says "for the rest of the day"; a later
+    recovery above the threshold on the same day un-blocks new entries again,
+    exactly like today's live behaviour. Exits are untouched either way — they
+    were already resolved at candidate-collection time and never gate on this.
+    ``apply_kill_switch`` defaults to on whenever ``price_frames`` is supplied,
+    off otherwise, so existing callers that never pass frames see no change.
     """
     if not math.isfinite(initial_equity) or initial_equity <= 0:
         raise ValueError("initial_equity must be finite and positive")
@@ -135,6 +206,17 @@ def run_annual_portfolio(
     if apply_tax is None:
         apply_tax = PARAMS.tax_year_end_guard
     tax_blocked_entries = 0
+
+    if apply_kill_switch is None:
+        apply_kill_switch = price_frames is not None
+    if apply_kill_switch and not price_frames:
+        raise ValueError("apply_kill_switch requires price_frames")
+    if max_daily_loss_pct is None:
+        max_daily_loss_pct = PARAMS.max_daily_loss_pct
+    kill_switch_blocked_entries = 0
+    kill_switch_trip_days: set = set()
+    kill_switch_day: pd.Timestamp | None = None
+    kill_switch_day_baseline = float(initial_equity)
 
     cash = float(initial_equity)
     realized_pnl = 0.0
@@ -180,12 +262,39 @@ def run_annual_portfolio(
         # Every candidate at one timestamp is sized from the same pre-event
         # realized account. An exit dated on that bar is not known at its open.
         realize_before(entry_date)
+
+        kill_switch_tripped_now = False
+        if apply_kill_switch:
+            bar_day = entry_date.normalize()
+            if kill_switch_day is None or bar_day != kill_switch_day:
+                kill_switch_day_baseline = _mark_to_market_equity(
+                    cash, position_tickers, open_remaining, price_frames,
+                    bar_day, strict=True,
+                )
+                kill_switch_day = bar_day
+            current_equity = _mark_to_market_equity(
+                cash, position_tickers, open_remaining, price_frames, entry_date
+            )
+            if kill_switch_day_baseline > 0:
+                loss_pct = (
+                    (kill_switch_day_baseline - current_equity)
+                    / kill_switch_day_baseline
+                )
+                kill_switch_tripped_now = loss_pct >= max_daily_loss_pct
+                if kill_switch_tripped_now:
+                    kill_switch_trip_days.add(bar_day)
+
         for candidate in timestamp_candidates:
 
             if (
                 len(open_remaining) >= max_positions
                 or candidate.ticker in open_tickers
             ):
+                skipped_positions += 1
+                continue
+
+            if kill_switch_tripped_now:
+                kill_switch_blocked_entries += 1
                 skipped_positions += 1
                 continue
 
@@ -284,6 +393,8 @@ def run_annual_portfolio(
         wash_sale_count=wash_count,
         disallowed_loss=round(disallowed, 2),
         tax_blocked_entries=tax_blocked_entries,
+        kill_switch_blocked_entries=kill_switch_blocked_entries,
+        kill_switch_trip_days=len(kill_switch_trip_days),
     )
 
 

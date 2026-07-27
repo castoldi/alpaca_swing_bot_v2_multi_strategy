@@ -63,6 +63,93 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.18.0] - 2026-07-27
+
+### Added
+- **Daily-loss kill switch modeled in backtests.** Mirrors `bot.py`'s live
+  check: Alpaca's mark-to-market `account.equity` right now compared against
+  yesterday's closing equity, blocking new entries once the drop reaches
+  `max_daily_loss_pct` (3%). Unlike the entry slippage guard, the live kill
+  switch is a global, strategy-agnostic gate (checked once per cycle before
+  any per-ticker logic runs, not conditioned on `has_take_profit`), so this
+  applies to all 8 strategies, including `sma_50_cross` and `tqqq_momentum`.
+
+  This was the larger of the two live risk protections flagged as missing
+  from the backtest a few sessions ago — it needed mark-to-market equity of
+  open positions, which the engine had never tracked (only realized cash +
+  closed P&L). `run_annual_portfolio` now accepts `price_frames` (ticker ->
+  OHLCV, the caller's own timeframe) and re-derives net liquidation value —
+  cash plus every open position's current close — at each entry attempt.
+
+  **Re-evaluated fresh at every entry attempt, not latched for the rest of the
+  day.** That matches what the live code actually does, not what its comment
+  claimed ("no new entries... for the rest of the day") — the real check has
+  no daily-sticky state, so equity recovering back above the threshold later
+  the same session un-blocks new entries again immediately. Corrected the
+  misleading comment in `config.py` to describe the real behaviour; the
+  live code itself is unchanged; this is a documentation fix.
+
+- `_price_asof` / `_mark_to_market_equity` helpers in `backtest_portfolio.py`.
+  `apply_kill_switch` defaults to on whenever `price_frames` is supplied, off
+  otherwise, matching the tax/slippage guards' opt-in-by-data pattern; raises
+  if `apply_kill_switch=True` is forced without frames. `max_daily_loss_pct`
+  is overridable per call, defaulting from `PARAMS`.
+- `PortfolioResult.kill_switch_blocked_entries` / `.kill_switch_trip_days`.
+- Wired into `backtest_2025.run_strategy_year` (shared by 2024/2025/2026),
+  passing the same `frames` dict already built for candidate collection —
+  `backtest_history.py`'s separate cumulative runner is not wired, consistent
+  with the tax and slippage guards also being scoped to the annual scripts
+  only.
+- 20 tests: `_price_asof`/`_mark_to_market_equity` unit tests, a hand-traced
+  multi-day scenario (blocks an intraday breach, allows a same-day recovery,
+  confirms the next day's baseline resets to yesterday's close rather than
+  staying pinned), confirmation exits are never gated, and default/validation
+  behaviour.
+
+### Fixed
+- **A real bug found while building this**, independent of the kill switch's
+  own logic: the day-boundary lookup originally used
+  `bar_day - pd.Timedelta(nanoseconds=1)` to mean "just before midnight" and
+  fed it to `pandas.Series.asof`, which casts its argument to the index's own
+  stored datetime64 resolution and **raises** if that cast would lose
+  precision — exactly what happens subtracting a nanosecond against a
+  microsecond- or second-resolution index, which is what `pd.to_datetime` on
+  a plain string list commonly produces (confirmed: this repo's own test
+  frames are `datetime64[us]`). An overly broad `except (KeyError,
+  ValueError): return None` silently swallowed that into "no position value"
+  — the hand-traced verification scenario caught this immediately (every
+  candidate was admitted, zero blocks, when the scenario should have produced
+  one). Rewritten to use boolean-mask lookups (`index < as_of` /
+  `index <= as_of`), which have no such restriction regardless of the frame's
+  stored resolution.
+
+### Notes
+- **Measured impact: negligible, and not for lack of trying to find one.**
+  Isolated (kill switch on/off, both sides at production defaults otherwise),
+  across all 8 strategies and 2020/2024/2025/2026 (32 strategy-years): the
+  switch tripped in exactly **2** of them (`regime`/2024, `sma_50_cross`/2025,
+  1 trip-day and 1 blocked entry each), and in **both** cases the blocked
+  candidate turned out to be one `whole_share_position_size` would have
+  rejected anyway (confirmed by diffing the full trade lists — identical
+  either way), so the measured P&L delta is **$0.00 across the entire
+  sample**, including 2020, the fastest crash in market history.
+  This is a real property of this bot's risk profile, not a measurement
+  artifact: whole-share sizing capped at 20% of equity across a maximum of 5
+  positions makes a genuine same-day 3% *account-wide* mark-to-market
+  drawdown a rare event even in a crash year — no single cached year has
+  produced one that actually changed an outcome. The switch's value, if any,
+  is in tail scenarios worse than anything in the 2016–2026 cached window
+  (a genuine multi-day gap-down, or several highly-correlated positions
+  moving together) — see the 0.50/0.66/0.86 correlation figures in
+  `docs/systematic-strategies.md` for how real that risk is under stress.
+- Production `backtest_2024/2025/2026.py` were re-run; **all three years'
+  totals are unchanged** ($840.89 / $824.08 / $671.79), consistent with the
+  isolated measurement above.
+- Verified with a hand-traced scenario checked against a scratch debug script
+  before any assertion was written, and the discovered bug was caught by that
+  same verification step before being committed — not found later by a user.
+
 ## [0.17.1] - 2026-07-27
 
 ### Fixed
@@ -845,6 +932,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

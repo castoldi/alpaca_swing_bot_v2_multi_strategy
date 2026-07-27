@@ -82,8 +82,10 @@ class StrategyParams:
     # signal bar close: the SL/TP geometry would no longer match the backtest.
     entry_max_slippage_pct: float = 0.015
     # Kill switch: once the account is down this much vs yesterday's close
-    # equity, no new entries are placed for the rest of the day (exits and
-    # broker-held protection keep working).
+    # equity, new entries are disabled (exits and broker-held protection keep
+    # working). Re-evaluated fresh every cycle, not latched for the rest of
+    # the day: if equity recovers back above the threshold later the same
+    # session, new entries resume without waiting for the next calendar day.
     max_daily_loss_pct: float = 0.03
     # Total notional allowed across LEVERAGED_TICKERS, as a fraction of equity.
     #
