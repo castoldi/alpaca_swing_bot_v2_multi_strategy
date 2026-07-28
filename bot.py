@@ -305,6 +305,75 @@ def _place_single_bracket_entry(
     }
 
 
+def _place_protective_oco(
+    tc,
+    trade: dict,
+    qty: float,
+    stop_price: float,
+    take_profit: float | None,
+) -> dict:
+    """Re-arm broker-held protection on a position whose bracket legs are gone.
+
+    The entry's own bracket legs are children of the entry order, so
+    `_confirmed_exit_fill` finds them through `order.legs`. Legs re-armed later are
+    standalone orders with no such parent link, so they carry our own
+    `swingv2-protect-<strategy>-<ticker>-<hex>` client id and their ids are stored
+    on the trade — that is what proves the eventual fill is ours.
+
+    OCO (not two independent sells) because Alpaca rejects a second concurrent
+    sell leg on the same position with 403 40310000.
+    """
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (
+        LimitOrderRequest,
+        StopLossRequest,
+        TakeProfitRequest,
+    )
+
+    coid = _make_client_order_id(trade["strategy"], trade["ticker"], "protect")
+    if take_profit is None:
+        raise ValueError("OCO protection requires a take-profit price")
+
+    request = LimitOrderRequest(
+        symbol=trade["ticker"],
+        qty=qty,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.GTC,
+        order_class=OrderClass.OCO,
+        take_profit=TakeProfitRequest(limit_price=round(take_profit, 2)),
+        stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
+        client_order_id=coid,
+    )
+    order = tc.submit_order(request)
+    alpaca_id = str(getattr(order, "id", "") or "")
+    db_mod.set_protect_order_ids(trade["id"], coid, alpaca_id)
+    return {"order": order, "protect_coid": coid, "alpaca_id": alpaca_id}
+
+
+def _protective_orders_missing(tc, trade: dict) -> bool:
+    """True when an open position currently has no live sell protection.
+
+    Counts any resting sell we own for the symbol, whether it came from the entry
+    bracket or from a later re-arm, so this never double-arms a healthy position.
+    """
+    from alpaca.trading.requests import GetOrdersRequest
+    from alpaca.trading.enums import QueryOrderStatus, OrderSide
+
+    try:
+        req = GetOrdersRequest(
+            status=QueryOrderStatus.OPEN,
+            symbols=[trade["ticker"]],
+            side=OrderSide.SELL,
+            limit=50,
+        )
+        return not (tc.get_orders(filter=req) or [])
+    except Exception as exc:
+        # Fail closed: an unreadable order book must never be reported as
+        # "unprotected", or we would stack a duplicate sell onto a live one.
+        log.warning("  %s: protection check failed (%s)", trade["ticker"], exc)
+        return False
+
+
 def _position_qty(tc, ticker: str) -> float:
     try:
         pos = tc.get_open_position(ticker)
@@ -1124,6 +1193,15 @@ def _confirmed_exit_fill(tc, trade: dict) -> dict | None:
     claimed as another trade's exit is skipped — one broker fill can only close
     one DB trade.
     """
+    # Most precise link first: protection re-armed after entry is a standalone
+    # order, so it is unreachable via the entry's legs below. Its stored id (and
+    # the legs it owns) proves the fill is ours without any heuristic.
+    for order in _protect_order_candidates(tc, trade):
+        for candidate in (*(getattr(order, "legs", None) or []), order):
+            fill = _exit_fill_from_order(candidate, require_prefix=False)
+            if fill and not db_mod.exit_order_already_used(fill["alpaca_order_id"]):
+                return fill
+
     for order in _entry_order_candidates(tc, trade):
         for leg in (getattr(order, "legs", None) or []):
             fill = _exit_fill_from_order(leg, require_prefix=False)
@@ -1142,6 +1220,30 @@ def _confirmed_exit_fill(tc, trade: dict) -> dict | None:
             return fill
 
     return None
+
+
+def _protect_order_candidates(tc, trade: dict) -> list:
+    """The re-armed protective order for this trade, resolved by its stored ids."""
+    from alpaca.trading.requests import GetOrderByIdRequest
+
+    out = []
+    order_id = trade.get("protect_alpaca_order_id")
+    if order_id:
+        try:
+            # nested=True or Alpaca omits the OCO child legs entirely.
+            out.append(
+                tc.get_order_by_id(order_id, filter=GetOrderByIdRequest(nested=True))
+            )
+        except Exception:
+            pass
+
+    coid = trade.get("protect_client_order_id")
+    if coid:
+        try:
+            out.append(tc.get_order_by_client_id(coid))
+        except Exception:
+            pass
+    return [o for o in out if o is not None]
 
 
 def _entry_order_candidates(tc, trade: dict) -> list:
@@ -1204,6 +1306,13 @@ def _exit_reason_for_fill(trade: dict, fill: dict) -> str:
     """Infer why a broker fill closed the trade from the owned order id."""
     coid = str(fill.get("client_order_id") or "")
     strat_obj = REGISTRY.get(trade.get("strategy", ""))
+    # A re-armed OCO fills through one of its own child legs, so match the parent
+    # id too — the leg carries a broker-generated client id, not ours.
+    if "-protect-" in coid or (
+        trade.get("protect_alpaca_order_id")
+        and fill.get("alpaca_order_id") == trade.get("protect_alpaca_order_id")
+    ):
+        return "protective_bracket_filled"
     if "-exit-" in coid:
         return (
             strat_obj.signal_exit_reason

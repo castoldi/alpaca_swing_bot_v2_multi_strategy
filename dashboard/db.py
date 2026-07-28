@@ -139,6 +139,12 @@ def _migrate(c: sqlite3.Connection):
         "exit_alpaca_order_id": "TEXT",  # Alpaca's order UUID for the exit
         "exit_intent_reason": "TEXT",     # durable intent before protection is canceled
         "entry_filled_price": "REAL",    # broker average fill price of the entry
+        # Protection re-armed AFTER entry (the original bracket legs died without
+        # filling — e.g. another process on the same Alpaca account canceled them).
+        # Those replacement legs are not children of the entry order, so
+        # reconciliation cannot reach them via order.legs; these ids are the link.
+        "protect_client_order_id": "TEXT",
+        "protect_alpaca_order_id": "TEXT",
     }
     for col, decl in add.items():
         if col not in have:
@@ -212,6 +218,24 @@ def set_entry_order_id(db_id: int, alpaca_order_id: Optional[str]):
             "UPDATE trades SET alpaca_order_id=?, entry_state='accepted' "
             "WHERE id=? AND status='open'",
             (alpaca_order_id, db_id),
+        )
+
+
+def set_protect_order_ids(
+    db_id: int,
+    client_order_id: Optional[str],
+    alpaca_order_id: Optional[str],
+):
+    """Record the re-armed protective order that now guards an open position.
+
+    Only ever set on an open trade: once the trade closes the ids are history and
+    must not be overwritten by a later sweep.
+    """
+    with _con() as c:
+        c.execute(
+            "UPDATE trades SET protect_client_order_id=?, protect_alpaca_order_id=? "
+            "WHERE id=? AND status='open'",
+            (client_order_id, alpaca_order_id, db_id),
         )
 
 

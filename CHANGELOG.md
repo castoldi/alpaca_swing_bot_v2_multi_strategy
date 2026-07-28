@@ -64,6 +64,52 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.19.0] - 2026-07-28
+
+### Added
+- **Re-armable broker protection, correlated by order id.** `trades` gains
+  `protect_client_order_id` / `protect_alpaca_order_id`, plus
+  `db.set_protect_order_ids()`. `bot._place_protective_oco()` re-arms a position
+  whose bracket legs died without filling, submitting a **single OCO**
+  (TP + SL) under our own `swingv2-protect-<strategy>-<ticker>-<hex>` client id —
+  OCO rather than two sells because Alpaca rejects a second concurrent sell leg
+  (403 40310000). `bot._protective_orders_missing()` reports whether an open
+  position currently has any resting sell we own, and **fails closed**: an
+  unreadable order book reads as "protected" so a duplicate can never be stacked
+  onto a live leg.
+
+  Why this is needed: the entry bracket's legs are *children of the entry order*,
+  so `_confirmed_exit_fill` reaches them via `order.legs`. Legs re-armed later have
+  no such parent, so without a stored id their eventual fill is unattributable and
+  reconciliation correctly refuses to claim it. `_confirmed_exit_fill` now checks
+  `_protect_order_candidates()` **first** (most precise link, no heuristic), and
+  `_exit_reason_for_fill` reports `protective_bracket_filled` for those fills —
+  matching the OCO parent id too, since the child leg carries a broker-generated
+  client id rather than ours.
+
+### Fixed
+- **META (trade 40) was holding 33 shares with no broker-side protection.**
+  Verified against the account on 2026-07-28: the entry filled, then its stop was
+  canceled and its take-profit expired without either filling, leaving the position
+  naked while the DB still showed SL $546.93 / TP $635.61. Re-armed via the new
+  path (`swingv2-protect-ensemble-META-de9dad54`, OCO TP $635.61 / SL $546.93) and
+  confirmed both legs live.
+
+  Root cause is **not** in this repo: nine sibling projects under
+  `C:\Data\ai_projects` share one Alpaca paper API key, and
+  `day-trader-v2_alpaca_VWAP_Overshoot` / `day-trader-volume-profile-v1` run an
+  account-wide `cancel_all_orders()` + `close_all_positions()` EOD flatten, which
+  cancels every bracket and liquidates every position in the account regardless of
+  which bot opened it. That is what left trades 36–39 stuck at `status='open'` with
+  their positions market-sold by orders this bot never placed. Those two bots are
+  now stopped; `day-trader-v3` is unaffected — it shares the key but deliberately
+  leaves unknown positions untouched. `_reconcile_and_exit` behaved correctly
+  throughout, refusing to attribute a foreign sell to its own trade; **the durable
+  fix is a separate Alpaca key per bot**, not looser ownership checks.
+
+### Changed
+
 ## [0.18.0] - 2026-07-27
 
 ### Added
@@ -932,6 +978,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
