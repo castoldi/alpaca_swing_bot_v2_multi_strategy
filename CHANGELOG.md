@@ -65,6 +65,47 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.19.1] - 2026-07-29
+
+### Added
+
+### Fixed
+- **Trades liquidated by a sibling project no longer stay open forever.**
+  Follow-up to 0.19.0, which diagnosed the cause but left the damaged rows and
+  the recurrence path in place. When another project on the shared Alpaca key
+  runs an account-wide `close_all_positions()`, this bot's shares are sold by an
+  order it never placed. `_confirmed_exit_fill` correctly refuses to call a
+  foreign sell our own exit, so those rows stayed `status='open'` indefinitely,
+  logged `"position missing but no confirmed exit fill"` every loop, and each
+  silently consumed one of the five position slots. Trades 36–39 (ARM, AMZN,
+  NVDA, AMD) had eaten 4 of 5 slots, leaving the bot able to open exactly one
+  new position.
+
+  `_reconcile_closed` now runs a last-resort post-mortem via
+  `_foreign_liquidation_fill`: if the position is gone and no owned order
+  explains it, a *filled* foreign sell of at least our quantity, timestamped
+  after our entry and unclaimed by any other trade, closes the row with the new
+  `external_liquidation` exit reason and emails an alert. Ownership rules are
+  unchanged everywhere else — the bot still never *initiates* an exit on a
+  position it cannot prove it owns — and P&L is credited for our share count
+  only, so an aggregated flatten covering several bots cannot inflate it.
+  Dashboard renders the reason as "⚠ Ext. liquidation".
+
+  Backfilled the four stuck rows from the broker record: −$63.33 realized
+  (ARM −$52.56, AMZN −$3.16, NVDA −$4.85, AMD −$2.76). Slots are free again.
+
+  Note the observed timing contradicts the "EOD flatten" description in 0.19.0:
+  the liquidations landed **2–58 seconds after each entry** (NVDA bought
+  16:28:39, sold 16:28:41), not at the close. Whatever ran it was flattening
+  continuously, so stopping a bot at EOD is not sufficient mitigation.
+
+  This is containment, not a cure. Nothing in this repo can stop another process
+  on the same key from flattening the account; the durable fix remains a
+  separate Alpaca account/key per bot.
+
+### Changed
+
 ## [0.19.0] - 2026-07-28
 
 ### Added
@@ -978,6 +1019,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

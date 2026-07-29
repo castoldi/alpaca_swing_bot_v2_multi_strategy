@@ -1163,14 +1163,36 @@ def _reconcile_closed(tc, trade: dict):
         return True
 
     exit_fill = _confirmed_exit_fill(tc, trade)
-    if exit_fill is None:
-        log.warning("  %s position missing but no confirmed exit fill for trade %s (coid=%s) — leaving open",
-                    ticker, trade.get("id"), trade.get("client_order_id"))
-        return False
+    if exit_fill is not None:
+        return _record_confirmed_exit(
+            trade, exit_fill, _exit_reason_for_fill(trade, exit_fill)
+        )
 
-    return _record_confirmed_exit(
-        trade, exit_fill, _exit_reason_for_fill(trade, exit_fill)
-    )
+    # Our position is gone and none of our own orders closed it. Before giving
+    # up, check whether a sibling project on the shared key liquidated us —
+    # otherwise the row stays open forever and silently burns a position slot.
+    foreign = _foreign_liquidation_fill(tc, trade)
+    if foreign is not None:
+        log.error(
+            "  %s trade %s was liquidated by a foreign order (%s) x%g @ $%.2f — "
+            "closing locally as external_liquidation",
+            ticker, trade.get("id"), foreign.get("alpaca_order_id"),
+            foreign["shares"], foreign["price"],
+        )
+        send_notification(
+            f"Bot V2: {ticker} liquidated externally",
+            f"{ticker} x{foreign['shares']:g} was sold @ ${foreign['price']:.2f} by order "
+            f"{foreign.get('alpaca_order_id')}, which this bot never placed.\n\n"
+            f"Another project sharing this Alpaca key almost certainly ran an "
+            f"account-wide close_all_positions(). The trade has been closed locally "
+            f"so its position slot is released.\n\n"
+            f"Durable fix: give this bot its own Alpaca account/key.",
+        )
+        return _record_confirmed_exit(trade, foreign, "external_liquidation")
+
+    log.warning("  %s position missing but no confirmed exit fill for trade %s (coid=%s) — leaving open",
+                ticker, trade.get("id"), trade.get("client_order_id"))
+    return False
 
 
 def _entry_never_filled(tc, trade: dict) -> bool:
@@ -1220,6 +1242,70 @@ def _confirmed_exit_fill(tc, trade: dict) -> dict | None:
             return fill
 
     return None
+
+
+def _foreign_sell_orders(tc, ticker: str) -> list:
+    """Filled SELL orders for the symbol that this bot did NOT place.
+
+    The account is shared with sibling projects, so a sell we never submitted is
+    a normal (if unwelcome) event rather than a data error. Kept separate from
+    `_our_sell_orders` on purpose: ownership still gates every exit this bot
+    *initiates*, and only the post-mortem below may look at foreign fills.
+    """
+    from alpaca.trading.requests import GetOrdersRequest
+    from alpaca.trading.enums import QueryOrderStatus, OrderSide
+
+    out = []
+    try:
+        req = GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED, symbols=[ticker], side=OrderSide.SELL, limit=100
+        )
+        out.extend(tc.get_orders(filter=req) or [])
+    except Exception as e:
+        log.debug("  %s: foreign sell lookup failed: %s", ticker, e)
+    return [
+        o
+        for o in out
+        if not str(getattr(o, "client_order_id", "") or "").startswith(CLIENT_ORDER_PREFIX)
+    ]
+
+
+def _foreign_liquidation_fill(tc, trade: dict) -> dict | None:
+    """A sell this bot never placed that closed out our position.
+
+    Sibling projects on the same Alpaca key run account-wide
+    `close_all_positions()`, which liquidates this bot's shares through orders
+    carrying someone else's client id. Attribution is still evidence-based — the
+    fill must be a real filled sell of at least our quantity, recorded after our
+    entry, and unclaimed by any other DB trade. P&L is credited for our share
+    count only, so an aggregated flatten covering several bots cannot inflate it.
+    """
+    owned = float(trade.get("shares") or 0)
+    if owned <= 0:
+        return None
+
+    candidates = []
+    for order in _foreign_sell_orders(tc, trade["ticker"]):
+        if not _order_is_after_trade(order, trade):
+            continue
+        fill = _exit_fill_from_order(order, require_prefix=False)
+        if fill is None or fill["shares"] < owned - 1e-9:
+            continue
+        if db_mod.exit_order_already_used(fill["alpaca_order_id"]):
+            continue
+        ts = _parse_timestamp(getattr(order, "filled_at", None)) or _parse_timestamp(
+            getattr(order, "submitted_at", None)
+        )
+        # Credit our shares at their price; the surplus belongs to another bot.
+        fill["shares"] = owned
+        fill["notional"] = owned * fill["price"]
+        candidates.append((ts, fill))
+
+    if not candidates:
+        return None
+    # Earliest qualifying fill is the one that actually took our position away.
+    candidates.sort(key=lambda pair: (pair[0] is None, pair[0]))
+    return candidates[0][1]
 
 
 def _protect_order_candidates(tc, trade: dict) -> list:

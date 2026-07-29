@@ -267,3 +267,178 @@ def test_clear_ticker_still_enters(monkeypatch):
 
     assert len(placed) == 1
     assert placed[0][0] == "NVDA"
+
+
+# ── External liquidation by a sibling project ─────────────────────────────────
+#
+# Trades 36-40: a sibling bot on the same key ran account-wide
+# close_all_positions(). Our brackets were canceled with 0 fills and the shares
+# were market-sold by orders this bot never placed. `_confirmed_exit_fill`
+# rightly refuses to call a foreign sell our exit, so the rows stayed
+# status='open' forever and burned 4 of 5 position slots. These pin down the
+# post-mortem path that closes them WITHOUT loosening ownership anywhere else.
+
+def _order(coid, *, qty, price, submitted, status="filled", side="sell"):
+    return SimpleNamespace(
+        id=f"oid-{coid}",
+        client_order_id=coid,
+        symbol="NVDA",
+        side=SimpleNamespace(value=side),
+        status=SimpleNamespace(value=status),
+        filled_qty=str(qty),
+        filled_avg_price=(None if price is None else str(price)),
+        filled_at=submitted,
+        submitted_at=submitted,
+        updated_at=submitted,
+        legs=None,
+    )
+
+
+class _LiquidatedClient:
+    """Position gone; only the supplied sell orders exist at the broker."""
+
+    def __init__(self, sells):
+        self.sells = list(sells)
+
+    def get_orders(self, filter=None):
+        want_closed = str(getattr(getattr(filter, "status", None), "value", "")) == "closed"
+        return list(self.sells) if want_closed else []
+
+    def get_order_by_id(self, _order_id, filter=None):
+        raise RuntimeError("no such order")
+
+    def get_order_by_client_id(self, _coid):
+        raise RuntimeError("no such order")
+
+
+@pytest.fixture
+def liquidation_db(monkeypatch):
+    """Capture close_trade instead of touching the real SQLite file."""
+    state = {"closed": [], "used": set(), "progress": []}
+
+    def record(trade_id, order_id, coid, shares, notional):
+        state["progress"].append((trade_id, order_id, shares, notional))
+
+    def totals(trade_id):
+        rows = [p for p in state["progress"] if p[0] == trade_id]
+        return sum(r[2] for r in rows), sum(r[3] for r in rows)
+
+    def close(db_id, exit_date, exit_price, reason, bars, shares, pnl, pnl_pct, **kw):
+        state["closed"].append(
+            {"id": db_id, "price": exit_price, "reason": reason,
+             "shares": shares, "pnl": pnl}
+        )
+
+    monkeypatch.setattr(bot.db_mod, "record_exit_order_progress", record)
+    monkeypatch.setattr(bot.db_mod, "get_exit_fill_totals", totals)
+    monkeypatch.setattr(bot.db_mod, "close_trade", close)
+    monkeypatch.setattr(
+        bot.db_mod, "exit_order_already_used", lambda oid: oid in state["used"]
+    )
+    monkeypatch.setattr(bot, "send_notification", lambda *_a, **_k: None)
+    return state
+
+
+def _trade(shares=97.0):
+    return {
+        "id": 38,
+        "ticker": "NVDA",
+        "strategy": "ensemble",
+        "entry_date": "2026-07-21 12:00:00",
+        "created_at": "2026-07-21T16:28:39+00:00",
+        "entry_price": 205.77,
+        "entry_filled_price": 205.19,
+        "shares": shares,
+        "client_order_id": "swingv2-entry-ensemble-NVDA-18927007",
+        "alpaca_order_id": "entry-oid",
+    }
+
+
+def test_foreign_liquidation_closes_the_stuck_trade(liquidation_db):
+    """The real trade-38 shape: full-size foreign sell right after our entry."""
+    client = _LiquidatedClient([
+        _order("77631560-453c-48e2", qty=97, price=205.14,
+               submitted="2026-07-21T16:28:41+00:00"),
+    ])
+
+    assert bot._reconcile_closed(client, _trade()) is True
+
+    closed = liquidation_db["closed"]
+    assert len(closed) == 1
+    assert closed[0]["reason"] == "external_liquidation"
+    assert closed[0]["price"] == pytest.approx(205.14)
+    # 97 x (205.14 - 205.19), the loss the flatten actually cost us.
+    assert closed[0]["pnl"] == pytest.approx(-4.85, abs=0.01)
+
+
+def test_our_own_sell_is_never_treated_as_foreign(liquidation_db):
+    """Ownership is not loosened: a prefixed fill exits by the normal path."""
+    client = _LiquidatedClient([
+        _order("swingv2-exit-ensemble-NVDA-abc", qty=97, price=210.0,
+               submitted="2026-07-21T18:00:00+00:00"),
+    ])
+
+    assert bot._reconcile_closed(client, _trade()) is True
+
+    # Our own order id -> a real strategy reason, not the liquidation label.
+    assert liquidation_db["closed"][0]["reason"] != "external_liquidation"
+
+
+def test_foreign_sell_before_our_entry_is_ignored(liquidation_db):
+    """An older unrelated sell must not be back-attributed to this trade."""
+    client = _LiquidatedClient([
+        _order("stale-order", qty=97, price=190.0,
+               submitted="2026-07-01T15:00:00+00:00"),
+    ])
+
+    assert bot._reconcile_closed(client, _trade()) is False
+    assert liquidation_db["closed"] == []
+
+
+def test_foreign_sell_smaller_than_our_position_is_ignored(liquidation_db):
+    """A 10-share foreign sell cannot explain our 97 shares disappearing."""
+    client = _LiquidatedClient([
+        _order("someone-else", qty=10, price=205.0,
+               submitted="2026-07-21T16:28:41+00:00"),
+    ])
+
+    assert bot._reconcile_closed(client, _trade()) is False
+    assert liquidation_db["closed"] == []
+
+
+def test_aggregated_flatten_credits_only_our_shares(liquidation_db):
+    """Two bots held NVDA; the flatten sold 150. We own 97 of that P&L, not 150."""
+    client = _LiquidatedClient([
+        _order("aggregate-flatten", qty=150, price=205.14,
+               submitted="2026-07-21T16:28:41+00:00"),
+    ])
+
+    assert bot._reconcile_closed(client, _trade()) is True
+
+    assert liquidation_db["closed"][0]["shares"] == pytest.approx(97.0)
+    assert liquidation_db["closed"][0]["pnl"] == pytest.approx(-4.85, abs=0.01)
+
+
+def test_fill_already_claimed_by_another_trade_is_not_reused(liquidation_db):
+    """One broker fill closes exactly one DB trade."""
+    liquidation_db["used"].add("oid-aggregate-flatten")
+    client = _LiquidatedClient([
+        _order("aggregate-flatten", qty=150, price=205.14,
+               submitted="2026-07-21T16:28:41+00:00"),
+    ])
+
+    assert bot._reconcile_closed(client, _trade()) is False
+    assert liquidation_db["closed"] == []
+
+
+def test_earliest_qualifying_foreign_fill_wins(liquidation_db):
+    """The first flatten took the position; later sells are someone else's."""
+    client = _LiquidatedClient([
+        _order("later", qty=97, price=250.0,
+               submitted="2026-07-23T16:00:00+00:00"),
+        _order("the-flatten", qty=97, price=205.14,
+               submitted="2026-07-21T16:28:41+00:00"),
+    ])
+
+    assert bot._reconcile_closed(client, _trade()) is True
+    assert liquidation_db["closed"][0]["price"] == pytest.approx(205.14)
