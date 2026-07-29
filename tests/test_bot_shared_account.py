@@ -295,20 +295,46 @@ def _order(coid, *, qty, price, submitted, status="filled", side="sell"):
 
 
 class _LiquidatedClient:
-    """Position gone; only the supplied sell orders exist at the broker."""
+    """The real post-flatten shape: our entry filled, its bracket legs were
+    canceled with 0 fills, and the supplied sell orders exist at the broker.
 
-    def __init__(self, sells):
+    Reading our own entry order back matters — the legs hanging off it are how
+    a genuine bracket fill is recognised as ours despite its broker-generated
+    client id. `entry_readable=False` simulates the API failing that lookup.
+    """
+
+    def __init__(self, sells, entry_readable=True):
         self.sells = list(sells)
+        self.entry_readable = entry_readable
+
+    def _entry(self):
+        canceled_leg = _order("cea37086-canceled-stop", qty=97, price=None,
+                              submitted="2026-07-21T16:28:39+00:00", status="canceled")
+        canceled_leg.filled_qty = "0"
+        return SimpleNamespace(
+            id="entry-oid",
+            client_order_id="swingv2-entry-ensemble-NVDA-18927007",
+            symbol="NVDA",
+            side=SimpleNamespace(value="buy"),
+            status=SimpleNamespace(value="filled"),
+            filled_qty="97",
+            filled_avg_price="205.19",
+            legs=[canceled_leg],
+        )
 
     def get_orders(self, filter=None):
         want_closed = str(getattr(getattr(filter, "status", None), "value", "")) == "closed"
         return list(self.sells) if want_closed else []
 
     def get_order_by_id(self, _order_id, filter=None):
-        raise RuntimeError("no such order")
+        if not self.entry_readable:
+            raise RuntimeError("api unavailable")
+        return self._entry()
 
     def get_order_by_client_id(self, _coid):
-        raise RuntimeError("no such order")
+        if not self.entry_readable:
+            raise RuntimeError("api unavailable")
+        return self._entry()
 
 
 @pytest.fixture
@@ -442,3 +468,17 @@ def test_earliest_qualifying_foreign_fill_wins(liquidation_db):
 
     assert bot._reconcile_closed(client, _trade()) is True
     assert liquidation_db["closed"][0]["price"] == pytest.approx(205.14)
+
+
+def test_unreadable_own_orders_blocks_foreign_attribution(liquidation_db):
+    """Fail closed: our own bracket legs also carry broker client ids, so with
+    the parent order unreadable a real stop fill is indistinguishable from a
+    foreign flatten. Leaving the row open beats mislabeling it."""
+    client = _LiquidatedClient(
+        [_order("could-be-our-own-stop-leg", qty=97, price=205.14,
+                submitted="2026-07-21T16:28:41+00:00")],
+        entry_readable=False,
+    )
+
+    assert bot._reconcile_closed(client, _trade()) is False
+    assert liquidation_db["closed"] == []

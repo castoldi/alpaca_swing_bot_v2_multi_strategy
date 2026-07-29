@@ -1284,6 +1284,19 @@ def _foreign_liquidation_fill(tc, trade: dict) -> dict | None:
     if owned <= 0:
         return None
 
+    # Fail closed on unreadable broker state. Our own bracket legs carry
+    # broker-generated client ids, so they look "foreign" by prefix alone and are
+    # ruled out only by reaching them through the parent order above. If that
+    # parent could not be read, a legitimate stop fill is indistinguishable from
+    # someone else's flatten — leave the trade open rather than mislabel it.
+    if not _entry_order_candidates(tc, trade) and not _protect_order_candidates(tc, trade):
+        log.warning(
+            "  %s: cannot read our own orders — not attributing the missing "
+            "position to a foreign sell",
+            trade["ticker"],
+        )
+        return None
+
     candidates = []
     for order in _foreign_sell_orders(tc, trade["ticker"]):
         if not _order_is_after_trade(order, trade):

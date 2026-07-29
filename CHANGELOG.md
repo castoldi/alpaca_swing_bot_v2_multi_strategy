@@ -66,6 +66,26 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.19.2] - 2026-07-29
+
+### Added
+
+### Fixed
+- **`_foreign_liquidation_fill` now fails closed on unreadable broker state.**
+  Gap in 0.19.1: a bracket's child legs carry *broker-generated* client ids, not
+  our `swingv2` prefix, so they are ruled out as "ours" only by being reachable
+  through the parent entry/protect order. If that parent lookup failed
+  transiently, a perfectly normal stop-loss fill matched every foreign-sell
+  criterion and would have been closed as `external_liquidation` — correct exit
+  price and P&L, but a wrong reason and a false "another project liquidated you"
+  alert. The post-mortem now requires that at least one of our own orders was
+  readable before attributing anything to a foreign sell; otherwise the trade is
+  left open, matching how `_protective_orders_missing` and
+  `_open_leveraged_notional` already fail closed.
+
+### Changed
+
 ## [0.19.1] - 2026-07-29
 
 ### Added
@@ -1019,6 +1039,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
