@@ -366,7 +366,7 @@ kind of model whose in-sample backtest would look excellent for reasons
 | # | Item | Change from companion doc |
 |---|---|---|
 | 1 | Validation methodology (§3.7) | Unchanged — still first |
-| 2 | Index regime filter, 200-day SMA (§3.3) | **Confirmed as the right choice** — it beat the HMM |
+| 2 | Index regime filter, 200-day SMA (§3.3) | **Confirmed as the right choice over the HMM** — but see [bear-markets-and-crashes.md](bear-markets-and-crashes.md), which tested this window's blind spot (2000–2002, 2007–2009, neither reachable from the Alpaca cache) and found "drawdown ≥10% off the 52-week high" beats the 200-day SMA on retained return, max-drawdown cut, and whipsaw frequency across all four real ≥20% bears since 1990. Worth an A/B test before shipping either. |
 | 3 | Volatility-targeted sizing (§3.1) | **Use EWMA, not ATR** — measured here |
 | 3b | Vol-scaled kill switch | **New** — cheap, follows from the same EWMA series |
 | 4 | Correlation-aware caps (§3.2) | Unchanged |

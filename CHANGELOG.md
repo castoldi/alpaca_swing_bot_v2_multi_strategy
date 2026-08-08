@@ -55,6 +55,23 @@ _Changes landed but not yet released under a new version number go here._
 
   Supersedes the ATR-based estimator originally proposed in
   systematic-strategies.md §3.1; that section now carries a pointer.
+- **[docs/bear-markets-and-crashes.md](docs/bear-markets-and-crashes.md)** —
+  catalog of every S&P 500 bear market (≥20% peak-to-trough) and fast crash since
+  1990, using Yahoo Finance daily history to reach 2000–2002 and 2007–2009, which
+  the Alpaca cache cannot. Docs-only; no behaviour change.
+
+  Four real ≥20% bears found (2000-03, 2007-10, 2020-02, 2022-01); this bot's own
+  tickers fell 1.2×–3.5× harder than the S&P in each one. Point-in-time signal
+  tests show bear markets ARE identifiable but only as fast confirmation, not early
+  warning — the best signal tested (drawdown ≥10% off the 52-week high) fired
+  8–50 days after the top, by which point 23–54% of the eventual decline had
+  already happened. Full-history simulation: that signal would have retained 64%
+  of buy-and-hold's total return while cutting max drawdown 54% (−26.1% vs
+  −56.8%), beating the previously-endorsed 200-day SMA filter on every axis.
+  VIX≥30 rejected as a standalone gate — its episodes flicker (avg 8 days) and
+  barely reduced drawdown. Recommends an A/B backtest of the two surviving
+  signals on the bot's own strategies (not just the index) before implementing a
+  market-wide entry gate.
 
 
 
