@@ -237,6 +237,73 @@ async def bot_orders(limit: int = Query(50, ge=1, le=200)):
         return JSONResponse({"error": str(e), "orders": []}, status_code=500)
 
 
+@app.get("/api/pnl")
+async def get_pnl():
+    """This bot's own P&L, computed from the local ledger.
+
+    Distinct from /api/account, which reports the whole Alpaca account — that key
+    is shared with other projects, so its equity is not this bot's performance.
+    Open positions are marked with live prices when reachable; when a mark is
+    missing, `marks_complete` is false and unrealized P&L reads as a floor.
+    """
+    import portfolio
+    import broker_sync
+
+    trades = db_mod.get_trades_for_ledger()
+    open_trades = [t for t in trades if str(t.get("status") or "") == "open"]
+
+    checks: list = []
+    marks: dict = {}
+    try:
+        tc = _get_trading()
+        checks = await run_in_threadpool(broker_sync.check_open_trades, tc, open_trades)
+        marks = broker_sync.marks_from_checks(checks)
+    except Exception as e:
+        marks = {}
+        checks = []
+        sync_error = str(e)
+    else:
+        sync_error = None
+
+    unmarked = [
+        str(t.get("ticker") or "") for t in open_trades
+        if str(t.get("ticker") or "") not in marks
+    ]
+    if unmarked:
+        marks.update(await run_in_threadpool(broker_sync.fetch_marks, unmarked))
+
+    snap = portfolio.build_snapshot(
+        trades, marks,
+        broker_status=broker_sync.status_map(checks) if checks else None,
+    )
+    payload = snap.as_dict()
+    payload["capital_base_method"] = "peak_deployed"
+    if sync_error:
+        payload["sync_error"] = sync_error
+    return payload
+
+
+@app.get("/api/balance-history")
+async def balance_history(
+    limit: int = Query(500, ge=1, le=5000),
+    daily: bool = True,
+):
+    """The bot's own equity curve. `daily=true` returns one point per day."""
+    rows = (
+        db_mod.get_daily_balance_history(limit) if daily
+        else db_mod.get_balance_history(limit)
+    )
+    latest = db_mod.get_latest_balance()
+    base = float(latest["starting_capital"]) if latest and latest["starting_capital"] else 0.0
+    # Percentages are derived here, not stored: the capital base is a running
+    # maximum, so a stored percentage would go stale the moment it grows.
+    for r in rows:
+        pnl = float(r.get("realized_pnl") or 0) + float(r.get("unrealized_pnl") or 0)
+        r["total_pnl"] = round(pnl, 2)
+        r["return_pct"] = round(pnl / base * 100, 4) if base else 0.0
+    return {"history": rows, "starting_capital": base, "daily": daily}
+
+
 @app.get("/api/runs")
 async def get_runs(limit: int = Query(50, ge=1, le=200)):
     return {"runs": db_mod.get_recent_runs(limit)}

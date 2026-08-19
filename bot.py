@@ -27,7 +27,9 @@ from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days, strate
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
+import broker_sync
 import data_feed
+import portfolio
 import runtime
 import tax as tax_mod
 from position_sizing import leveraged_headroom, whole_share_position_size
@@ -977,6 +979,10 @@ def run_once(strategy: StrategyType) -> int:
         # Tax records are recomputed over the whole history because a new
         # purchase can retroactively wash an earlier loss.
         _refresh_tax_records()
+
+        # Confirm our own positions with the broker and append a point to the
+        # bot's local equity curve. Bookkeeping only — never places an order.
+        _record_balance_snapshot(strat_name, tc)
 
     except Exception as e:
         error = str(e)
@@ -1939,6 +1945,161 @@ _MARKET_OPEN  = dtime(9, 30)
 _MARKET_CLOSE = dtime(16, 0)
 
 
+# ── Local ledger ──────────────────────────────────────────────────────────────
+
+def _broker_equity(tc) -> float | None:
+    """Account equity, stored only as context.
+
+    The key is shared with other projects, so this number moves on trades this
+    bot never made. It is recorded beside the bot's own equity for comparison
+    and is never an input to the bot's P&L.
+    """
+    try:
+        return float(tc.get_account().equity)
+    except Exception:
+        return None
+
+
+def _record_balance_snapshot(strat_name: str, tc) -> portfolio.Snapshot | None:
+    """Confirm this bot's own open trades, then append to its local equity curve.
+
+    Read-only against the broker and never raises: a bookkeeping failure must
+    not abort a trading cycle or leave a run marked as errored.
+    """
+    try:
+        trades = db_mod.get_trades_for_ledger()
+        open_trades = [t for t in trades if str(t.get("status") or "") == "open"]
+
+        checks = broker_sync.check_open_trades(tc, open_trades)
+        for check in checks:
+            try:
+                db_mod.set_broker_sync(check.trade_id, check.status, check.broker_shares)
+            except Exception as exc:
+                log.warning("  Broker verdict not stored for trade %s: %s",
+                            check.trade_id, exc)
+
+        # Prefer the broker's own price for a position it holds; fall back to
+        # the market feed for anything it could not price (e.g. a `missing` row).
+        marks = broker_sync.marks_from_checks(checks)
+        unmarked = [
+            str(t.get("ticker") or "") for t in open_trades
+            if str(t.get("ticker") or "") not in marks
+        ]
+        if unmarked:
+            marks.update(broker_sync.fetch_marks(unmarked))
+
+        snap = portfolio.build_snapshot(
+            trades, marks,
+            strategy=strat_name,
+            broker_status=broker_sync.status_map(checks),
+        )
+        db_mod.save_balance_snapshot(
+            snap.as_dict(), source="bot_run", broker_equity=_broker_equity(tc)
+        )
+
+        log.info(
+            "Bot ledger: equity $%.2f | realized $%+.2f | unrealized $%+.2f | "
+            "total $%+.2f (%+.2f%% on $%.2f base) | %d open, %d closed",
+            snap.equity, snap.realized_pnl, snap.unrealized_pnl, snap.total_pnl,
+            snap.total_return_pct * 100, snap.starting_capital,
+            snap.open_count, snap.closed_count,
+        )
+        if not snap.marks_complete:
+            log.warning("  Some positions had no price mark — equity is a floor")
+        if snap.broker_mismatched:
+            log.warning("  %d open trade(s) did not match the broker — see "
+                        "broker_status on the trades table", snap.broker_mismatched)
+        return snap
+    except Exception as exc:
+        log.warning("Balance snapshot not recorded (%s)", exc)
+        return None
+
+
+def build_pnl_report(strategy: str | None = None) -> str:
+    """Human-readable lifetime P&L, computed entirely from the local database.
+
+    Marks for open positions are fetched live when reachable; without them the
+    unrealized leg reads as a floor rather than a guess.
+    """
+    trades = db_mod.get_trades_for_ledger()
+    open_trades = [t for t in trades if str(t.get("status") or "") == "open"]
+
+    checks: list = []
+    marks: dict[str, float] = {}
+    try:
+        checks = broker_sync.check_open_trades(_get_trading(), open_trades)
+        marks = broker_sync.marks_from_checks(checks)
+    except Exception as exc:
+        log.warning("Broker unreachable for the report (%s)", exc)
+    unmarked = [
+        str(t.get("ticker") or "") for t in open_trades
+        if str(t.get("ticker") or "") not in marks
+    ]
+    if unmarked:
+        marks.update(broker_sync.fetch_marks(unmarked))
+
+    snap = portfolio.build_snapshot(
+        trades, marks,
+        strategy=strategy,
+        broker_status=broker_sync.status_map(checks) if checks else None,
+    )
+
+    # ASCII only: this prints to the Windows console, which is cp1252 and
+    # raises UnicodeEncodeError on box-drawing characters and em dashes.
+    w = 62
+    lines = [
+        "=" * w,
+        "  BOT V2 - LIFETIME P&L (local ledger, this bot's trades only)",
+        "=" * w,
+        f"  Capital base (peak deployed)  ${snap.starting_capital:>14,.2f}",
+        f"  Realized P&L                  ${snap.realized_pnl:>+14,.2f}",
+        f"  Unrealized P&L                ${snap.unrealized_pnl:>+14,.2f}",
+        "  " + "-" * (w - 4),
+        f"  TOTAL P&L                     ${snap.total_pnl:>+14,.2f}",
+        f"  TOTAL RETURN                   {snap.total_return_pct * 100:>+14.2f}%",
+        f"  Bot equity                    ${snap.equity:>14,.2f}",
+        "",
+        f"  Closed trades  {snap.closed_count:<6}  wins {snap.wins}  losses {snap.losses}"
+        f"  win rate {snap.win_rate * 100:.1f}%",
+        f"  Profit factor  {snap.profit_factor:<6.2f}  avg/trade {snap.avg_pnl_pct * 100:+.2f}%",
+        f"  Best trade     ${snap.best_trade:+,.2f}     Worst ${snap.worst_trade:+,.2f}",
+        f"  Deployed total ${snap.total_deployed:,.2f}  "
+        f"(return on deployed {snap.return_on_deployed * 100:+.2f}%)",
+        f"  First trade    {snap.first_trade_at or 'n/a'}",
+    ]
+
+    if snap.positions:
+        lines += ["", f"  OPEN POSITIONS ({snap.open_count})", "  " + "-" * (w - 4)]
+        for p in snap.positions:
+            if p.unrealized_pnl is None:
+                pnl_txt = "        (no mark)"
+            else:
+                pnl_txt = f"${p.unrealized_pnl:>+10,.2f} {p.unrealized_pct * 100:>+6.2f}%"
+            lines.append(
+                f"  {p.ticker:<6} {p.shares:>6.0f} @ ${p.entry_price:>8,.2f}  "
+                f"{pnl_txt}  [{p.broker_status}]"
+            )
+
+    if not snap.marks_complete:
+        lines += ["", "  NOTE: a position had no price mark — unrealized P&L is a floor."]
+    if snap.broker_mismatched:
+        lines += [f"  NOTE: {snap.broker_mismatched} open trade(s) unconfirmed by Alpaca."]
+    lines.append("=" * w)
+    return "\n".join(lines)
+
+
+def rebuild_balance_history(strategy: str | None = None) -> int:
+    """Backfill the daily equity curve from closed-trade history.
+
+    Only realized P&L can be recovered retroactively — historical marks were
+    never stored — so rebuilt points carry source='rebuilt' and are the only
+    rows a later rebuild is allowed to replace.
+    """
+    trades = db_mod.get_trades_for_ledger()
+    points = portfolio.realized_equity_curve(trades)
+    return db_mod.replace_rebuilt_balance_history(points, strategy)
+
+
 def _in_trading_hours() -> bool:
     """True only while the market is actually open (Alpaca clock).
 
@@ -1981,7 +2142,20 @@ def main():
                         help="Trading strategy (required)")
     parser.add_argument("--loop", action="store_true", help="Run continuously")
     parser.add_argument("--interval", type=int, default=30, help="Loop interval (min)")
+    parser.add_argument("--pnl", action="store_true",
+                        help="Print lifetime P&L from the local ledger and exit")
+    parser.add_argument("--rebuild-balance-history", action="store_true",
+                        help="Backfill the daily equity curve from closed trades and exit")
     args = parser.parse_args()
+
+    # Read-only reporting: no strategy, no PID registration, no trading.
+    if args.pnl:
+        print(build_pnl_report(args.strategy))
+        return
+    if args.rebuild_balance_history:
+        n = rebuild_balance_history(args.strategy)
+        print(f"Rebuilt {n} daily balance point(s) from closed-trade history.")
+        return
 
     if args.strategy is None:
         choices = "\n  ".join(s.value for s in StrategyType)

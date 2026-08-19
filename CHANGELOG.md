@@ -17,6 +17,51 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Self-contained P&L ledger ([`portfolio.py`](portfolio.py))** — the bot now
+  computes its own balance, realized/unrealized P&L, and lifetime totals from
+  the local `trades` table alone. The Alpaca key is shared with several other
+  projects, so account equity was never this bot's performance; nothing in the
+  ledger reads it.
+  - Capital base is `peak_deployed_capital` — the most capital the bot ever held
+    at risk at once, derived from local history (currently **$110,703.69**), so
+    a percentage return needs no configuration and no segregated account.
+  - Intent rows that never became positions (`entry_not_filled`,
+    `entry_not_submitted`, zero shares) no longer count as trades: closed-trade
+    count and win rate now read 49 / 73.5% instead of 50 / 72.0%.
+  - A position with no usable price mark contributes **nothing** to unrealized
+    P&L and flips `marks_complete` false, so equity reads as a floor rather than
+    a guess.
+- **Broker confirmation ([`broker_sync.py`](broker_sync.py))** — read-only sweep
+  that verifies only trades carrying this bot's `swingv2-` correlation id
+  against Alpaca positions, per trade: `confirmed` / `mismatch` / `missing` /
+  `unverified`. Sibling bots' positions are never inspected or claimed. An
+  unreadable broker reports `unverified`, never `missing`, so an API outage
+  cannot be mistaken for a liquidation. Verdicts persist to
+  `trades.broker_status` / `broker_shares` / `broker_checked_at`.
+- **`balance_history` table** — one equity-curve point per bot loop, written
+  after reconciliation. Stores dollars only; percentages are derived on read
+  because the capital base is a running maximum that restates old percentages.
+- **`python bot.py --pnl`** — prints the lifetime P&L report from the local
+  ledger. Needs no `--strategy`, places no orders, registers no PID.
+- **`python bot.py --rebuild-balance-history`** — backfills the daily curve from
+  closed-trade history (realized-only; historical marks were never stored).
+  Rebuilt rows are tagged `source='rebuilt'` and are the only rows a later
+  rebuild may replace, so live snapshots are never destroyed.
+- **`GET /api/pnl`** and **`GET /api/balance-history`** — the bot's own numbers,
+  as distinct from `/api/account`, which reports the whole shared Alpaca account.
+
+### Fixed
+- **Tests no longer write to the live trading database.** Tests driving
+  `run_once` stub db functions one at a time, so any call they miss landed in
+  `dashboard/swing_bot_v2.db`. A full suite run wrote 17 bogus balance snapshots
+  (carrying fake account equity) into the real equity curve; those rows were
+  removed. `tests/conftest.py` now redirects `db._DB` to a per-test temp file for
+  the whole suite, so no test can reach production regardless of what it stubs.
+- `db.get_trades_for_ledger()` reads the full trade history unbounded. Lifetime
+  totals previously would have silently truncated at `get_all_trades`' 200-row
+  limit once the bot passed that many trades.
+
+### Added
 - **[docs/systematic-strategies.md](docs/systematic-strategies.md)** — research
   survey of systematic-trading techniques and how each maps onto this codebase.
   Documents-only; no behaviour change.
@@ -83,6 +128,15 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.20.0] - 2026-08-19
+
+### Added
+
+### Fixed
+
+### Changed
 
 ## [0.19.2] - 2026-07-29
 
@@ -1056,6 +1110,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

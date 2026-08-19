@@ -120,6 +120,33 @@ def _ensure_tables():
                 PRIMARY KEY (trade_id, alpaca_order_id),
                 FOREIGN KEY (trade_id) REFERENCES trades(id)
             );
+            -- The bot's own equity curve. Broker equity is shared with other
+            -- projects on the same Alpaca key and therefore cannot measure this
+            -- bot; every column here is derived from the local trades table.
+            -- Dollars are stored, percentages are derived on read, because the
+            -- capital base is a running maximum that restates old percentages.
+            CREATE TABLE IF NOT EXISTS balance_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                strategy TEXT,
+                starting_capital REAL NOT NULL DEFAULT 0,
+                realized_pnl REAL NOT NULL DEFAULT 0,
+                unrealized_pnl REAL NOT NULL DEFAULT 0,
+                equity REAL NOT NULL DEFAULT 0,
+                open_positions INTEGER NOT NULL DEFAULT 0,
+                open_cost_basis REAL NOT NULL DEFAULT 0,
+                open_market_value REAL NOT NULL DEFAULT 0,
+                closed_trades INTEGER NOT NULL DEFAULT 0,
+                wins INTEGER NOT NULL DEFAULT 0,
+                losses INTEGER NOT NULL DEFAULT 0,
+                marks_complete INTEGER NOT NULL DEFAULT 1,
+                broker_confirmed INTEGER NOT NULL DEFAULT 0,
+                broker_mismatched INTEGER NOT NULL DEFAULT 0,
+                broker_equity REAL,
+                source TEXT NOT NULL DEFAULT 'bot_run'
+            );
+            CREATE INDEX IF NOT EXISTS idx_balance_history_ts
+                ON balance_history(ts);
         """)
         _migrate(c)
 
@@ -145,6 +172,11 @@ def _migrate(c: sqlite3.Connection):
         # reconciliation cannot reach them via order.legs; these ids are the link.
         "protect_client_order_id": "TEXT",
         "protect_alpaca_order_id": "TEXT",
+        # Last broker-confirmation verdict from broker_sync (read-only check
+        # that the position the bot believes it holds is really there).
+        "broker_status": "TEXT",         # confirmed | mismatch | missing | unverified
+        "broker_shares": "REAL",         # quantity the broker reported
+        "broker_checked_at": "TEXT",
     }
     for col, decl in add.items():
         if col not in have:
@@ -420,6 +452,131 @@ def get_closed_trades(limit: int = 200) -> list[dict]:
             "SELECT * FROM trades WHERE status='closed' ORDER BY entry_date DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_trades_for_ledger() -> list[dict]:
+    """Every trade ever recorded, unbounded — the input to all P&L math.
+
+    Deliberately not `get_all_trades`, whose LIMIT would silently truncate the
+    history and understate lifetime totals once the bot passes that many trades.
+    """
+    _ensure_tables()
+    with _con() as c:
+        rows = c.execute("SELECT * FROM trades ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_broker_sync(db_id: int, status: str, broker_shares: Optional[float] = None):
+    """Record the latest broker-confirmation verdict for one open trade.
+
+    Scoped to open rows: once a trade closes the verdict is history and must not
+    be overwritten by a later sweep that no longer sees the position.
+    """
+    with _con() as c:
+        c.execute(
+            "UPDATE trades SET broker_status=?, broker_shares=?, broker_checked_at=? "
+            "WHERE id=? AND status='open'",
+            (status, broker_shares, datetime.now(timezone.utc).isoformat(), db_id),
+        )
+
+
+# ── Balance history ───────────────────────────────────────────────────────────
+
+def save_balance_snapshot(snapshot: dict, source: str = "bot_run",
+                          broker_equity: Optional[float] = None) -> int:
+    """Append one point to the bot's own equity curve."""
+    _ensure_tables()
+    with _con() as c:
+        cur = c.execute(
+            "INSERT INTO balance_history (ts, strategy, starting_capital, "
+            "realized_pnl, unrealized_pnl, equity, open_positions, "
+            "open_cost_basis, open_market_value, closed_trades, wins, losses, "
+            "marks_complete, broker_confirmed, broker_mismatched, broker_equity, "
+            "source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                snapshot["ts"], snapshot.get("strategy"),
+                snapshot["starting_capital"], snapshot["realized_pnl"],
+                snapshot["unrealized_pnl"], snapshot["equity"],
+                snapshot["open_count"], snapshot["open_cost_basis"],
+                snapshot["open_market_value"], snapshot["closed_count"],
+                snapshot["wins"], snapshot["losses"],
+                int(bool(snapshot["marks_complete"])),
+                snapshot.get("broker_confirmed", 0),
+                snapshot.get("broker_mismatched", 0),
+                broker_equity, source,
+            ),
+        )
+        return cur.lastrowid
+
+
+def get_balance_history(limit: int = 500, since: Optional[str] = None) -> list[dict]:
+    """Equity-curve points, oldest first (chart order)."""
+    _ensure_tables()
+    with _con() as c:
+        if since:
+            rows = c.execute(
+                "SELECT * FROM balance_history WHERE ts >= ? ORDER BY ts LIMIT ?",
+                (since, limit),
+            ).fetchall()
+        else:
+            # Newest `limit` rows, then flipped back into chronological order.
+            rows = c.execute(
+                "SELECT * FROM (SELECT * FROM balance_history ORDER BY ts DESC "
+                "LIMIT ?) ORDER BY ts", (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_latest_balance() -> Optional[dict]:
+    _ensure_tables()
+    with _con() as c:
+        row = c.execute(
+            "SELECT * FROM balance_history ORDER BY ts DESC, id DESC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_daily_balance_history(limit: int = 365) -> list[dict]:
+    """One point per calendar day — the last snapshot of each day, oldest first.
+
+    The bot snapshots every loop pass (~18/day), which is far too dense to plot
+    a multi-month curve; this is the daily close of the bot's own book.
+    """
+    _ensure_tables()
+    with _con() as c:
+        rows = c.execute(
+            "SELECT * FROM (SELECT * FROM balance_history WHERE id IN "
+            "(SELECT MAX(id) FROM balance_history GROUP BY substr(ts, 1, 10)) "
+            "ORDER BY ts DESC LIMIT ?) ORDER BY ts",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def replace_rebuilt_balance_history(points: list[dict], strategy: Optional[str] = None) -> int:
+    """Swap in a freshly rebuilt realized-only curve.
+
+    Only rows previously written with source='rebuilt' are removed, so genuine
+    live snapshots (which also carry unrealized P&L and broker verdicts) are
+    never destroyed by a rebuild.
+    """
+    _ensure_tables()
+    with _con() as c:
+        c.execute("DELETE FROM balance_history WHERE source='rebuilt'")
+        c.executemany(
+            "INSERT INTO balance_history (ts, strategy, starting_capital, "
+            "realized_pnl, unrealized_pnl, equity, closed_trades, source) "
+            "VALUES (?,?,?,?,?,?,?, 'rebuilt')",
+            [
+                (
+                    f"{p['date']}T23:59:59+00:00", strategy,
+                    p["equity"] - p["realized_pnl"], p["realized_pnl"], 0.0,
+                    p["equity"], p["closed_trades"],
+                )
+                for p in points
+            ],
+        )
+    return len(points)
 
 
 # ── Tax records ───────────────────────────────────────────────────────────────
