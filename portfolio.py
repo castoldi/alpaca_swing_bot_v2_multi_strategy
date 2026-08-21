@@ -334,6 +334,70 @@ def build_snapshot(
 
 # ── Historical curve ──────────────────────────────────────────────────────────
 
+def daily_equity_curve(
+    trades: Iterable[dict],
+    daily_closes: dict[str, dict[str, float]],
+    starting_capital: Optional[float] = None,
+) -> list[dict]:
+    """Daily mark-to-market equity curve, rebuilt from trades plus daily closes.
+
+    `daily_closes` maps ticker -> {"YYYY-MM-DD": close}. For each trading day,
+    trades already exited contribute realized P&L and trades still open are
+    marked at that day's close — so the curve shows the drawdowns a realized-only
+    curve hides entirely (a position can be 10% underwater for weeks and never
+    move a curve that only steps on exits).
+
+    A day with no close for an open position marks that position at cost, which
+    understates movement rather than inventing it; the day is flagged `partial`.
+    """
+    trades = [t for t in trades if is_real_trade(t)]
+    base = starting_capital if starting_capital else peak_deployed_capital(trades)
+
+    days = sorted({d for series in daily_closes.values() for d in series})
+    if not days:
+        return []
+
+    spans = []
+    for t in trades:
+        entered = _parse_ts(t.get("entry_date"))
+        if entered is None:
+            continue
+        exited = _parse_ts(t.get("exit_date")) if is_closed(t) else None
+        spans.append((
+            t, entered.date().isoformat(),
+            exited.date().isoformat() if exited else None,
+            cost_basis(t), shares_of(t), str(t.get("ticker") or ""),
+        ))
+
+    curve = []
+    for day in days:
+        realized = 0.0
+        unrealized = 0.0
+        open_count = 0
+        partial = False
+        for t, start, end, basis, qty, ticker in spans:
+            if start > day:
+                continue
+            if end is not None and end <= day:
+                realized += pnl_of(t)
+                continue
+            open_count += 1
+            close = (daily_closes.get(ticker) or {}).get(day)
+            if close is None or close <= 0:
+                partial = True          # marked at cost: no gain, no loss
+            else:
+                unrealized += close * qty - basis
+        curve.append({
+            "date": day,
+            "realized_pnl": round(realized, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "equity": round(base + realized + unrealized, 2),
+            "open_positions": open_count,
+            "partial": partial,
+        })
+    return curve
+
+
 def realized_equity_curve(
     trades: Iterable[dict], starting_capital: Optional[float] = None
 ) -> list[dict]:

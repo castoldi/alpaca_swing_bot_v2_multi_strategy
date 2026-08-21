@@ -70,6 +70,23 @@ tr:hover td{background:#1e212b}
 .error{text-align:center;color:#ef4444;padding:20px}
 .empty{color:#6b7280;padding:12px 0;font-size:13px}
 .hint{font-size:11px;color:#6b7280;font-weight:400;text-transform:none;letter-spacing:0}
+
+/* ── Race chart (growth of $1) ── */
+.race-wrap{background:#161822;border:1px solid #2a2d35;border-radius:12px;padding:18px 20px 8px;margin-bottom:20px}
+.race-ctl{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.race-lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;font-weight:600}
+.race-year{font-size:19px;font-weight:700;color:#e1e7ef;min-width:52px;font-variant-numeric:tabular-nums}
+.race-slider{-webkit-appearance:none;appearance:none;height:5px;border-radius:3px;background:#2a2d35;outline:none;width:190px;cursor:pointer}
+.race-slider::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;background:#e1e7ef;cursor:pointer;border:none}
+.race-slider::-moz-range-thumb{width:17px;height:17px;border-radius:50%;background:#e1e7ef;cursor:pointer;border:none}
+.race-pills{display:flex;gap:7px;flex-wrap:wrap}
+.race-pill{font-size:11.5px;padding:4px 13px;border-radius:999px;border:1px solid #2a2d35;background:#0f1117;color:#8892a4;cursor:pointer;transition:.15s;user-select:none;white-space:nowrap}
+.race-pill:hover{color:#e1e7ef;border-color:#3a3f4b}
+.race-pill.active{background:#e1e7ef;color:#0f1117;border-color:#e1e7ef;font-weight:600}
+.race-chart{width:100%;height:420px}
+.race-empty{padding:40px 12px;text-align:center;color:#6b7280;font-size:13px;line-height:1.7}
+.race-empty code{display:inline-block;margin-top:6px}
+.curve-chart{width:100%;height:320px}
 code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 
 /* ── Strategy example charts ── */
@@ -166,6 +183,11 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 
     <div id="kpis" class="kpis"><div class="loading">Loading...</div></div>
 
+    <div class="section-title">Live Equity Curve <span class="hint">(this bot's own book, marked to market — not the shared Alpaca account)</span></div>
+    <div class="race-wrap">
+      <div id="liveCurve" class="curve-chart"><div class="loading" style="padding:40px">Loading equity curve…</div></div>
+    </div>
+
     <div class="section-title">Strategies <span class="hint">(enabled for bot &amp; backtests · ● = bot currently running)</span></div>
     <div id="stratStatus" class="strat-status"><div class="loading">Loading strategies…</div></div>
 
@@ -191,6 +213,17 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
 
   <!-- ══ STRATEGIES ══ -->
   <div id="page-strategies" class="page">
+
+    <div class="section-title">The Race <span class="hint">(growth of $1 at equal risk — backtested, compounding across the annual resets)</span></div>
+    <div class="race-wrap">
+      <div class="race-ctl">
+        <span class="race-lbl">Growth of $1 from</span>
+        <span class="race-year" id="raceYear">—</span>
+        <input type="range" class="race-slider" id="raceSlider" min="0" max="0" value="0" step="1">
+        <div class="race-pills" id="racePills"></div>
+      </div>
+      <div id="raceChart" class="race-chart"><div class="loading" style="padding:40px">Loading race…</div></div>
+    </div>
 
     <div class="section-title">All Strategies</div>
     <div id="stratGrid" class="strat-grid"><div class="loading">Loading...</div></div>
@@ -250,15 +283,25 @@ async function renderStrategyStatus() {
 loadStrategies().then(renderStrategyStatus);
 
 // ── Nav tab switching ──────────────────────────────────────────────────────────
+// The active tab is mirrored into location.hash so a tab is deep-linkable
+// (/#strategies) and survives a refresh.
+function showPage(name) {
+  const page = document.getElementById('page-' + name);
+  if (!page) return;
+  document.querySelectorAll('.nav-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.page === name));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  page.classList.add('active');
+  if (name === 'strategies') { renderStrategies(); renderRace(); }
+}
+
 document.querySelectorAll('.nav-tab').forEach(tab => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('page-' + tab.dataset.page).classList.add('active');
-    if (tab.dataset.page === 'strategies') renderStrategies();
+    location.hash = tab.dataset.page;      // hashchange drives the switch
+    showPage(tab.dataset.page);
   });
 });
+window.addEventListener('hashchange', () => showPage(location.hash.slice(1) || 'home'));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt$(x) {
@@ -447,13 +490,19 @@ function renderBotOrders(data) {
 }
 
 // ── HOME ─────────────────────────────────────────────────────────────────────
+let _ledger = null;   // latest /api/pnl snapshot — this bot's own book
+
 async function loadHome() {
   try {
-    const [summary, trades, bt] = await Promise.all([
+    const [summary, trades, bt, ledger] = await Promise.all([
       api('/api/summary'),
       api('/api/trades?limit=15'),
       api('/api/backtest-results'),
+      // The ledger marks open positions; a broker hiccup must not blank the
+      // whole page, so it degrades to the realized-only summary instead.
+      api('/api/pnl').catch(() => null),
     ]);
+    _ledger = ledger;
 
     // Header
     const badge = document.getElementById('paperBadge');
@@ -466,9 +515,16 @@ async function loadHome() {
     document.getElementById('subtitle').textContent =
       `${(summary.tickers||[]).join(' · ')}  ·  ${timeframeLabel} candles  ·  ${sizePct}% equity/trade  ·  ${summary.max_concurrent_positions||5} positions max`;
 
-    // KPIs
+    // KPIs. Realized and total are separate cards on purpose: realized alone
+    // reads as a win while open positions are deeply underwater, which is
+    // exactly the situation this bot has been in.
+    const led = _ledger || {};
+    const totalPnl = led.total_pnl != null ? led.total_pnl : summary.total_pnl;
+    const retPct = led.total_return_pct != null ? (led.total_return_pct * 100) : null;
     document.getElementById('kpis').innerHTML = `
-      <div class="kpi"><div class="label">Total P&L</div><div class="value ${pnlClass(summary.total_pnl)}">${fmtFull$(summary.total_pnl)}</div><div class="sub">${summary.trades||0} trades</div></div>
+      <div class="kpi"><div class="label">Total P&L</div><div class="value ${pnlClass(totalPnl)}">${fmtFull$(totalPnl)}</div><div class="sub">${retPct != null ? (retPct >= 0 ? '+' : '') + retPct.toFixed(2) + '% on $' + Math.round(led.starting_capital).toLocaleString() : (summary.trades||0) + ' trades'}</div></div>
+      <div class="kpi"><div class="label">Realized P&L</div><div class="value ${pnlClass(summary.total_pnl)}">${fmtFull$(summary.total_pnl)}</div><div class="sub">${summary.trades||0} closed trades</div></div>
+      <div class="kpi"><div class="label">Unrealized P&L</div><div class="value ${pnlClass(led.unrealized_pnl||0)}">${fmtFull$(led.unrealized_pnl||0)}</div><div class="sub">${led.open_count||0} open${led.marks_complete === false ? ' · marks incomplete' : ''}</div></div>
       <div class="kpi"><div class="label">Win Rate</div><div class="value">${summary.win_rate||0}%</div><div class="sub">${summary.wins||0}W / ${summary.losses||0}L</div></div>
       <div class="kpi"><div class="label">Profit Factor</div><div class="value">${summary.profit_factor||0}</div><div class="sub">Gross P&L ratio</div></div>
       <div class="kpi"><div class="label">Open Positions</div><div class="value">${summary.open_positions||0}</div><div class="sub">Deployed $${summary.deployed||0}</div></div>
@@ -757,9 +813,224 @@ function renderMiniChart(elId, ex) {
   Plotly.newPlot(el, [candle, markers], layout, { displayModeBar: false, responsive: true });
 }
 
+// ── The Race: growth of $1, chained across annual backtest resets ────────────
+// Data comes from /api/equity-curves, populated by scripts/build_equity_curves.py.
+// The server does the chaining; picking a start year rebases every line to 1.0.
+let _raceYears = [];
+let _raceLoading = false;
+
+const RACE_PRESETS = { 2009: 'the break' };  // annotated years, like the reference
+
+async function renderRace(fromYear) {
+  const el = document.getElementById('raceChart');
+  if (!el || _raceLoading) return;
+  _raceLoading = true;
+  try {
+    const q = fromYear ? `?from=${fromYear}` : '';
+    const data = await api('/api/equity-curves' + q);
+    const series = data.series || [];
+
+    if (!series.length) {
+      el.innerHTML = '<div class="race-empty">No backtest curves stored yet.<br>' +
+        'Generate them with:<br><code>python scripts/build_equity_curves.py</code></div>';
+      return;
+    }
+
+    if (!_raceYears.length && (data.years || []).length) {
+      _raceYears = data.years;
+      buildRaceControls(data.from_year);
+    }
+
+    const traces = series.map(s => ({
+      type: 'scatter', mode: 'lines', name: s.strategy,
+      x: s.points.map(p => p.ts),
+      y: s.points.map(p => p.growth),
+      line: { color: STRAT_COLORS[s.strategy] || '#8892a4', width: 1.6 },
+      hovertemplate: `<b>${s.strategy}</b><br>%{x|%b %Y}<br>%{y:.2f}x<extra></extra>`,
+    }));
+
+    // Axis bounds are set explicitly. Annotations anchored to data coordinates
+    // otherwise drag Plotly's autorange out with them — on a log axis that
+    // stretched the scale to 10 billion and flattened every line.
+    const allY = series.flatMap(s => s.points.map(p => p.growth)).filter(v => v > 0);
+    const lo = Math.log10(Math.min(1, ...allY) * 0.92);
+    const hi = Math.log10(Math.max(...allY) * 1.10);
+    const xs = series.flatMap(s => [s.points[0].ts, s.points[s.points.length - 1].ts]);
+    const xMin = xs.reduce((a, b) => a < b ? a : b);
+    const xMax = xs.reduce((a, b) => a > b ? a : b);
+
+    // End-of-line labels, as in the reference chart — no legend needed. Lines
+    // that finish close together would print on top of each other, so labels
+    // are nudged apart in log space while keeping their ranking.
+    const minGap = (hi - lo) * 0.052;
+    const placed = series
+      .map(s => ({ s, y: Math.log10(Math.max(s.final, 1e-6)) }))
+      .sort((a, b) => b.y - a.y);
+    for (let i = 1; i < placed.length; i++) {
+      if (placed[i - 1].y - placed[i].y < minGap) placed[i].y = placed[i - 1].y - minGap;
+    }
+
+    const annotations = placed.map(p => ({
+      x: xMax, y: p.y, yref: 'y',
+      text: `<b>${p.s.strategy} ${p.s.final.toFixed(2)}x</b>`,
+      xanchor: 'left', yanchor: 'middle', xshift: 8,
+      showarrow: false,
+      font: { size: 11, color: STRAT_COLORS[p.s.strategy] || '#8892a4' },
+    }));
+    // Explicit ticks: `ticksuffix` is ignored once `tickvals` is set, and a log
+    // axis left to itself labels decades only (1x then 10x, nothing between).
+    const tickvals = [0.25, 0.5, 1, 2, 3, 5, 10, 20, 50, 100]
+      .filter(v => Math.log10(v) >= lo && Math.log10(v) <= hi);
+
+    // newPlot, not react: the div still holds the "Loading race…" placeholder on
+    // the first pass and react would leave it sitting under the chart.
+    el.innerHTML = '';
+    Plotly.newPlot(el, traces, {
+      height: 420,
+      margin: { l: 40, r: 150, t: 10, b: 34 },
+      paper_bgcolor: '#161822', plot_bgcolor: '#161822',
+      font: { color: '#6b7280', size: 11, family: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" },
+      showlegend: false,
+      hovermode: 'x unified',
+      hoverlabel: { bgcolor: '#0f1117', bordercolor: '#2a2d35', font: { color: '#e1e7ef', size: 11 } },
+      xaxis: { showgrid: false, color: '#4b5563', showline: false, zeroline: false,
+               range: [xMin, xMax], type: 'date' },
+      // Log scale: a 10x line and a 1.2x line are unreadable together linearly.
+      // A log axis takes its range in log10 units, not data units.
+      yaxis: {
+        type: 'log', range: [lo, hi],
+        showgrid: true, gridcolor: '#1d2029', color: '#4b5563',
+        zeroline: false, tickfont: { size: 10 },
+        tickvals: tickvals,
+        ticktext: tickvals.map(v => v + 'x'),
+      },
+      shapes: [{
+        type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0,
+        line: { color: '#3a3f4b', width: 1 },
+      }],
+      annotations: annotations,
+    }, { displayModeBar: false, responsive: true });
+  } catch (e) {
+    el.innerHTML = `<div class="race-empty">Could not load the race: ${e.message}</div>`;
+  } finally {
+    _raceLoading = false;
+  }
+}
+
+function buildRaceControls(activeYear) {
+  const slider = document.getElementById('raceSlider');
+  const pills = document.getElementById('racePills');
+  if (!slider || !pills || !_raceYears.length) return;
+
+  slider.min = 0;
+  slider.max = _raceYears.length - 1;
+  const idx = Math.max(0, _raceYears.indexOf(activeYear));
+  slider.value = idx;
+  setRaceYear(_raceYears[idx], false);
+
+  slider.oninput = () => setRaceYear(_raceYears[parseInt(slider.value, 10)], true);
+
+  // Preset pills: first year, then every ~5th, always including the last.
+  const marks = [];
+  for (let i = 0; i < _raceYears.length; i++) {
+    const y = _raceYears[i];
+    if (i === 0 || i === _raceYears.length - 1 || y % 5 === 0 || RACE_PRESETS[y]) marks.push(y);
+  }
+  pills.innerHTML = marks.map(y =>
+    `<span class="race-pill" data-year="${y}">${y}${RACE_PRESETS[y] ? ' · ' + RACE_PRESETS[y] : ''}</span>`
+  ).join('');
+  pills.querySelectorAll('.race-pill').forEach(p => {
+    p.onclick = () => {
+      const y = parseInt(p.dataset.year, 10);
+      slider.value = _raceYears.indexOf(y);
+      setRaceYear(y, true);
+    };
+  });
+}
+
+function setRaceYear(year, reload) {
+  document.getElementById('raceYear').textContent = year;
+  document.querySelectorAll('.race-pill').forEach(p =>
+    p.classList.toggle('active', parseInt(p.dataset.year, 10) === year));
+  if (reload) renderRace(year);
+}
+
+// ── Live equity curve: this bot's own book, mark-to-market ───────────────────
+async function renderLiveCurve() {
+  const el = document.getElementById('liveCurve');
+  if (!el) return;
+  try {
+    const data = await api('/api/balance-history?daily=true&limit=730');
+    const hist = data.history || [];
+    if (!hist.length) {
+      el.innerHTML = '<div class="race-empty">No balance history yet.<br>' +
+        'Build it with:<br><code>python bot.py --rebuild-balance-history</code></div>';
+      return;
+    }
+
+    const x = hist.map(h => h.ts.slice(0, 10));
+    const base = data.starting_capital || 0;
+    const equity = hist.map(h => h.equity);
+    const up = equity[equity.length - 1] >= base;
+    const color = up ? '#22c55e' : '#ef4444';
+
+    const traces = [{
+      type: 'scatter', mode: 'lines', name: 'Equity',
+      x: x, y: equity,
+      line: { color: color, width: 2 },
+      // No area fill: filling to zero drags the axis down to $0 and squashes a
+      // curve that only moves between ~$108k and ~$115k into a flat band.
+      hovertemplate: '%{x}<br>Equity $%{y:,.2f}<extra></extra>',
+    }, {
+      // Realized-only line: the gap to equity is open-position P&L.
+      type: 'scatter', mode: 'lines', name: 'Realized only',
+      x: x, y: hist.map(h => base + (h.realized_pnl || 0)),
+      line: { color: '#6b7280', width: 1.2, dash: 'dot' },
+      hovertemplate: '%{x}<br>Realized $%{y:,.2f}<extra></extra>',
+    }];
+
+    // Zoom to where the curve actually lives, including the start line.
+    const realizedLine = hist.map(h => base + (h.realized_pnl || 0));
+    const span = [...equity, ...realizedLine, base];
+    const yLo = Math.min(...span), yHi = Math.max(...span);
+    const pad = Math.max((yHi - yLo) * 0.12, base * 0.005, 1);
+
+    el.innerHTML = '';   // drop the placeholder before Plotly takes the node
+    Plotly.newPlot(el, traces, {
+      height: 320,
+      margin: { l: 74, r: 54, t: 10, b: 34 },
+      paper_bgcolor: '#161822', plot_bgcolor: '#161822',
+      font: { color: '#6b7280', size: 11, family: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" },
+      hovermode: 'x unified',
+      hoverlabel: { bgcolor: '#0f1117', bordercolor: '#2a2d35', font: { color: '#e1e7ef', size: 11 } },
+      legend: { orientation: 'h', y: 1.14, x: 0, font: { size: 10 }, bgcolor: 'rgba(0,0,0,0)' },
+      xaxis: { showgrid: false, color: '#4b5563', zeroline: false },
+      yaxis: { showgrid: true, gridcolor: '#1d2029', color: '#4b5563',
+               tickprefix: '$', tickformat: ',.0f', zeroline: false,
+               range: [yLo - pad, yHi + pad] },
+      shapes: [{
+        type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: base, y1: base,
+        line: { color: '#3a3f4b', width: 1, dash: 'dash' },
+      }],
+      annotations: [{
+        x: 1, y: base, xref: 'paper', yref: 'y', text: 'start',
+        xanchor: 'left', yanchor: 'middle', xshift: 6, showarrow: false,
+        font: { size: 10, color: '#6b7280' },
+      }],
+    }, { displayModeBar: false, responsive: true });
+  } catch (e) {
+    el.innerHTML = `<div class="race-empty">Could not load the equity curve: ${e.message}</div>`;
+  }
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 loadHome();
 loadLive();
+loadStrategies().then(() => {
+  renderLiveCurve();
+  showPage(location.hash.slice(1) || 'home');   // honour a deep link on load
+});
+setInterval(renderLiveCurve, 60000);
 setInterval(loadHome, 30000);
 setInterval(loadLive, 15000);  // live status/quotes refresh faster than backtests
 </script>

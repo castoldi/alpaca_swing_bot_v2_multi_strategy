@@ -17,6 +17,46 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **"The Race" chart (Strategies tab)** — growth of $1 per strategy, backtested
+  2016→present, with a start-year slider and preset pills. Backtests reset to
+  $1,000 every January, so raw equity cannot show a multi-year compound; the new
+  `equity_curves` table stores a per-year factor and `db.get_equity_curves()`
+  chains completed years together. Picking a later start year rebases every line
+  to 1.0. From 2016 the spread is **ensemble 10.16x → mean_reversion 1.22x**.
+- **Live Equity Curve (Home tab)** — the bot's own book marked to market, with a
+  dotted realized-only line beneath it. The gap between the two lines *is* the
+  open-position P&L, which is the number a realized-only view hides.
+- **`scripts/build_equity_curves.py`** — generates the curves using the same
+  `collect_backtest_candidates` + `run_annual_portfolio` path as the annual
+  runners, so a curve can never disagree with the headline P&L they report.
+  Full 8-strategy × 2016–2026 matrix takes ~100s from the SIP cache.
+- **`GET /api/equity-curves?from=YYYY`** — chained growth series per strategy.
+- Dashboard tabs are deep-linkable (`/#strategies`) and survive a refresh.
+
+### Changed
+- **`rebuild_balance_history` now marks to market** rather than stepping only on
+  exits. `portfolio.daily_equity_curve()` marks every open position at each
+  day's close, so the live curve shows drawdowns a realized-only curve is blind
+  to — the bot sat ~$7k underwater in late July with a perfectly flat realized
+  line. A day missing a close marks that position at cost and is flagged
+  `partial` rather than guessed.
+- **Home KPIs now agree with the ledger.** "Total P&L" is realized + unrealized
+  with the return %, and realized/unrealized are separate cards. Previously the
+  headline read `+$4,518.30` while open positions were ~$5,000 underwater.
+
+### Fixed
+- `db.portfolio_stats()` excluded zero-share intent rows (`shares > 0`), so the
+  dashboard and `portfolio.build_snapshot` no longer disagree: 49 closed trades
+  and 73.5% win rate, not 50 and 72.0%.
+- Race chart y-axis: data-anchored annotations dragged Plotly's log autorange out
+  to 10 billion and flattened every line. Axis bounds are now explicit, end
+  labels are de-collided in log space, and ticks carry the `x` suffix
+  (`ticksuffix` is ignored once `tickvals` is set).
+- Live curve no longer uses `fill: 'tozeroy'`, which pinned the axis to $0 and
+  squashed a curve that moves between $103k and $115k into a flat band.
+- Both charts clear their loading placeholder before handing the node to Plotly.
+
+### Added
 - **Self-contained P&L ledger ([`portfolio.py`](portfolio.py))** — the bot now
   computes its own balance, realized/unrealized P&L, and lifetime totals from
   the local `trades` table alone. The Alpaca key is shared with several other
@@ -129,6 +169,15 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.21.0] - 2026-08-21
+
+### Added
+
+### Fixed
+
+### Changed
 
 ## [0.20.0] - 2026-08-19
 
@@ -1110,6 +1159,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

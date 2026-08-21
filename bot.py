@@ -2088,15 +2088,53 @@ def build_pnl_report(strategy: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def rebuild_balance_history(strategy: str | None = None) -> int:
-    """Backfill the daily equity curve from closed-trade history.
+def _daily_closes_for(tickers: list[str], start: date, end: date) -> dict[str, dict[str, float]]:
+    """Daily closes per ticker, keyed YYYY-MM-DD. Missing data yields {}."""
+    out: dict[str, dict[str, float]] = {}
+    for ticker in sorted(set(tickers)):
+        try:
+            df = data_feed.fetch_bars(
+                ticker, start - timedelta(days=5), end, timeframe="1d"
+            )
+        except Exception as exc:
+            log.warning("  %s: daily bars unavailable (%s)", ticker, exc)
+            continue
+        if df.empty or "close" not in df:
+            continue
+        series = {}
+        for ts, close in df["close"].items():
+            try:
+                series[pd.Timestamp(ts).strftime("%Y-%m-%d")] = float(close)
+            except (TypeError, ValueError):
+                continue
+        out[ticker] = series
+    return out
 
-    Only realized P&L can be recovered retroactively — historical marks were
-    never stored — so rebuilt points carry source='rebuilt' and are the only
-    rows a later rebuild is allowed to replace.
+
+def rebuild_balance_history(strategy: str | None = None) -> int:
+    """Backfill the daily equity curve from trade history and daily closes.
+
+    Marks open positions at each day's close rather than only stepping on exits,
+    so the curve shows the drawdowns a realized-only curve hides. Rebuilt points
+    carry source='rebuilt' and are the only rows a later rebuild may replace.
     """
     trades = db_mod.get_trades_for_ledger()
-    points = portfolio.realized_equity_curve(trades)
+    real = [t for t in trades if portfolio.is_real_trade(t)]
+    if not real:
+        return 0
+
+    entries = [portfolio._parse_ts(t.get("entry_date")) for t in real]
+    entries = [e for e in entries if e is not None]
+    if not entries:
+        return 0
+    start = min(entries).date()
+    tickers = [str(t.get("ticker") or "") for t in real]
+
+    closes = _daily_closes_for(tickers, start, date.today())
+    points = portfolio.daily_equity_curve(trades, closes)
+    if not points:
+        log.warning("No daily closes available — falling back to a realized-only curve")
+        points = portfolio.realized_equity_curve(trades)
     return db_mod.replace_rebuilt_balance_history(points, strategy)
 
 

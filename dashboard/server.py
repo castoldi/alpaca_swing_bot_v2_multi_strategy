@@ -304,6 +304,34 @@ async def balance_history(
     return {"history": rows, "starting_capital": base, "daily": daily}
 
 
+@app.get("/api/equity-curves")
+async def equity_curves(from_year: Optional[int] = Query(None, alias="from")):
+    """Growth of $1 per strategy, chained across the annual backtest resets.
+
+    `from` rebases the race to that year, so each strategy restarts at 1.0 and
+    the chart answers "what if I had started here". Built by
+    `scripts/build_equity_curves.py`; empty until that has run.
+    """
+    curves = db_mod.get_equity_curves(from_year)
+    years = db_mod.get_equity_curve_years()
+    series = []
+    for name, points in sorted(curves.items()):
+        if not points:
+            continue
+        series.append({
+            "strategy": name,
+            "final": points[-1]["growth"],
+            "points": points,
+        })
+    # Best final multiple first — the chart labels lines in this order.
+    series.sort(key=lambda s: s["final"], reverse=True)
+    return {
+        "series": series,
+        "years": years,
+        "from_year": from_year or (years[0] if years else None),
+    }
+
+
 @app.get("/api/runs")
 async def get_runs(limit: int = Query(50, ge=1, le=200)):
     return {"runs": db_mod.get_recent_runs(limit)}

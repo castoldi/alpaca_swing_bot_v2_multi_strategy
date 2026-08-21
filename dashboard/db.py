@@ -147,6 +147,23 @@ def _ensure_tables():
             );
             CREATE INDEX IF NOT EXISTS idx_balance_history_ts
                 ON balance_history(ts);
+            -- Backtest equity curves, one row per strategy per mark.
+            --
+            -- Backtests reset to `initial_backtest_equity` every January, so a
+            -- multi-year "growth of $1" cannot be read off raw equity. What
+            -- chains across years is `year_factor` (equity / that year's
+            -- starting equity); the API multiplies completed years together to
+            -- build a curve from any chosen start year.
+            CREATE TABLE IF NOT EXISTS equity_curves (
+                strategy TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                ts TEXT NOT NULL,
+                equity REAL NOT NULL,
+                year_factor REAL NOT NULL,
+                PRIMARY KEY (strategy, ts)
+            );
+            CREATE INDEX IF NOT EXISTS idx_equity_curves_lookup
+                ON equity_curves(strategy, year, ts);
         """)
         _migrate(c)
 
@@ -565,18 +582,94 @@ def replace_rebuilt_balance_history(points: list[dict], strategy: Optional[str] 
         c.execute("DELETE FROM balance_history WHERE source='rebuilt'")
         c.executemany(
             "INSERT INTO balance_history (ts, strategy, starting_capital, "
-            "realized_pnl, unrealized_pnl, equity, closed_trades, source) "
-            "VALUES (?,?,?,?,?,?,?, 'rebuilt')",
+            "realized_pnl, unrealized_pnl, equity, open_positions, "
+            "closed_trades, marks_complete, source) "
+            "VALUES (?,?,?,?,?,?,?,?,?, 'rebuilt')",
             [
                 (
                     f"{p['date']}T23:59:59+00:00", strategy,
-                    p["equity"] - p["realized_pnl"], p["realized_pnl"], 0.0,
-                    p["equity"], p["closed_trades"],
+                    # Recover the capital base from the identity
+                    # equity = base + realized + unrealized.
+                    round(p["equity"] - p["realized_pnl"] - p.get("unrealized_pnl", 0.0), 2),
+                    p["realized_pnl"], p.get("unrealized_pnl", 0.0),
+                    p["equity"], p.get("open_positions", 0),
+                    p.get("closed_trades", 0),
+                    # A day that had to mark a position at cost is not a
+                    # complete mark; the flag keeps that visible downstream.
+                    int(not p.get("partial", False)),
                 )
                 for p in points
             ],
         )
     return len(points)
+
+
+# ── Backtest equity curves ────────────────────────────────────────────────────
+
+def save_equity_curve(strategy: str, year: int, points: list[tuple[str, float]],
+                      initial_equity: float) -> int:
+    """Replace one strategy-year curve. `points` is [(iso_ts, equity), ...]."""
+    _ensure_tables()
+    if initial_equity <= 0:
+        raise ValueError("initial_equity must be positive")
+    with _con() as c:
+        c.execute("DELETE FROM equity_curves WHERE strategy=? AND year=?",
+                  (strategy, year))
+        c.executemany(
+            "INSERT OR REPLACE INTO equity_curves "
+            "(strategy, year, ts, equity, year_factor) VALUES (?,?,?,?,?)",
+            [(strategy, year, ts, eq, eq / initial_equity) for ts, eq in points],
+        )
+    return len(points)
+
+
+def get_equity_curves(from_year: Optional[int] = None) -> dict[str, list[dict]]:
+    """Growth-of-$1 curves per strategy, chained across annual resets.
+
+    Each completed year multiplies into a running factor, so a strategy that
+    returned +27% in 2024 and +10% in 2025 reads 1.27 then 1.397 — the compound
+    a live account would have seen, which raw per-year equity cannot show.
+    """
+    _ensure_tables()
+    with _con() as c:
+        if from_year:
+            rows = c.execute(
+                "SELECT * FROM equity_curves WHERE year >= ? ORDER BY strategy, ts",
+                (from_year,),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM equity_curves ORDER BY strategy, ts"
+            ).fetchall()
+
+    curves: dict[str, list[dict]] = {}
+    carry: dict[str, float] = {}       # compounded factor of completed years
+    last_year: dict[str, int] = {}
+    last_factor: dict[str, float] = {}
+    for r in rows:
+        strat, year = r["strategy"], r["year"]
+        if strat not in carry:
+            carry[strat] = 1.0
+            curves[strat] = []
+        if last_year.get(strat) is not None and year != last_year[strat]:
+            # Year rolled over: bank the finished year's factor.
+            carry[strat] *= last_factor.get(strat, 1.0)
+        last_year[strat] = year
+        last_factor[strat] = r["year_factor"]
+        curves[strat].append({
+            "ts": r["ts"],
+            "year": year,
+            "growth": round(carry[strat] * r["year_factor"], 6),
+        })
+    return curves
+
+
+def get_equity_curve_years() -> list[int]:
+    """Years that actually have curve data, ascending."""
+    _ensure_tables()
+    with _con() as c:
+        return [r[0] for r in c.execute(
+            "SELECT DISTINCT year FROM equity_curves ORDER BY year")]
 
 
 # ── Tax records ───────────────────────────────────────────────────────────────
@@ -754,6 +847,9 @@ def get_experiments(limit: int = 50) -> list[dict]:
 def portfolio_stats() -> dict[str, Any]:
     _ensure_tables()
     with _con() as c:
+        # `shares > 0` filters out durable intent rows (entry_not_submitted /
+        # entry_not_filled): those never became positions, so counting them
+        # would dilute the win rate and disagree with portfolio.build_snapshot.
         closed = c.execute("""
             SELECT COUNT(*) as trades,
                    SUM(CASE WHEN pnl_dollars > 0 THEN 1 ELSE 0 END) as wins,
@@ -762,10 +858,12 @@ def portfolio_stats() -> dict[str, Any]:
                    COALESCE(AVG(pnl_pct), 0) as avg_pnl_pct,
                    COALESCE(SUM(CASE WHEN pnl_dollars > 0 THEN pnl_dollars ELSE 0 END), 0) as gross_profit,
                    COALESCE(SUM(CASE WHEN pnl_dollars < 0 THEN ABS(pnl_dollars) ELSE 0 END), 0) as gross_loss
-            FROM trades WHERE status='closed'
+            FROM trades WHERE status='closed' AND COALESCE(shares, 0) > 0
         """).fetchone()
 
-        open_count = c.execute("SELECT COUNT(*) FROM trades WHERE status='open'").fetchone()[0]
+        open_count = c.execute(
+            "SELECT COUNT(*) FROM trades WHERE status='open' AND COALESCE(shares, 0) > 0"
+        ).fetchone()[0]
 
         total = dict(closed)
         total["open_positions"] = open_count
