@@ -9,6 +9,7 @@ from typing import Callable
 import pandas as pd
 
 import data_feed
+import yfinance_history
 
 
 ROOT = Path(__file__).parent
@@ -48,10 +49,19 @@ class MarketDataCache:
         now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self.path = Path(path)
-        self.fetcher = fetcher or data_feed.fetch_bars
+        self.fetcher = fetcher or self._default_fetcher
         self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
+
+    @staticmethod
+    def _default_fetcher(
+        ticker: str, start, end, timeframe: str, *, feed: str, strict: bool = False
+    ) -> pd.DataFrame:
+        """Route by feed: "yfinance" is a cache partition, not an Alpaca feed."""
+        if feed == "yfinance":
+            return yfinance_history.fetch_bars(ticker, start, end, timeframe, strict=strict)
+        return data_feed.fetch_bars(ticker, start, end, timeframe, feed=feed, strict=strict)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.path))
@@ -242,7 +252,11 @@ class MarketDataCache:
     ) -> pd.DataFrame:
         """Return cached bars for ``[start, end)``, downloading missing edges."""
         normalized_feed = feed.lower()
-        if normalized_feed not in {"iex", "sip"}:
+        # "yfinance" is not a real Alpaca feed — it is a cache-key partition for
+        # pre-2016 daily history (see yfinance_history.py), kept in the same
+        # bars/coverage tables so it gets the same incremental-download and
+        # read-through behaviour as the Alpaca feeds.
+        if normalized_feed not in {"iex", "sip", "yfinance"}:
             raise ValueError(f"Unsupported stock feed: {feed}")
         if adjustment.lower() != "all":
             raise ValueError("Only adjustment='all' is supported by this cache")

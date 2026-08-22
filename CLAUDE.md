@@ -24,7 +24,7 @@ Or use the root shortcuts: `start.bat`, `stop.bat`, `restart.bat` (all delegate 
 
 After editing any file in `dashboard/` or `bot.py`, restart via the manager and confirm HEALTHY:
 
-1. `pwsh scripts\manage.ps1 restart-dashboard` → verify http://localhost:8004
+1. `pwsh scripts\manage.ps1 restart-dashboard` → verify http://192.168.0.191:8004
 2. `pwsh scripts\manage.ps1 restart-bot -Strategy <strategy>`
 3. `pwsh scripts\manage.ps1 status` — confirm both HEALTHY in your response.
 
@@ -130,7 +130,7 @@ The loop only calls `run_once` while **Alpaca's market clock reports the market 
 
 ## Dashboard
 
-Port **8004**. Local: http://localhost:8004 — LAN: http://192.168.0.191:8004
+Port **8004**. Always give the user http://192.168.0.191:8004 (their mobile network address) — never `localhost`, which is unreachable from their phone.
 
 Routes: `/` (Home + Strategies tabs), `/backtest-2024`, `/backtest-2025`, `/backtest-2026`.
 

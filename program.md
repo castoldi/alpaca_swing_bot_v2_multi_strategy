@@ -3,7 +3,7 @@
 **System:** Multi-strategy swing trader on ALIENWARE 16 (RTX 5050 4GB, Intel i9)
 **Universe:** NVDA · AMZN · META · AMD · ARM (same as V1)
 **Live:** Alpaca paper trading, 20% of current equity per whole-share position, 5 positions max, no margin
-**Dashboard:** http://localhost:8004 (LAN: http://192.168.0.191:8004) — Home · Strategies · 2024/2025/2026 Reports
+**Dashboard:** http://192.168.0.191:8004 (give the user this, not `localhost` — they access it from their mobile network) — Home · Strategies · 2024/2025/2026 Reports
 
 ## Research Loop (autoresearch-inspired)
 

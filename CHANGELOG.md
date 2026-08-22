@@ -17,6 +17,38 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Daily backtest history back to 2008** for `sma_50_cross` — the one
+  strategy in the registry that trades daily bars. Alpaca (checked directly
+  against this account, both IEX and SIP) serves no equity history before
+  2016-01-04 for any symbol regardless of listing date, so `yfinance_history.py`
+  supplies 2008–2015 daily OHLCV and `scripts/build_equity_curves.py` stitches
+  it with Alpaca's 2016+ bars at a half-open boundary (no overlap, no gap).
+  `auto_adjust=True` on the yfinance side matches Alpaca's `adjustment="all"`:
+  same-day closes across the boundary agree to within 1e-4 on NVDA/AMZN/AMD, so
+  the two sources join without a valuation jump. 4h strategies are unaffected —
+  no 4h history exists before 2016 on either source, so their curves still
+  start there exactly as before.
+  - "The Race" (Strategies tab) now defaults to 2008 and includes
+    `sma_50_cross 13.42x`, clearly showing the 2008 crash and 2009 recovery as
+    a flat/choppy stretch before every other strategy's line even begins.
+  - `market_cache.MarketDataCache` gained a `"yfinance"` feed value (a
+    cache-key partition, not a real Alpaca feed) and a default fetcher that
+    dispatches by feed — existing iex/sip behaviour is unchanged, verified by
+    test.
+
+### Fixed
+- **`sma_50_cross`'s first backtested year (2016) was under-warmed.** Its
+  90-day pre-start lookback for a January-1 start lands entirely before
+  Alpaca's 2016-01-04 floor and silently returned zero bars, so `SMA(50)`
+  wasn't valid until ~50 trading days into whatever year ran first — costing
+  2016 specifically 6 real trades (11 seen vs the correct 17) and understating
+  its return (+19.1% observed vs the correct +102.9%). `build_equity_curves.py`
+  now always routes daily-timeframe strategies through the stitched fetcher, so
+  the warmup resolves correctly from yfinance regardless of the requested
+  start year. Every other year (2017–2026) is byte-identical to before — only
+  2016 changed. All stored `sma_50_cross` curves have been rebuilt.
+
+### Added
 - **"The Race" chart (Strategies tab)** — growth of $1 per strategy, backtested
   2016→present, with a start-year slider and preset pills. Backtests reset to
   $1,000 every January, so raw equity cannot show a multi-year compound; the new
@@ -170,6 +202,15 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.22.0] - 2026-08-22
+
+### Added
+
+### Fixed
+
+### Changed
 
 ## [0.21.0] - 2026-08-21
 
@@ -1159,6 +1200,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

@@ -48,7 +48,9 @@ pwsh scripts\manage.ps1 stop-dashboard
 `start-*` is safe to call repeatedly: a healthy instance is left alone; a dead/hung
 one is replaced and any orphan processes are swept first.
 
-Dashboard URL: http://localhost:8004 (LAN: http://192.168.0.191:8004). Routes:
+Dashboard URL for the user: http://192.168.0.191:8004 (their mobile network
+address — always give this, never `localhost`, which their phone can't reach;
+`localhost:8004` still works for local health checks from this machine). Routes:
 `/` Home (KPIs, positions, trades, backtests), `/` Strategies (6 cards + live P&L),
 `/backtest-2024`, `/backtest-2025`, `/backtest-2026` (Plotly reports).
 
@@ -193,7 +195,7 @@ reachability filter; `sma_50_cross` has no TP and bypasses it.
 
 **Whenever you make changes to any dashboard file (`dashboard/server.py`, `dashboard/index.html`, `dashboard/db.py`, `dashboard/bot_hooks.py`) or to `bot.py`, you MUST restart via the manager (it swaps in place — never start a second process):**
 
-1. For the **dashboard**: `pwsh scripts\manage.ps1 restart-dashboard`, then post `http://localhost:8004` once `status` shows it HEALTHY.
+1. For the **dashboard**: `pwsh scripts\manage.ps1 restart-dashboard`, then post `http://192.168.0.191:8004` (not `localhost`) once `status` shows it HEALTHY.
 2. For the **bot**: `pwsh scripts\manage.ps1 restart-bot -Strategy <strategy>`.
 3. Run `pwsh scripts\manage.ps1 status` and confirm HEALTHY in your response.
 

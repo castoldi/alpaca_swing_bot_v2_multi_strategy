@@ -155,3 +155,56 @@ def test_feed_is_part_of_the_cache_series_key(tmp_path):
 
     assert len(calls) == 2
     assert {call[4]["feed"] for call in calls} == {"iex", "sip"}
+
+
+def test_yfinance_is_an_accepted_feed_value(tmp_path):
+    """Not a real Alpaca feed — a cache-key partition for pre-2016 daily history."""
+    calls, fetcher = recording_fetcher()
+    cache = fixed_cache(tmp_path, fetcher)
+    cache.get_bars("NVDA", date(2010, 1, 1), date(2010, 1, 10), "1d", feed="yfinance")
+    assert calls[0][4]["feed"] == "yfinance"
+
+
+def test_unsupported_feed_still_rejected(tmp_path):
+    calls, fetcher = recording_fetcher()
+    cache = fixed_cache(tmp_path, fetcher)
+    with pytest.raises(ValueError, match="Unsupported stock feed"):
+        cache.get_bars("NVDA", date(2020, 1, 1), date(2020, 1, 10), "1d", feed="polygon")
+
+
+def test_default_fetcher_routes_yfinance_feed_to_yfinance_history(tmp_path, monkeypatch):
+    """With no fetcher override, feed='yfinance' must reach yfinance_history,
+    not Alpaca — the whole point of the partition."""
+    import market_cache as mc
+
+    yf_calls = []
+    alpaca_calls = []
+    monkeypatch.setattr(
+        mc.yfinance_history, "fetch_bars",
+        lambda ticker, start, end, timeframe, **kw: (
+            yf_calls.append((ticker, timeframe)) or empty_bars()
+        ),
+    )
+    monkeypatch.setattr(
+        mc.data_feed, "fetch_bars",
+        lambda ticker, start, end, timeframe, **kw: (
+            alpaca_calls.append((ticker, timeframe)) or empty_bars()
+        ),
+    )
+
+    cache = MarketDataCache(
+        tmp_path / "bars.db", now_fn=lambda: datetime(2020, 2, 1, tzinfo=timezone.utc)
+    )
+    cache.get_bars("NVDA", date(2010, 1, 1), date(2010, 1, 10), "1d", feed="yfinance")
+    cache.get_bars("AMD", date(2020, 1, 1), date(2020, 1, 10), "1d", feed="sip")
+
+    assert yf_calls == [("NVDA", "1d")]
+    assert alpaca_calls == [("AMD", "1d")]
+
+
+def test_explicit_fetcher_override_still_wins(tmp_path):
+    """A test-injected fetcher must not be silently replaced by the dispatcher."""
+    calls, fetcher = recording_fetcher()
+    cache = fixed_cache(tmp_path, fetcher)
+    cache.get_bars("NVDA", date(2010, 1, 1), date(2010, 1, 10), "1d", feed="yfinance")
+    assert len(calls) == 1
