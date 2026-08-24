@@ -17,6 +17,38 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Bear-market defence research** ([docs/bear-market-defence.md](docs/bear-market-defence.md)) —
+  answers whether the bot can avoid losing money in bear markets while still
+  making money in bull markets. Yes, at a cost of ~65% of the return:
+  `breakout + tqqq_momentum` had **zero losing years across 2016–2026**
+  (8.7%/yr, worst year +1.4%) against `ensemble`'s 24.9%/yr with a −16.9% 2022.
+  It is a capital-allocation choice, not a code change.
+- **`market_regime.py`** — point-in-time SPY/per-ticker regime gate (52-week
+  drawdown, 200d SMA, 50d SMA), plus `regime_gate=` and `position_fraction_fn=`
+  parameters on `backtest_portfolio.run_annual_portfolio`. All default-off and
+  unused by the live bot; retained as research tooling only.
+- **Crash-year backtest runners** `backtest_2020.py` (COVID crash) and
+  `backtest_2022.py` (rate-hike bear), matching the existing per-year scripts.
+- **Research harnesses** under `research/`: `bear_market_experiment.py` (scores
+  all 11 years at once, reporting bear and bull P&L separately),
+  `vol_target_experiment.py`, `stop_width_experiment.py`, `diagnose_2022.py`.
+
+### Changed
+- **`program.md` now warns that the standing research loop is bull-only.** Its
+  2025+2026 validation window contains no losing year, so every past keep/revert
+  decision was blind to bear markets. Risk/regime work should use
+  `research/bear_market_experiment.py` instead.
+
+### Fixed
+- **Refuted the market-wide entry gate recommended by
+  [docs/bear-markets-and-crashes.md](docs/bear-markets-and-crashes.md) §8**
+  before it was implemented in the live bot. Tested on the bot's own trade-level
+  P&L it made 2022 *worse* (−$754 vs −$667) while cutting bull years by −$3,654:
+  the gate was on for 72% of 2022 and 21% of 2023, suppressing the bear-market
+  rallies (March/July/November 2022 were the year's most profitable months) and
+  the 2023 recovery. Per-ticker gating, volatility-targeted sizing and stop
+  widening were also tested — 17 variants across 3 mechanisms, all on the same
+  tradeoff frontier. No live behaviour changed.
 - **Daily backtest history back to 2008** for `sma_50_cross` — the one
   strategy in the registry that trades daily bars. Alpaca (checked directly
   against this account, both IEX and SIP) serves no equity history before
@@ -203,6 +235,15 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.23.0] - 2026-08-24
+
+### Added
+
+### Fixed
+
+### Changed
 
 ## [0.22.0] - 2026-08-22
 
@@ -1200,6 +1241,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

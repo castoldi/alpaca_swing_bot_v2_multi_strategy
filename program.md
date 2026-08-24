@@ -16,6 +16,16 @@ The agent follows this cycle autonomously:
 5. **LOG** — Record the experiment in `research/experiments.md`
 6. **REPEAT** — Start the next experiment
 
+> ⚠️ **2026-08-24 — this loop's validation window is bull-only.** 2025 and 2026
+> were both up years. Every "keep" decision ever made by steps 2–4 above was
+> blind to bear markets. The bot's only losing year in 2016–2026 is **2022**
+> (2018 was profitable), and it is not in the loop.
+>
+> For anything touching risk, drawdown, or regime, use
+> `research/bear_market_experiment.py` instead — it scores all 11 years at once
+> and reports bear/bull P&L separately. See
+> [docs/bear-market-defence.md](docs/bear-market-defence.md).
+
 ## Research Goals (priority order)
 
 1. **Cross-year consistency** — Any new strategy must be profitable in BOTH 2025 AND 2026
@@ -56,6 +66,10 @@ $1,000 annual account; 2026 is year-to-date through the latest completed bar.*
 - [x] Earnings-date avoidance filter — ✅ **2026-06-02: +$65.22 combined for Trend Pullback** (+126% 2025, +22% 2026). Skip entries 3 trading days before earnings to avoid gap risk. First *new signal source* (not parameter tweak) to pass cross-year test. Applied to Trend Pullback only — Breakout didn't benefit.
 - [x] Daily SMA 50 price cross — ✅ **2026-07-18: +$655.55 across 2025–2026** on Alpaca daily bars. Long-only with a 10% emergency stop beat pure long-only, long/short reversal, and the shared TP/time-stop overlay in the option test. Added as an independent strategy without changing the six 4-hour strategies.
 - [ ] Correlation-based drawdown protection
+- [x] **Market-wide regime entry gate (SPY drawdown / SMA)** — ❌ **2026-08-24: REFUTED across 17 variants.** The gate recommended by `docs/bear-markets-and-crashes.md` §8 made 2022 *worse* (−$754 vs −$667) while cutting bull years −$3,654. It was ON for 72% of 2022 and 21% of 2023, suppressing the bear-market rallies (Mar/Jul/Nov 2022 were the year's most profitable months) and the entire 2023 recovery. Per-ticker gating, volatility-targeted sizing and stop widening all landed on the same tradeoff frontier. Full writeup: [docs/bear-market-defence.md](docs/bear-market-defence.md).
+- [x] **Bear defence via strategy selection** — ✅ 2026-08-24: `breakout + tqqq_momentum` had **zero losing years 2016–2026** (8.7%/yr, worst year +1.4%) vs `ensemble` 24.9%/yr with a −16.9% 2022. It is an allocation decision, not a code change. Caveat: N=1 bear market.
+- [ ] **Signal exits on fixed-bracket strategies** — highest-value untested idea. The strategies that survived 2022 (`tqqq_momentum`, `momentum_macd`) all "stay out" after an exit signal; the fixed-bracket ones re-enter and get stopped out repeatedly.
+- [ ] **Stops ×1.5–2.0 as a pure return experiment** — +$734 to +$1,086 across 11 years in testing. Contradicts current tuning; unrelated to bear defence.
 
 ## Fixed experiments:
 - [x] **simulate_exit bug — uses signal.stop_loss directly** — ✅ 2026-05-31: Known pitfall fixed. `simulate_exit()` now uses `signal.stop_loss`/`signal.take_profit` directly instead of recalculating from strategy params. This makes backtest consistent with live bot behavior. Regime impact: 2025 −$4.13, 2026 −$0.52 (within noise).

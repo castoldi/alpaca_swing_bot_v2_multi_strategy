@@ -5,8 +5,12 @@ import heapq
 import math
 from dataclasses import dataclass
 from itertools import groupby
+from typing import TYPE_CHECKING, Callable
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from market_regime import MarketRegimeGate
 
 from config import LEVERAGED_TICKERS, PARAMS, StrategyParams
 from position_sizing import leveraged_headroom, whole_share_position_size
@@ -56,6 +60,8 @@ class PortfolioResult:
     # Daily-loss kill switch view. Zero when disabled or no price_frames given.
     kill_switch_blocked_entries: int = 0
     kill_switch_trip_days: int = 0
+    # Market-wide regime gate view. Zero when no gate was supplied.
+    regime_blocked_entries: int = 0
 
 
 def _trade_from_leg(
@@ -165,6 +171,8 @@ def run_annual_portfolio(
     price_frames: dict[str, pd.DataFrame] | None = None,
     apply_kill_switch: bool | None = None,
     max_daily_loss_pct: float | None = None,
+    regime_gate: "MarketRegimeGate | None" = None,
+    position_fraction_fn: "Callable[[BacktestCandidate], float] | None" = None,
 ) -> PortfolioResult:
     """Run one unlevered annual portfolio with realized-P&L compounding.
 
@@ -214,6 +222,7 @@ def run_annual_portfolio(
     if max_daily_loss_pct is None:
         max_daily_loss_pct = PARAMS.max_daily_loss_pct
     kill_switch_blocked_entries = 0
+    regime_blocked_entries = 0
     kill_switch_trip_days: set = set()
     kill_switch_day: pd.Timestamp | None = None
     kill_switch_day_baseline = float(initial_equity)
@@ -263,6 +272,13 @@ def run_annual_portfolio(
         # realized account. An exit dated on that bar is not known at its open.
         realize_before(entry_date)
 
+        # Market-wide regime gate: one verdict per bar, ahead of the per-
+        # candidate loop, since it depends only on the date. New entries only —
+        # exits were resolved at candidate-collection time and never gate here.
+        regime_blocked_now = (
+            regime_gate is not None and regime_gate.blocked(entry_date)
+        )
+
         kill_switch_tripped_now = False
         if apply_kill_switch:
             bar_day = entry_date.normalize()
@@ -290,6 +306,11 @@ def run_annual_portfolio(
                 len(open_remaining) >= max_positions
                 or candidate.ticker in open_tickers
             ):
+                skipped_positions += 1
+                continue
+
+            if regime_blocked_now:
+                regime_blocked_entries += 1
                 skipped_positions += 1
                 continue
 
@@ -330,11 +351,18 @@ def run_annual_portfolio(
 
             equity = initial_equity + realized_pnl
             is_leveraged = candidate.ticker in leveraged_tickers
+            # Per-candidate sizing override (e.g. volatility targeting). Sizes
+            # the position down in turbulent tape without blocking the trade.
+            candidate_fraction = (
+                position_fraction
+                if position_fraction_fn is None
+                else position_fraction_fn(candidate)
+            )
             size = whole_share_position_size(
                 equity,
                 cash,
                 candidate.entry_price,
-                position_fraction,
+                candidate_fraction,
                 max_notional=(
                     leveraged_headroom(
                         equity, open_leveraged_notional, max_leveraged_fraction
@@ -395,6 +423,7 @@ def run_annual_portfolio(
         tax_blocked_entries=tax_blocked_entries,
         kill_switch_blocked_entries=kill_switch_blocked_entries,
         kill_switch_trip_days=len(kill_switch_trip_days),
+        regime_blocked_entries=regime_blocked_entries,
     )
 
 

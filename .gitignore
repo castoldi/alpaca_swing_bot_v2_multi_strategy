@@ -43,3 +43,6 @@ run/
 .idea/
 *.DS_Store
 Thumbs.db
+
+# Cloned research reference (karpathy/autoresearch) — methodology only
+autoresearch/
