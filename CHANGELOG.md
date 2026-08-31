@@ -17,6 +17,30 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Multiple-testing discipline for the research loop** (`research/significance.py`) —
+  implements Harvey & Liu (2020), *False (and Missed) Discoveries in Financial
+  Economics* (arXiv:2006.04269). The loop's "keep if both years improve" rule is
+  two observations with no correction for how many variants were tried; this
+  prices a result against the search that produced it.
+  - `evaluate(returns, trials=N)` for a single candidate change — t-statistic,
+    Bonferroni-adjusted p-value, the t-hurdle implied by `N`, and the HLZ
+    haircut Sharpe that survives the correction.
+  - `evaluate_search(configs)` for a full sweep — BHY across the panel (FDR
+    under arbitrary dependence) plus a month-block bootstrap of the maximum
+    t-statistic, following the paper's Y0 construction, so correlated variants
+    are not over-penalised the way Bonferroni would.
+  - `bonferroni` / `holm` / `bhy` adjustments from Harvey, Liu & Zhu (2016).
+- **`research/optimizer.py` reports the hurdle it has to clear** — `random_search`
+  now returns `(results, SignificanceReport)` and logs the verdict for its winner.
+  Sorting N configurations by P&L and taking the top is a maximum over N
+  correlated tests, so the winner's raw t-statistic was never comparable to a
+  `t > 2` bar. `compute_stats` gained `sharpe`, `t_stat` and `p_value`.
+- **Research experiments record their evidence** — `research_experiments` gained
+  `trials`, `n_trades`, `sharpe`, `t_stat`, `p_value`, `adjusted_p_value`,
+  `hurdle_t`, `haircut_sharpe`, `significant` and `evidence_method`.
+  `db.log_experiment(..., evidence=report.as_dict())` persists them and warns
+  when a `KEPT` verdict is logged without any. Existing rows migrate to NULL —
+  the trials count behind them was never captured and cannot be reconstructed.
 - **Bear-market defence research** ([docs/bear-market-defence.md](docs/bear-market-defence.md)) —
   answers whether the bot can avoid losing money in bear markets while still
   making money in bull markets. Yes, at a cost of ~65% of the return:
@@ -236,6 +260,15 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.24.0] - 2026-08-30
+
+### Added
+
+### Fixed
+
+### Changed
 
 ## [0.23.0] - 2026-08-24
 
@@ -1241,6 +1274,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

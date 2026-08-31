@@ -156,9 +156,14 @@ the one-time install command above after a fresh clone (otherwise no auto tag/pu
 1. **EXPLORE** — Edit `strategy.py` with a new signal or parameter change
 2. **BACKTEST** — Run `python backtest_2025.py` and `python backtest_2026.py`
 3. **EVALUATE** — Compare results in the dashboard or DB
-4. **KEEP or REVERT** — If both years improve, keep the change
-5. **LOG** — Call `db_mod.log_experiment(...)` or add to `research/experiments.md`
-6. **REPEAT**
+4. **PRICE THE SEARCH** — `research.significance.evaluate(returns, trials=N)`,
+   where `N` is every variant you tried, losers included. Both years improving
+   is necessary but not sufficient; see the research-loop section of CLAUDE.md.
+5. **KEEP or REVERT** — Keep only if both years improve *and* the result clears
+   its multiple-testing hurdle. Most parameter sweeps will not. That is correct.
+6. **LOG** — `db_mod.log_experiment(..., evidence=report.as_dict())`, or add to
+   `research/experiments.md` with the trials count stated
+7. **REPEAT**
 
 ## All 7 strategies — entry rules and performance
 

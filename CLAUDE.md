@@ -193,8 +193,39 @@ pwsh scripts\setup_keepalive_task.ps1 -Unregister
 
 1. Edit `strategy.py` (new signal or param tweak)
 2. Run `python backtest_2025.py` and `python backtest_2026.py`
-3. Compare in dashboard or DB; keep if both years improve
-4. Log via `db_mod.log_experiment(...)` or `program.md`
+3. Compare in dashboard or DB; both years must improve — **necessary, not sufficient**
+4. Price the result against the search that found it (see below)
+5. Log via `db_mod.log_experiment(..., evidence=report.as_dict())`
+
+### ⚠️ RULE: count your trials before keeping a change
+
+"Both years improved" is two observations with no correction for how many
+variants you tried to get there. Test enough knobs and something always clears
+it. `research/significance.py` implements the Harvey & Liu (2020) correction:
+
+```python
+from research.significance import evaluate, evaluate_search
+
+# One candidate change, N variants looked at along the way.
+report = evaluate([t.pnl_pct for t in trades], trials=N)
+print(report.summary())
+
+# A full parameter sweep — pass EVERY variant, losers included.
+report, bhy_p = evaluate_search({label: [(t.entry_date, t.pnl_pct) for t in tr]
+                                 for label, tr in sweeps.items()})
+```
+
+- `trials` is the honest count of parameter values, strategy variants and data
+  slices considered before settling on this one. **Undercounting it is the
+  easiest way to fool yourself — when in doubt, round up.**
+- `research/optimizer.py:random_search` now returns `(results, report)` and does
+  this automatically; sorting N configs by P&L and taking the top is a maximum
+  over N correlated tests, so the winner's raw t-statistic is not comparable to
+  a t > 2 bar. **Expect most sweeps to fail. That is the correct outcome.**
+- `log_experiment` warns when a `KEPT` verdict arrives without evidence.
+- Caveat that belongs in every write-up: trades overlap in time across
+  correlated tickers, so per-trade t-statistics are optimistic. The month-block
+  bootstrap in `evaluate_search` absorbs some of this; `evaluate` does not.
 ## Process Idempotency
 - Before creating or modifying any startup, scheduler, watchdog, keepalive, dashboard, bot, strategy, or other long-running process script, make it idempotent: repeated manual, scheduled, Startup-folder, Hermes, or agent-monitor invocations must adopt the existing healthy process instead of starting a duplicate.
 - Use a single-instance lock plus a real process identity check such as command line, port owner, and health endpoint; verify PID files against that identity and never rely on a PID file alone.

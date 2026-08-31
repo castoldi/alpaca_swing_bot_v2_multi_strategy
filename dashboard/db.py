@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 _DB: Path = Path(__file__).parent / "swing_bot_v2.db"
 _TICKERS: list[str] = []
+_log = logging.getLogger(__name__)
 
 
 def _con() -> sqlite3.Connection:
@@ -89,7 +91,21 @@ def _ensure_tables():
                 result_2025_pnl REAL,
                 result_2026_pnl REAL,
                 combined_pnl REAL,
-                verdict TEXT DEFAULT 'pending'
+                verdict TEXT DEFAULT 'pending',
+                -- Multiple-testing evidence (Harvey & Liu 2020). See
+                -- research/significance.py. `trials` is how many variants were
+                -- tried to arrive at this one; without it a P&L improvement is
+                -- uninterpretable.
+                trials INTEGER,
+                n_trades INTEGER,
+                sharpe REAL,
+                t_stat REAL,
+                p_value REAL,
+                adjusted_p_value REAL,
+                hurdle_t REAL,
+                haircut_sharpe REAL,
+                significant INTEGER,
+                evidence_method TEXT
             );
             CREATE TABLE IF NOT EXISTS tax_records (
                 trade_id INTEGER PRIMARY KEY,
@@ -204,6 +220,27 @@ def _migrate(c: sqlite3.Connection):
     bt_have = {row["name"] for row in c.execute("PRAGMA table_info(backtest_runs)")}
     if "timeframe" not in bt_have:
         c.execute("ALTER TABLE backtest_runs ADD COLUMN timeframe TEXT DEFAULT '1d'")
+
+    # research_experiments: multiple-testing evidence. Rows written before this
+    # column set existed keep NULLs — which is the honest record, since the
+    # number of variants tried for those experiments was never captured and
+    # cannot be reconstructed after the fact.
+    exp_have = {row["name"] for row in c.execute("PRAGMA table_info(research_experiments)")}
+    exp_add = {
+        "trials": "INTEGER",            # configurations tried to reach this result
+        "n_trades": "INTEGER",          # sample size behind the t-statistic
+        "sharpe": "REAL",               # per-trade Sharpe, uncorrected
+        "t_stat": "REAL",
+        "p_value": "REAL",              # single-test, one-sided
+        "adjusted_p_value": "REAL",     # after correcting for `trials`
+        "hurdle_t": "REAL",             # t required to clear alpha given `trials`
+        "haircut_sharpe": "REAL",       # Sharpe surviving the correction
+        "significant": "INTEGER",       # 1 = cleared the hurdle, 0 = did not
+        "evidence_method": "TEXT",
+    }
+    for col, decl in exp_add.items():
+        if col not in exp_have:
+            c.execute(f"ALTER TABLE research_experiments ADD COLUMN {col} {decl}")
 
 
 def set_tickers(tickers: list[str]):
@@ -825,13 +862,56 @@ def get_backtest_history(limit: int = 200, year: Optional[int] = None) -> list[d
 
 # ── Research experiments ─────────────────────────────────────────────────────
 
+_EVIDENCE_COLUMNS = (
+    "trials", "n_trades", "sharpe", "t_stat", "p_value",
+    "adjusted_p_value", "hurdle_t", "haircut_sharpe", "significant",
+)
+
+
 def log_experiment(description: str, changes: str, strategy: str,
-                   pnl_2025: float, pnl_2026: float, verdict: str = "pending"):
+                   pnl_2025: float, pnl_2026: float, verdict: str = "pending",
+                   evidence: Mapping[str, Any] | None = None):
+    """Record a research experiment and the multiple-testing evidence behind it.
+
+    `evidence` is `research.significance.SignificanceReport.as_dict()`. It is
+    optional only so that pre-existing callers keep working; a KEPT verdict
+    logged without it is recorded as-is but warned about, because "P&L improved
+    in both years" says nothing on its own about how many variants were tried to
+    get there — the multiple-testing problem this table now exists to document.
+    """
     _ensure_tables()
+
+    fields = {c: None for c in _EVIDENCE_COLUMNS}
+    method = None
+    if evidence:
+        for col in _EVIDENCE_COLUMNS:
+            val = evidence.get(col)
+            if col == "significant" and val is not None:
+                val = int(bool(val))
+            fields[col] = val
+        method = evidence.get("method")
+    elif verdict.strip().lower().startswith("kept"):
+        _log.warning(
+            "log_experiment(%r) recorded a KEPT verdict with no significance "
+            "evidence. Pass evidence=research.significance.evaluate(...).as_dict() "
+            "so the trials count is on the record.", description,
+        )
+
+    columns = (
+        "timestamp, description, changes_made, strategy_tested, result_2025_pnl, "
+        "result_2026_pnl, combined_pnl, verdict, "
+        + ", ".join(_EVIDENCE_COLUMNS) + ", evidence_method"
+    )
+    placeholders = ",".join("?" * (8 + len(_EVIDENCE_COLUMNS) + 1))
+    values = (
+        datetime.now(timezone.utc).isoformat(), description, changes, strategy,
+        pnl_2025, pnl_2026, pnl_2025 + pnl_2026, verdict,
+        *(fields[c] for c in _EVIDENCE_COLUMNS), method,
+    )
     with _con() as c:
         c.execute(
-            "INSERT INTO research_experiments (timestamp, description, changes_made, strategy_tested, result_2025_pnl, result_2026_pnl, combined_pnl, verdict) VALUES (?,?,?,?,?,?,?,?)",
-            (datetime.now(timezone.utc).isoformat(), description, changes, strategy, pnl_2025, pnl_2026, pnl_2025 + pnl_2026, verdict),
+            f"INSERT INTO research_experiments ({columns}) VALUES ({placeholders})",
+            values,
         )
 
 

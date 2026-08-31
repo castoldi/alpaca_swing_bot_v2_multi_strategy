@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import itertools
 import random
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,6 +18,13 @@ from strategies import REGISTRY
 from backtest_portfolio import (
     collect_backtest_candidates,
     run_annual_portfolio,
+)
+from research.significance import (
+    SignificanceReport,
+    evaluate_search,
+    returns_from_trades,
+    sharpe_ratio,
+    t_statistic,
 )
 
 log = get_logger(__name__)
@@ -44,9 +51,6 @@ def download_history(ticker: str, start: date, end: date) -> pd.DataFrame:
     df = raw.rename(columns=str.lower)[["open", "high", "low", "close", "volume"]]
     df.index = pd.to_datetime(df.index).tz_localize(None)
     return df
-
-
-from datetime import timedelta
 
 
 def run_backtest_for_params(
@@ -85,7 +89,8 @@ def run_backtest_for_params(
 
 def compute_stats(trades: list[Trade]) -> dict[str, Any]:
     if not trades:
-        return dict(trades=0, wins=0, losses=0, win_rate=0, total_pnl=0, profit_factor=0, avg_pnl_pct=0, max_drawdown=0)
+        return dict(trades=0, wins=0, losses=0, win_rate=0, total_pnl=0, profit_factor=0,
+                    avg_pnl_pct=0, max_drawdown=0, sharpe=0.0, t_stat=0.0, p_value=1.0)
 
     wins = [t for t in trades if t.pnl_dollars > 0]
     losses = [t for t in trades if t.pnl_dollars <= 0]
@@ -105,6 +110,11 @@ def compute_stats(trades: list[Trade]) -> dict[str, Any]:
 
     pf = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (gross_profit if gross_profit > 0 else 0)
 
+    # Raw single-test significance. This is NOT yet corrected for how many
+    # configurations were tried — `random_search` does that across the panel.
+    pnl_pcts = [t.pnl_pct for t in trades]
+    t_stat, p_value = t_statistic(pnl_pcts)
+
     return dict(
         trades=len(trades),
         wins=len(wins),
@@ -112,8 +122,11 @@ def compute_stats(trades: list[Trade]) -> dict[str, Any]:
         win_rate=round(len(wins) / len(trades) * 100, 1),
         total_pnl=round(total_pnl, 2),
         profit_factor=pf,
-        avg_pnl_pct=round(np.mean([t.pnl_pct for t in trades]) * 100, 2),
+        avg_pnl_pct=round(np.mean(pnl_pcts) * 100, 2),
         max_drawdown=round(max_dd, 2),
+        sharpe=round(sharpe_ratio(pnl_pcts), 3),
+        t_stat=round(t_stat, 3),
+        p_value=round(p_value, 5),
     )
 
 
@@ -131,10 +144,20 @@ def random_search(
     year: int,
     iterations: int = 30,
     seed: int = 42,
-) -> list[dict]:
-    """Random search over strategy params to find optimal settings.
+    alpha: float = 0.05,
+    n_boot: int = 1000,
+) -> tuple[list[dict], SignificanceReport]:
+    """Random search over strategy params, priced against the search itself.
 
-    Returns sorted list of (stats, param_overrides) from best to worst total_pnl.
+    Returns (results sorted best-to-worst by total_pnl, significance report for
+    the winner).
+
+    The report is the point of this function, not the ranking. Sorting N
+    configurations by P&L and taking the top one is a maximum over N correlated
+    tests; the winner's raw t-statistic is therefore not comparable to a t > 2
+    bar. `evaluate_search` calibrates the real hurdle by bootstrapping the
+    distribution of that maximum under the null. Expect most sweeps to fail it —
+    that is the correct outcome, not a bug.
     """
     random.seed(seed)
     np.random.seed(seed)
@@ -169,10 +192,29 @@ def random_search(
         trades = run_backtest_for_params(new_p, strategy, year)
         stats = compute_stats(trades)
 
-        results.append({"overrides": overrides, "stats": stats})
-        log.info("  [%d/%d] P&L=$%.2f WR=%.1f%% trades=%d params=%s",
+        label = f"cfg{i:03d}"
+        results.append({
+            "label": label,
+            "overrides": overrides,
+            "stats": stats,
+            "returns": returns_from_trades(trades),
+        })
+        log.info("  [%d/%d] P&L=$%.2f WR=%.1f%% trades=%d t=%.2f params=%s",
                  i + 1, iterations, stats["total_pnl"], stats["win_rate"],
-                 stats["trades"], overrides)
+                 stats["trades"], stats["t_stat"], overrides)
 
     results.sort(key=lambda r: r["stats"]["total_pnl"], reverse=True)
-    return results
+
+    # Price the winner against every variant tried — including the losers, whose
+    # omission would inflate the result as badly as no correction at all.
+    configs = {r["label"]: r["returns"] for r in results}
+    winner = results[0]["label"] if results else None
+    report, bhy_adjusted = evaluate_search(
+        configs, winner=winner, alpha=alpha, n_boot=n_boot, seed=seed
+    )
+    for r in results:
+        r["stats"]["bhy_p_value"] = round(bhy_adjusted.get(r["label"], 1.0), 5)
+
+    log.info("Multiple-testing verdict for best of %d configurations:\n%s",
+             iterations, report.summary())
+    return results, report
