@@ -13,6 +13,7 @@ import pytest
 
 from research.significance import (
     analytic_max_t_hurdle,
+    backtest_verdict,
     bhy,
     bonferroni,
     bootstrap_max_t_hurdle,
@@ -129,6 +130,47 @@ def test_bootstrap_hurdle_is_deterministic_for_a_seed():
     assert a == pytest.approx(b)
 
 
+def test_degenerate_resample_cannot_explode_the_t_statistic():
+    """A near-constant sample must read as no evidence, not t = 1e15.
+
+    Regression: a 3-trade strategy's bootstrap resample landed on two distinct
+    values with lopsided counts. Variance was tiny but non-zero, so an
+    `sd == 0` check missed it, and the resulting t of order 1e15 set the
+    best-of-N hurdle for the whole year to 8.44 instead of ~2.5.
+    """
+    almost_constant = [0.02] * 40 + [0.020000000001]
+    t, p = t_statistic(almost_constant)
+    assert t == 0.0 and p == 1.0
+
+    # The one-sample t-statistic is bounded by sqrt(n); nothing may exceed it.
+    rng = np.random.default_rng(17)
+    for _ in range(50):
+        sample = rng.normal(0.01, 0.05, size=rng.integers(3, 60))
+        t, _ = t_statistic(sample)
+        assert abs(t) <= np.sqrt(len(sample))
+
+
+def test_thin_strategies_do_not_set_the_hurdle():
+    """A 3-trade strategy alongside real ones must not inflate the hurdle."""
+    rng = np.random.default_rng(23)
+    dates = pd.date_range("2026-01-01", periods=110, freq="2D")
+    healthy = {
+        f"real{i}": list(zip(dates, rng.normal(0.0, 0.05, size=110)))
+        for i in range(3)
+    }
+    hurdle_clean, _ = bootstrap_max_t_hurdle(healthy, n_boot=400, seed=9)
+
+    thin_dates = [pd.Timestamp("2026-01-15"), pd.Timestamp("2026-02-10"),
+                  pd.Timestamp("2026-04-02")]
+    with_thin = dict(healthy)
+    with_thin["barely_traded"] = list(zip(thin_dates, [-0.02, 0.04, -0.01]))
+    hurdle_thin, maxima = bootstrap_max_t_hurdle(with_thin, n_boot=400, seed=9)
+
+    assert hurdle_thin == pytest.approx(hurdle_clean)
+    assert np.isfinite(maxima).all()
+    assert maxima.max() < 20.0        # was ~1e15 before the guard
+
+
 def test_bootstrap_handles_empty_and_tiny_configs():
     hurdle, maxima = bootstrap_max_t_hurdle({}, n_boot=10)
     assert hurdle == float("inf")
@@ -156,7 +198,7 @@ def test_noise_sweep_winner_is_rejected():
     assert report.t_stat > 0            # the winner does look positive
     assert not report.significant       # ...and is correctly rejected
     assert report.haircut_sharpe < report.sharpe
-    assert "→ Best-of-N selection explains this result" in report.summary()
+    assert "-> Best-of-N selection explains this result" in report.summary()
 
 
 def test_genuine_edge_survives_the_same_sweep():
@@ -224,6 +266,100 @@ def test_evaluate_empty_backtest_is_not_significant():
     assert report.n_trades == 0
     assert not report.significant
     assert report.haircut_sharpe == 0.0
+
+
+# ── Backtest reporting block ──────────────────────────────────────────────────
+
+def _fake_trades(returns, start="2025-01-01"):
+    """Minimal stand-ins carrying just what `returns_from_trades` reads."""
+    class _T:
+        def __init__(self, when, pnl):
+            self.entry_date = when
+            self.pnl_pct = pnl
+
+    dates = pd.date_range(start, periods=len(returns), freq="3D")
+    return [_T(d, r) for d, r in zip(dates, returns)]
+
+
+def test_backtest_verdict_renders_every_strategy_and_the_hurdle():
+    rng = np.random.default_rng(21)
+    by_strategy = {
+        name: _fake_trades(rng.normal(0.0, 0.05, size=80))
+        for name in ("ensemble", "breakout", "regime", "mean_reversion")
+    }
+    text = backtest_verdict(by_strategy, winner="ensemble", n_boot=200)
+
+    for name in by_strategy:
+        assert name in text
+    assert "Best-of-4 hurdle" in text
+    assert "<-- best P&L" in text
+    assert "FLOOR on the trials count" in text  # the honesty note must survive
+
+
+def test_backtest_verdict_marks_the_pnl_winner_not_the_top_t():
+    """The block reports the strategy the script picked, even if another has a
+    higher t-statistic — that mismatch is exactly what a reader should see."""
+    rng = np.random.default_rng(5)
+    by_strategy = {
+        "picked_on_pnl": _fake_trades(rng.normal(0.001, 0.05, size=80)),
+        "higher_t": _fake_trades(rng.normal(0.03, 0.05, size=80)),
+    }
+    text = backtest_verdict(by_strategy, winner="picked_on_pnl", n_boot=200)
+
+    winner_row = [ln for ln in text.splitlines() if "<-- best P&L" in ln]
+    assert len(winner_row) == 1
+    assert "picked_on_pnl" in winner_row[0]
+
+
+def test_backtest_verdict_survives_an_empty_year():
+    assert "nothing testable" in backtest_verdict({}, n_boot=50)
+    assert "nothing testable" in backtest_verdict(
+        {"ensemble": [], "breakout": _fake_trades([0.02])}, n_boot=50
+    )
+
+
+def test_backtest_verdict_names_the_strategies_it_could_not_test():
+    """Thin strategies are excluded from the panel but reported, not hidden.
+
+    Dropping them silently would understate the trials count and leave the
+    reader wondering where a strategy went.
+    """
+    rng = np.random.default_rng(31)
+    text = backtest_verdict(
+        {
+            "ensemble": _fake_trades(rng.normal(0.0, 0.05, size=60)),
+            "breakout": _fake_trades(rng.normal(0.0, 0.05, size=60)),
+            "barely_traded": _fake_trades([0.01]),   # 1 trade — no t-statistic
+        },
+        winner="ensemble",
+        n_boot=200,
+    )
+    assert "Best-of-2 hurdle" in text          # thin one excluded from the max
+    assert "Not tested, under 20 trades" in text
+    assert "barely_traded (1)" in text          # ...but still named
+
+
+def test_output_is_ascii_encodable():
+    """Every logged string must survive the narrowest Windows console codepage.
+
+    logger_setup mirrors to sys.stdout. A box-drawing or arrow character makes
+    logging swallow the record and print "--- Logging error ---" instead, losing
+    the number the block exists to show. Strict ASCII is the bar, not cp1252:
+    cp1252 encodes an em-dash happily, but the console renders it as a replacement
+    character, which is how one slipped through the first version of this test.
+    """
+    rng = np.random.default_rng(13)
+    by_strategy = {
+        "ensemble": _fake_trades(rng.normal(0.0, 0.05, size=70)),
+        "breakout": _fake_trades(rng.normal(0.0, 0.05, size=70)),
+    }
+    block = backtest_verdict(by_strategy, winner="ensemble", n_boot=100)
+    report, _ = evaluate_search(
+        {"a": [(pd.Timestamp("2025-01-01"), 0.01)] * 30}, n_boot=50
+    )
+
+    for text in (block, report.summary(), evaluate([0.01, 0.02, 0.03]).summary()):
+        text.encode("ascii")   # raises UnicodeEncodeError if a glyph slips in
 
 
 def test_returns_from_trades_reads_trade_objects():

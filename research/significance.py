@@ -95,10 +95,16 @@ class SignificanceReport:
         ]
         if not self.significant:
             lines.append(
-                "  → Best-of-N selection explains this result. Do not keep the change "
+                "  -> Best-of-N selection explains this result. Do not keep the change "
                 "on this evidence alone."
             )
         return "\n".join(lines)
+
+    # NOTE: every string returned from this module is deliberately ASCII-only.
+    # logger_setup mirrors to sys.stdout, which is cp1252 on this machine; a box
+    # -drawing or arrow character there makes logging swallow the record and
+    # print "--- Logging error ---" instead, losing the very number this exists
+    # to show. `test_output_is_ascii_encodable` pins it.
 
 
 # ── Single-test statistics ────────────────────────────────────────────────────
@@ -115,12 +121,24 @@ def t_statistic(returns: Sequence[float]) -> tuple[float, float]:
     if n < 2:
         return 0.0, 1.0
 
+    mean = float(np.mean(arr))
     sd = float(np.std(arr, ddof=1))
-    if sd <= 0:
-        # Every trade returned exactly the same amount. Degenerate, not evidence.
+
+    # Degeneracy guard, relative rather than absolute. An exact `sd == 0` test is
+    # not enough: a bootstrap resample of a thin strategy can land on two
+    # distinct values with lopsided counts, giving a variance that is tiny but
+    # non-zero and a t-statistic of order 1e15. That poisoned the best-of-N
+    # hurdle for any year containing a 3-trade strategy. The one-sample
+    # t-statistic is bounded by sqrt(n), so anything beyond that is numerical
+    # noise by definition, not evidence.
+    scale = max(abs(mean), float(np.max(np.abs(arr))), 1e-12)
+    if sd <= 1e-9 * scale:
         return 0.0, 1.0
 
-    t = float(np.mean(arr)) / (sd / math.sqrt(n))
+    t = mean / (sd / math.sqrt(n))
+    if not math.isfinite(t) or abs(t) > math.sqrt(n):
+        return 0.0, 1.0
+
     p = float(stats.t.sf(t, df=n - 1))
     return t, p
 
@@ -216,11 +234,17 @@ def _period_key(when: Any) -> str:
     return f"{ts.year:04d}-{ts.month:02d}"
 
 
+#: A strategy with fewer trades than this is not a credible selection candidate,
+#: and its bootstrap resamples are numerically unstable. Excluded from the max.
+MIN_TRADES_FOR_PANEL = 20
+
+
 def bootstrap_max_t_hurdle(
     configs: Mapping[str, Sequence[DatedReturn]],
     alpha: float = 0.05,
     n_boot: int = 1000,
     seed: int = 42,
+    min_trades: int = MIN_TRADES_FOR_PANEL,
 ) -> tuple[float, np.ndarray]:
     """Calibrate the best-of-N hurdle by bootstrap, preserving cross-correlation.
 
@@ -244,7 +268,7 @@ def bootstrap_max_t_hurdle(
             for when, r in observations
             if r is not None and np.isfinite(float(r))
         ]
-        if len(values) < 2:
+        if len(values) < max(2, min_trades):
             by_period[name] = {}
             continue
         mean = float(np.mean([r for _, r in values]))
@@ -275,7 +299,9 @@ def bootstrap_max_t_hurdle(
                 block = buckets.get(month)
                 if block:
                     sample.extend(block)
-            if len(sample) < 2:
+            # Below `min_trades` a resample is both meaningless and numerically
+            # unstable — see the degeneracy guard in `t_statistic`.
+            if len(sample) < max(2, min_trades):
                 continue
             t, _ = t_statistic(sample)
             if t > best:
@@ -414,3 +440,87 @@ def returns_from_trades(trades: Iterable[Any]) -> list[DatedReturn]:
             continue
         out.append((getattr(t, "entry_date", None), float(pnl)))
     return out
+
+
+# ── Backtest reporting ────────────────────────────────────────────────────────
+
+def backtest_verdict(
+    trades_by_strategy: Mapping[str, Iterable[Any]],
+    winner: str | None = None,
+    alpha: float = 0.05,
+    n_boot: int = 500,
+    seed: int = 42,
+) -> str:
+    """Format the multiple-testing block printed at the end of a year backtest.
+
+    Running every strategy and reporting the one with the best P&L is a
+    best-of-N selection over N correlated tests. This renders the hurdle that
+    selection actually has to clear, so the number is in front of you at the
+    moment you are tempted to keep something.
+
+    Returns a text block; the caller logs it. Never raises on thin data — a year
+    with no trades produces a block that says so.
+    """
+    configs = {
+        name: returns_from_trades(trades)
+        for name, trades in trades_by_strategy.items()
+    }
+    usable = {n: o for n, o in configs.items() if len(o) >= MIN_TRADES_FOR_PANEL}
+    too_thin = {n: len(o) for n, o in configs.items() if n not in usable}
+
+    header = "-- Multiple-testing check (Harvey & Liu 2020) " + "-" * 25
+    if not usable:
+        return (
+            f"{header}\n"
+            f"  No strategy reached {MIN_TRADES_FOR_PANEL} trades - nothing testable.\n"
+        )
+
+    if winner not in usable:
+        winner = max(usable, key=lambda n: t_statistic([r for _, r in usable[n]])[0])
+
+    report, bhy_adjusted = evaluate_search(
+        usable, winner=winner, alpha=alpha, n_boot=n_boot, seed=seed
+    )
+
+    lines = [
+        header,
+        f"  Picking the best of {len(usable)} strategies is a best-of-"
+        f"{len(usable)} selection, not a single test.",
+        "",
+        f"  {'strategy':<20}{'trades':>7}{'t':>8}{'BHY p':>9}",
+    ]
+    rows = []
+    for name, obs in usable.items():
+        returns = [r for _, r in obs]
+        t, _ = t_statistic(returns)
+        rows.append((name, len(returns), t, bhy_adjusted.get(name, 1.0)))
+    for name, n, t, p_adj in sorted(rows, key=lambda r: r[2], reverse=True):
+        mark = "  <-- best P&L" if name == winner else ""
+        lines.append(f"  {name:<20}{n:>7}{t:>8.2f}{p_adj:>9.4f}{mark}")
+
+    verdict = "CLEARS" if report.significant else "FAILS"
+    lines += [
+        "",
+        f"  Best-of-{len(usable)} hurdle: t >= {report.hurdle_t:.2f} "
+        f"(month-block bootstrap, {alpha:.0%})",
+        f"  {winner}: t={report.t_stat:.2f} {verdict}. "
+        f"Sharpe {report.sharpe:.2f} -> {report.haircut_sharpe:.2f} after haircut.",
+    ]
+    if not report.significant:
+        lines.append(
+            "  -> Best-of-N selection explains this. Do not keep a change on it alone."
+        )
+    if too_thin:
+        listed = ", ".join(f"{n} ({c})" for n, c in sorted(too_thin.items()))
+        lines += [
+            "",
+            f"  Not tested, under {MIN_TRADES_FOR_PANEL} trades: {listed}",
+            "  Too few trades to distinguish from noise either way.",
+        ]
+    lines += [
+        "",
+        f"  NOTE: {len(usable)} is a FLOOR on the trials count - it counts only the",
+        "  strategies in this run, not the parameter values tuned to get here.",
+        "  Raise it when logging via db_mod.log_experiment(evidence=...).",
+    ]
+    return "\n".join(lines)

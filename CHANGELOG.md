@@ -17,6 +17,15 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Every year backtest now prints the hurdle it has to clear** — `backtest_2020`
+  / `2022` / `2024` / `2025` / `2026` end with a `backtest_verdict(...)` block
+  listing each strategy's t-statistic and BHY-adjusted p-value, the best-of-N
+  bootstrap hurdle, and the winner's haircut Sharpe. Running all 8 strategies and
+  reporting the best P&L *is* a best-of-8 selection, so the number is now in
+  front of you at the moment you would otherwise keep something. The block names
+  strategies it could not test (under 20 trades) rather than dropping them
+  silently, and states that N is a **floor** on the true trials count — it counts
+  the strategies in the run, not the parameter values tuned to get there.
 - **Multiple-testing discipline for the research loop** (`research/significance.py`) —
   implements Harvey & Liu (2020), *False (and Missed) Discoveries in Financial
   Economics* (arXiv:2006.04269). The loop's "keep if both years improve" rule is
@@ -64,6 +73,17 @@ _Changes landed but not yet released under a new version number go here._
   `research/bear_market_experiment.py` instead.
 
 ### Fixed
+- **Degenerate bootstrap resamples inflated the best-of-N hurdle** in
+  `research/significance.py`, caught on real 2026 data before the number was
+  trusted. A 3-trade strategy's month-block resample could land on two distinct
+  values with lopsided counts: variance tiny but non-zero, so the `sd == 0` guard
+  missed it and the t-statistic came out around 1e15. That set 2026's hurdle to
+  **8.44**, which wrongly failed `ensemble` at t=3.22. Fixed with a *relative*
+  degeneracy guard plus the theoretical `|t| <= sqrt(n)` bound, and by excluding
+  strategies under `MIN_TRADES_FOR_PANEL` (20) from the maximum — they are
+  neither credible selection candidates nor numerically stable. 2026's hurdle is
+  now **2.27** and `ensemble` correctly **clears** it. 2024 (2.77) and 2025
+  (3.40) were unaffected, having no strategy that thin.
 - **Refuted the market-wide entry gate recommended by
   [docs/bear-markets-and-crashes.md](docs/bear-markets-and-crashes.md) §8**
   before it was implemented in the live bot. Tested on the bot's own trade-level
@@ -261,6 +281,15 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.24.1] - 2026-08-31
+
+### Added
+
+### Fixed
+
+### Changed
 
 ## [0.24.0] - 2026-08-30
 
@@ -1274,6 +1303,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

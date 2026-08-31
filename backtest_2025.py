@@ -23,6 +23,7 @@ import yfinance as yf
 from config import PARAMS, TICKERS, BAR_TIMEFRAME, HISTORY_WARMUP_DAYS
 from logger_setup import get_logger
 from strategies import REGISTRY, get_enabled, strategy_universe, Trade
+from research.significance import backtest_verdict
 from dashboard import db as db_mod
 import data_feed
 from market_cache import MarketDataCache
@@ -259,6 +260,10 @@ def run_full_backtest() -> int:
     log.info("=" * 50)
     log.info("2025 backtest complete. Best strategy: %s ($%.2f)", overall_best, best_pnl)
     log.info("Report: %s", OUTPUT_PATH)
+    log.info("\n%s", backtest_verdict(
+        {n: s.get("_trades", []) for n, s in strategy_results.items()},
+        winner=overall_best,
+    ))
     return 0
 
 
