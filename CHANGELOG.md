@@ -283,6 +283,20 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.2] - 2026-09-05
+
+### Added
+- **Code and strategy review** — [dated analysis](docs/code-review-2026-09-05.md)
+  documents 16 prioritized execution, backtest, data, indicator, and research
+  findings with source references, offline reproductions, proposed corrections,
+  regression criteria, and an experiment shortlist for all eight strategies.
+  Records the 395-test baseline; trading behavior is unchanged.
+
+### Fixed
+
+### Changed
+
 ## [0.24.1] - 2026-08-31
 
 ### Added
