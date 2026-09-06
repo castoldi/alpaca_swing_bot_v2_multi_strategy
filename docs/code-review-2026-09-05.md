@@ -18,7 +18,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 | ID | Priority | Finding | Evidence |
 |---|---|---|---|
-| F01 | P1 | Filled brackets can lead to selling another owner's shares | Fake broker reproduction |
+| F01 — **FIXED** | P1 | Filled brackets can lead to selling another owner's shares | Fixed in v0.24.3 (`b9dd867`); ownership regression tests |
 | F02 | P1 | Multi-day protection uses DAY orders with no active repair path | Source + broker documentation |
 | F03 | P1 | Manager is not atomic and does not reliably establish project identity | Source trace |
 | F04 | P1 | Bracket backtests record the wrong entry price and time | Synthetic reproduction |
@@ -38,6 +38,10 @@ P1 means address before relying on the affected execution or research result. P2
 ## Detailed findings
 
 ### F01 — Reconcile owned bracket fills before looking at the aggregate position
+
+**Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
+Validation: 415 tests passed, including 20 new ownership regression tests.
+F02 is the next unresolved finding.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any

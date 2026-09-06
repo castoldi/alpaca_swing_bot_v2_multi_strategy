@@ -285,6 +285,18 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.4] - 2026-09-06
+
+### Added
+
+### Fixed
+
+### Changed
+- Mark review finding F01 as fixed in the analysis summary and detailed status,
+  recording the v0.24.3 fix commit and passing regression suite. Identify F02
+  (multi-session protective-order persistence) as the next unresolved finding.
+
 ## [0.24.3] - 2026-09-06
 
 ### Added
