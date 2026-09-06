@@ -26,6 +26,20 @@ def _open_sma_trade(**overrides):
     return trade
 
 
+def _oto_entry(stop, shares=1):
+    """Complete broker ownership evidence, including the linked stop fields."""
+    defaults = dict(symbol="AMD", side="sell", filled_qty="0",
+                    filled_avg_price=None, client_order_id="broker-stop")
+    for key, value in defaults.items():
+        if not hasattr(stop, key):
+            setattr(stop, key, value)
+    return SimpleNamespace(
+        id="entry-1", client_order_id="swingv2-entry-sma_50_cross-AMD-abcd",
+        symbol="AMD", side="buy", status="filled", filled_qty=str(shares),
+        filled_avg_price="100", legs=[stop],
+    )
+
+
 def test_place_stop_only_entry_submits_one_oto_with_no_take_profit():
     tc = FakeTradingClient()
     info = bot._place_stop_only_entry(tc, "AMD", 2, 90.0, "sma_50_cross")
@@ -50,8 +64,10 @@ def test_reconcile_closes_owned_sma_trade_on_cross_down(monkeypatch):
         "volume": 1_000_000,
     }), PARAMS)
     trade = _open_sma_trade()
+    entry = _oto_entry(SimpleNamespace(id="stop-1", status="new"))
     tc = SimpleNamespace(
-        get_open_position=lambda _: SimpleNamespace(qty="1", current_price="99")
+        get_open_position=lambda _: SimpleNamespace(qty="1", current_price="99"),
+        get_order_by_id=lambda *a, **k: entry,
     )
     monkeypatch.setattr(bot, "_get_trading", lambda: tc)
     monkeypatch.setattr(
@@ -100,7 +116,7 @@ def test_sma_exit_is_blocked_when_attached_stop_cancellation_fails(monkeypatch):
         submitted = []
 
         def get_order_by_id(self, *_args, **_kwargs):
-            return SimpleNamespace(legs=[stop])
+            return _oto_entry(stop)
 
         def cancel_order_by_id(self, _order_id):
             raise RuntimeError("cancel rejected")
@@ -127,7 +143,7 @@ def test_unfilled_sma_exit_stays_open_and_records_pending_order(monkeypatch):
 
         def get_order_by_id(self, order_id, **_kwargs):
             if order_id == "entry-1":
-                return SimpleNamespace(legs=[stop])
+                return _oto_entry(stop)
             return stop
 
         def cancel_order_by_id(self, _order_id):
@@ -257,7 +273,7 @@ def test_exit_intent_is_persisted_before_stop_cancel_and_survives_submit_failure
     class Client:
         def get_order_by_id(self, order_id, **_kwargs):
             if order_id == "entry-1":
-                return SimpleNamespace(legs=[stop])
+                return _oto_entry(stop)
             return stop
 
         def cancel_order_by_id(self, _order_id):
@@ -306,7 +322,7 @@ def test_stop_partial_fill_is_recorded_and_exit_quantity_is_refreshed(monkeypatc
 
         def get_order_by_id(self, order_id, **_kwargs):
             if order_id == "entry-1":
-                return SimpleNamespace(legs=[stop])
+                return _oto_entry(stop, shares=2)
             return stop
 
         def cancel_order_by_id(self, _order_id):
@@ -412,7 +428,7 @@ def test_durable_exit_intent_retries_after_cross_is_no_longer_latest(monkeypatch
 
         def get_order_by_id(self, order_id, **_kwargs):
             if order_id == "entry-1":
-                return SimpleNamespace(legs=[stop])
+                return _oto_entry(stop)
             return stop
 
         def submit_order(self, request):
@@ -459,7 +475,7 @@ def test_completed_owned_fills_finalize_without_selling_a_residual_position(monk
 
         def get_order_by_id(self, order_id, **_kwargs):
             if order_id == "entry-1":
-                return SimpleNamespace(legs=[stop])
+                return _oto_entry(stop)
             return stop
 
         def get_open_position(self, _ticker):

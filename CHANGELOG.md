@@ -286,6 +286,27 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.5] - 2026-09-06
+
+### Added
+- Protection lifecycle regressions covering session persistence, shared holdings,
+  cancellation races, repeated expiration, durable repair adoption, unavailable
+  inventory, and replacement-stop exits.
+
+### Fixed
+- **Persistent owned protection (review F02)** — use Alpaca GTC bracket/OTO
+  entries and actively reconcile protective quantity and time in force. Confirm
+  old protection inactive and account for its fills before submitting a GTC OCO
+  or standalone stop for only the remaining owned shares. Persist replacement
+  client IDs before submission, adopt accepted orders after lost responses,
+  and block further sells when submission or ownership is unresolved. Preserve
+  healthy GTC session states and use a durable exit when levels are breached.
+
+### Changed
+- Mark F02 fixed in the code-review analysis with Alpaca API documentation and
+  validation evidence; F03 is the next unresolved finding.
+
 ## [0.24.4] - 2026-09-06
 
 ### Added

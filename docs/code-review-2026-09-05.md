@@ -19,7 +19,7 @@ P1 means address before relying on the affected execution or research result. P2
 | ID | Priority | Finding | Evidence |
 |---|---|---|---|
 | F01 — **FIXED** | P1 | Filled brackets can lead to selling another owner's shares | Fixed in v0.24.3 (`b9dd867`); ownership regression tests |
-| F02 | P1 | Multi-day protection uses DAY orders with no active repair path | Source + broker documentation |
+| F02 — **FIXED** | P1 | Multi-day protection uses DAY orders with no active repair path | Fixed in v0.24.5; Alpaca documentation + protection lifecycle regressions |
 | F03 | P1 | Manager is not atomic and does not reliably establish project identity | Source trace |
 | F04 | P1 | Bracket backtests record the wrong entry price and time | Synthetic reproduction |
 | F05 | P1 | Bracket stop simulation fills through gaps at unavailable prices | Synthetic reproduction |
@@ -41,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F02 is the next unresolved finding.
+F03 is the next unresolved finding following the F02 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -49,7 +49,8 @@ new exit. Manual exits confirm all linked protection is inactive and subtract
 cumulative fills, including fills during cancellation. Completed owned trades
 close locally even when foreign shares remain. Added lifecycle regression tests;
 the findings below retain their original reviewed-baseline locations. Other
-findings remain separate work, including persistent protection (F02).
+findings remain separate work; persistent protection (F02) was subsequently
+resolved in v0.24.5 as recorded below.
 
 **Locations:** [bot.py](../bot.py), lines 1105–1111, 1140–1151, 1826–1827.
 
@@ -64,6 +65,40 @@ findings remain separate work, including persistent protection (F02).
 **Regression:** filled owned TP plus a remaining foreign position closes the local ledger with no new order; repeat for partially filled TP, stop fills, and repeated reconciliation.
 
 ### F02 — Protective orders expire sooner than the swing position
+
+**Status: FIXED — 2026-09-06, v0.24.5.** New bracket and stop-only OTO entries
+use GTC. Reconciliation checks the trade's exact linked protection, remaining
+owned quantity, and time in force, and repairs expired/canceled, DAY, or
+incorrectly sized protection. It confirms cancellation and records any racing
+fills before placing one GTC OCO, or one standalone GTC stop for SMA exits.
+Manual exits also cancel replacement stops, and completed replacement fills
+close the owned ledger even when foreign shares remain.
+
+Replacement client IDs are persisted before submission and adopted after a
+lost response or broker-ID database write. Unresolved submissions, incomplete
+ownership evidence, unconfirmed cancellation, or unavailable shares block
+further orders. An unresolved submission requires operator reconciliation if
+Alpaca never returns the saved client ID; the bot does not blindly retry it.
+If protection levels have already been breached, a durable controlled exit
+replaces an invalid protective request. Missing daily signal data does not
+prevent protection checks.
+
+**API verification:** checked Alpaca's current [order lifecycle and advanced
+order rules](https://docs.alpaca.markets/us/docs/orders-at-alpaca),
+[create-order contract](https://docs.alpaca.markets/us/reference/postorder), and
+[client order ID guidance](https://docs.alpaca.markets/us/docs/working-with-orders).
+Requests use whole-share quantities, GTC, no extended-hours execution, OCO limit
+take-profit plus stop-loss fields, and the required sell-stop/base-price gap.
+GTC is still subject to Alpaca's 90-day expiration policy; reconciliation handles
+terminal expiration. Broker-held protection does not guarantee execution outside
+regular hours or at the stop price.
+
+**Validation:** 450 tests passed, including 35 new protection lifecycle cases;
+one existing dependency deprecation warning. Tests use real SDK requests and an
+isolated SQLite ledger with a simulated broker; no live-order compliance test
+was submitted. **Next unresolved finding: F03 (singleton process management).**
+
+The description below records the original reviewed baseline.
 
 **Locations:** [bot.py](../bot.py), lines 258–265 and 293–300; unused helpers at 310–376.
 

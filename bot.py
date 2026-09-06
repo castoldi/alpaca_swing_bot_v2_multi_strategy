@@ -259,7 +259,7 @@ def _place_stop_only_entry(
         symbol=ticker,
         qty=qty,
         side=OrderSide.BUY,
-        time_in_force=TimeInForce.DAY,
+        time_in_force=TimeInForce.GTC,
         order_class=OrderClass.OTO,
         stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
         client_order_id=entry_coid,
@@ -293,7 +293,7 @@ def _place_single_bracket_entry(
         symbol=ticker,
         qty=qty,
         side=OrderSide.BUY,
-        time_in_force=TimeInForce.DAY,
+        time_in_force=TimeInForce.GTC,
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(sig.tp3, 2)),
         stop_loss=StopLossRequest(stop_price=round(sig.stop_loss, 2)),
@@ -314,66 +314,116 @@ def _place_protective_oco(
     stop_price: float,
     take_profit: float | None,
 ) -> dict:
-    """Re-arm broker-held protection on a position whose bracket legs are gone.
+    """Submit GTC OCO or a standalone stop after confirming old protection dead.
 
-    The entry's own bracket legs are children of the entry order, so
-    `_confirmed_exit_fill` finds them through `order.legs`. Legs re-armed later are
-    standalone orders with no such parent link, so they carry our own
-    `swingv2-protect-<strategy>-<ticker>-<hex>` client id and their ids are stored
-    on the trade — that is what proves the eventual fill is ours.
-
-    OCO (not two independent sells) because Alpaca rejects a second concurrent
-    sell leg on the same position with 403 40310000.
+    Persist the client id BEFORE submitting. An ambiguous response leaves that
+    intent in place for adoption; it must never trigger a fresh submission.
     """
     from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
     from alpaca.trading.requests import (
         LimitOrderRequest,
+        StopOrderRequest,
         StopLossRequest,
         TakeProfitRequest,
     )
 
     coid = _make_client_order_id(trade["strategy"], trade["ticker"], "protect")
-    if take_profit is None:
-        raise ValueError("OCO protection requires a take-profit price")
-
-    request = LimitOrderRequest(
+    common = dict(
         symbol=trade["ticker"],
         qty=qty,
         side=OrderSide.SELL,
         time_in_force=TimeInForce.GTC,
-        order_class=OrderClass.OCO,
-        take_profit=TakeProfitRequest(limit_price=round(take_profit, 2)),
-        stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
         client_order_id=coid,
+        extended_hours=False,
     )
-    order = tc.submit_order(request)
+    if take_profit is None:
+        request = StopOrderRequest(**common, stop_price=round(stop_price, 2))
+    else:
+        request = LimitOrderRequest(
+            **common, order_class=OrderClass.OCO,
+            limit_price=round(take_profit, 2),
+            take_profit=TakeProfitRequest(limit_price=round(take_profit, 2)),
+            stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
+        )
+    previous = (trade.get("protect_client_order_id"), trade.get("protect_alpaca_order_id"))
+    db_mod.set_protect_order_ids(trade["id"], coid, None)
+    trade.update(protect_client_order_id=coid, protect_alpaca_order_id=None)
+    try:
+        order = tc.submit_order(request)
+    except Exception as exc:
+        resolution, order = _lookup_entry_by_client_id(tc, coid)
+        if resolution != "found":
+            if resolution == "not_found" and _is_definite_submission_rejection(exc):
+                # An explicit rejection plus no matching order permits a later
+                # attempt. A timeout/5xx/unknown lookup never does.
+                db_mod.set_protect_order_ids(trade["id"], *previous)
+                trade.update(protect_client_order_id=previous[0], protect_alpaca_order_id=previous[1])
+            raise
     alpaca_id = str(getattr(order, "id", "") or "")
+    if (not alpaca_id or order.client_order_id != coid
+            or order.symbol != trade["ticker"]
+            or getattr(order.side, "value", order.side) != "sell"):
+        raise ValueError("protective submission returned mismatched ownership")
     db_mod.set_protect_order_ids(trade["id"], coid, alpaca_id)
+    trade.update(protect_client_order_id=coid, protect_alpaca_order_id=alpaca_id)
     return {"order": order, "protect_coid": coid, "alpaca_id": alpaca_id}
 
 
-def _protective_orders_missing(tc, trade: dict) -> bool:
-    """True when an open position currently has no live sell protection.
+def _ensure_owned_protection(tc, trade: dict) -> None:
+    """Repair expired, DAY, or wrong-quantity protection using exact owned links.
 
-    Counts any resting sell we own for the symbol, whether it came from the entry
-    bracket or from a later re-arm, so this never double-arms a healthy position.
+    Alpaca activates bracket/OTO children only after the entry fills. OCO has
+    the limit TP as its parent and the stop as its child. GTC still has a 90-day
+    expiry, so coverage is checked on every reconciliation, not just entry.
     """
-    from alpaca.trading.requests import GetOrdersRequest
-    from alpaca.trading.enums import QueryOrderStatus, OrderSide
+    if trade.get("exit_intent_reason") or trade.get("exit_alpaca_order_id"):
+        return
+    orders = _owned_bracket_orders(tc, trade)
+    if _record_bracket_progress(trade, orders):
+        return
+    remaining = float(trade["shares"]) - db_mod.get_exit_fill_totals(trade["id"])[0]
+    terminal = {"filled", "closed", "canceled", "expired", "rejected"}
+    live = [o for o in orders if _status_str(o) not in terminal]
+    healthy = []
+    for item in live:
+        if _status_str(item) not in {"new", "accepted", "partially_filled", "held", "done_for_day"}:
+            # Transitional/unknown states cannot prove settled coverage.
+            healthy.append(False)
+            continue
+        qty = float(item.qty) - float(item.filled_qty)
+        tif = getattr(item.time_in_force, "value", item.time_in_force)
+        healthy.append(math.isfinite(qty) and abs(qty - remaining) < 1e-8 and tif == "gtc")
+    kinds = sorted(str(getattr(getattr(o, "type", ""), "value", getattr(o, "type", ""))) for o in live)
+    stop_only = REGISTRY[trade["strategy"]].exit_mode == "signal_with_stop"
+    expected = ["stop"] if stop_only else ["limit", "stop"]
+    if kinds == expected and all(healthy):
+        return
 
-    try:
-        req = GetOrdersRequest(
-            status=QueryOrderStatus.OPEN,
-            symbols=[trade["ticker"]],
-            side=OrderSide.SELL,
-            limit=50,
-        )
-        return not (tc.get_orders(filter=req) or [])
-    except Exception as exc:
-        # Fail closed: an unreadable order book must never be reported as
-        # "unprotected", or we would stack a duplicate sell onto a live one.
-        log.warning("  %s: protection check failed (%s)", trade["ticker"], exc)
-        return False
+    if not _cancel_owned_bracket(tc, trade):
+        return
+    # Account quantity is only a cap. Re-read after asynchronous cancellation,
+    # then subtract all recorded fills, including fills racing the cancellation.
+    remaining = float(trade["shares"]) - db_mod.get_exit_fill_totals(trade["id"])[0]
+    pos = tc.get_open_position(trade["ticker"])
+    account_qty = float(pos.qty)
+    available = float(pos.qty_available) if getattr(pos, "qty_available", None) is not None else account_qty
+    if (not math.isfinite(remaining) or remaining < 1 or not remaining.is_integer()
+            or not math.isfinite(account_qty) or account_qty < remaining
+            or not math.isfinite(available) or available < remaining):
+        raise ValueError("remaining owned whole shares are unavailable for protection")
+    current = float(pos.current_price)
+    stop = round(float(trade["stop_loss"]), 2)
+    tp = None if stop_only else round(float(trade["take_profit"]), 2)
+    if (not math.isfinite(current) or current <= 0 or not math.isfinite(stop) or stop <= 0
+            or (tp is not None and (not math.isfinite(tp) or tp <= stop))):
+        raise ValueError("invalid protection prices")
+    # Alpaca requires an advanced sell stop at least $0.01 below the market
+    # and TP base prices. Do not move the strategy's stop to force acceptance.
+    if current < stop + 0.01 or (tp is not None and (current >= tp or tp < stop + 0.01)):
+        _close_owned(tc, trade, pos, reason="protection_breached")
+        return
+    _place_protective_oco(tc, trade, remaining, stop, tp)
+    log.warning("  %s: restored owned GTC protection for %g shares", trade["ticker"], remaining)
 
 
 def _position_qty(tc, ticker: str) -> float:
@@ -1090,8 +1140,6 @@ def _reconcile_and_exit(
         try:
             if not _resolve_pending_entry(tc, trade):
                 continue
-            if strat_obj.exit_mode == "signal_with_stop":
-                _backfill_entry_fill(tc, trade)
             try:
                 pos = tc.get_open_position(ticker)
             except Exception:
@@ -1132,11 +1180,15 @@ def _reconcile_and_exit(
                 continue
 
             if strat_obj.exit_mode == "signal_with_stop":
+                linked = _owned_bracket_orders(tc, trade)
+                if _record_bracket_progress(trade, linked):
+                    continue
                 frame = (frames or {}).get(ticker) if trade_strat == strat_name else None
                 if frame is None or frame.empty:
                     frame = _signal_exit_frame(ticker, strat_obj, frame_cache)
                 if frame is None or frame.empty:
                     log.warning("  %s: no completed daily frame — leaving position open", ticker)
+                    _ensure_owned_protection(tc, trade)
                     continue
                 if not _verify_owned(tc, trade):
                     log.warning("  %s cross exit blocked: ownership unverified (coid=%s)",
@@ -1145,6 +1197,8 @@ def _reconcile_and_exit(
                 reason = strat_obj.check_exit(frame, len(frame) - 1, PARAMS)
                 if reason:
                     _close_owned(tc, trade, pos, reason=reason)
+                else:
+                    _ensure_owned_protection(tc, trade)
                 continue
 
             held = _days_held(trade["entry_date"])
@@ -1159,6 +1213,8 @@ def _reconcile_and_exit(
                                 ticker, trade.get("client_order_id"))
                     continue
                 _close_owned(tc, trade, pos, reason="time_stop")
+            else:
+                _ensure_owned_protection(tc, trade)
         except Exception as e:
             log.error("  Exit check failed for %s: %s", ticker, e)
 
@@ -1639,116 +1695,6 @@ def _parse_timestamp(value):
         return None
 
 
-def _cancel_attached_signal_stop(tc, trade: dict) -> tuple[bool, list]:
-    """Cancel and confirm the stop attached to a signal-exit OTO entry.
-
-    This is deliberately fail-closed: an unconfirmed stop can still reserve or
-    sell the shares, so the crossover market sell must not race it.
-    """
-    from alpaca.trading.requests import GetOrderByIdRequest
-
-    active = {"new", "accepted", "held", "pending_new", "partially_filled"}
-    canceling = {"pending_cancel"}
-    safely_inactive = {"canceled", "expired", "rejected"}
-    entry_id = trade.get("alpaca_order_id")
-    if not entry_id:
-        log.error("  %s cross exit blocked: entry order id is missing", trade["ticker"])
-        return False, []
-
-    def nested_entry():
-        return tc.get_order_by_id(
-            entry_id, filter=GetOrderByIdRequest(nested=True)
-        )
-
-    try:
-        entry_order = nested_entry()
-    except Exception as e:
-        log.error(
-            "  %s cross exit blocked: attached stop could not be inspected: %s",
-            trade["ticker"],
-            e,
-        )
-        return False, []
-
-    legs = list(getattr(entry_order, "legs", None) or [])
-    if not legs:
-        log.error(
-            "  %s cross exit blocked: OTO entry has no visible attached stop",
-            trade["ticker"],
-        )
-        return False, []
-
-    leg_ids = {str(getattr(leg, "id", "") or "") for leg in legs}
-    if "" in leg_ids:
-        log.error("  %s cross exit blocked: attached stop id is missing", trade["ticker"])
-        return False, []
-
-    for leg in legs:
-        status = _status_str(leg)
-        if status in ("filled", "closed"):
-            log.warning(
-                "  %s cross exit blocked: attached stop %s is already %s",
-                trade["ticker"],
-                leg.id,
-                status,
-            )
-            return False, [leg]
-        if status in safely_inactive:
-            continue
-        if status in canceling:
-            continue
-        if status not in active:
-            log.error(
-                "  %s cross exit blocked: attached stop %s has unknown status %s",
-                trade["ticker"],
-                leg.id,
-                status,
-            )
-            return False, legs
-        try:
-            tc.cancel_order_by_id(leg.id)
-            log.info("  Requested cancellation of attached stop %s for %s", leg.id, trade["ticker"])
-        except Exception as e:
-            log.error(
-                "  %s cross exit blocked: attached stop %s could not be canceled: %s",
-                trade["ticker"],
-                leg.id,
-                e,
-            )
-            return False, legs
-
-    # Alpaca cancellation is asynchronous. Refetch the nested parent until every
-    # leg is terminal, with a short bounded wait; otherwise leave the position alone.
-    confirmed_legs = legs
-    for attempt in range(5):
-        try:
-            confirmed_legs = [tc.get_order_by_id(leg_id) for leg_id in leg_ids]
-            statuses = {
-                str(getattr(leg, "id", "") or ""): _status_str(leg)
-                for leg in confirmed_legs
-            }
-        except Exception as e:
-            log.error(
-                "  %s cross exit blocked: stop cancellation could not be confirmed: %s",
-                trade["ticker"],
-                e,
-            )
-            return False, []
-
-        if all(statuses.get(leg_id) in safely_inactive for leg_id in leg_ids):
-            return True, confirmed_legs
-        if any(statuses.get(leg_id) in ("filled", "closed") for leg_id in leg_ids):
-            return False, confirmed_legs
-        if attempt < 4:
-            time.sleep(0.2)
-
-    log.error(
-        "  %s cross exit blocked: attached stop cancellation was not confirmed",
-        trade["ticker"],
-    )
-    return False, confirmed_legs
-
-
 def _owned_bracket_orders(tc, trade: dict) -> list | None:
     """Read exact stored parents and their children; never infer from a symbol.
 
@@ -1760,6 +1706,13 @@ def _owned_bracket_orders(tc, trade: dict) -> list | None:
 
     def parent(id_key, coid_key, side):
         oid, coid = trade.get(id_key), trade.get(coid_key)
+        if not oid and coid and id_key == "protect_alpaca_order_id":
+            # Pre-submit intent survived a timeout/crash. Look up that exact
+            # client id; 404/unknown is NOT permission to resubmit a sell.
+            resolution, recovered = _lookup_entry_by_client_id(tc, coid)
+            if resolution != "found":
+                raise ValueError(f"protective submission unresolved ({resolution}); operator reconciliation required")
+            oid = str(getattr(recovered, "id", "") or "")
         if not oid or not coid or not str(coid).startswith(CLIENT_ORDER_PREFIX + "-"):
             raise ValueError("missing owned order references")
         result = tc.get_order_by_id(oid, filter=GetOrderByIdRequest(nested=True))
@@ -1767,6 +1720,9 @@ def _owned_bracket_orders(tc, trade: dict) -> list | None:
         if (str(result.id) != str(oid) or result.client_order_id != coid
                 or result.symbol != trade["ticker"] or actual_side != side):
             raise ValueError("broker order does not match stored ownership")
+        if id_key == "protect_alpaca_order_id" and not trade.get(id_key):
+            db_mod.set_protect_order_ids(trade["id"], coid, str(oid))
+            trade[id_key] = str(oid)
         return result
 
     entry = parent("alpaca_order_id", "client_order_id", "buy")
@@ -1788,14 +1744,19 @@ def _owned_bracket_orders(tc, trade: dict) -> list | None:
     trade.update(shares=qty, entry_filled_price=price)
 
     linked = list(entry.legs or [])
-    if len(linked) != 2 or len({str(order.id) for order in linked}) != 2:
-        raise ValueError("both distinct entry bracket children are required")
+    stop_only = REGISTRY[trade["strategy"]].exit_mode == "signal_with_stop"
+    expected = 1 if stop_only else 2
+    if len(linked) != expected or len({str(order.id) for order in linked}) != expected:
+        raise ValueError("complete distinct entry protection children are required")
     if trade.get("protect_alpaca_order_id") or trade.get("protect_client_order_id"):
         protection = parent("protect_alpaca_order_id", "protect_client_order_id", "sell")
-        if (len(protection.legs or []) != 1
-                or str(protection.legs[0].id) == str(protection.id)):
+        if stop_only:
+            if protection.legs:
+                raise ValueError("replacement stop must be a standalone order")
+        elif (len(protection.legs or []) != 1
+              or str(protection.legs[0].id) == str(protection.id)):
             raise ValueError("complete replacement OCO parent and stop are required")
-        linked.extend([protection, *protection.legs])
+        linked.extend([protection, *(protection.legs or [])])
     unique = {}
     for child in linked:
         _validate_bracket_child(child, trade)
@@ -1825,24 +1786,32 @@ def _record_bracket_progress(trade: dict, orders: list | None) -> bool:
         progress = _account_order_progress(trade, order)
         if progress is not None:
             reference = progress
-    return _finalize_accumulated_exit(trade, "bracket_filled", reference)
+    reason = "stop_loss" if REGISTRY[trade["strategy"]].exit_mode == "signal_with_stop" else "bracket_filled"
+    return _finalize_accumulated_exit(trade, reason, reference)
 
 
 def _cancel_owned_bracket(tc, trade: dict) -> bool:
     """Confirm owned protection inactive and record racing fills before selling."""
     terminal = {"filled", "closed", "canceled", "expired", "rejected"}
-    active = {"new", "accepted", "held", "pending_new", "partially_filled"}
+    active = {"new", "accepted", "held", "pending_new", "partially_filled", "done_for_day"}
     try:
         orders = _owned_bracket_orders(tc, trade)
         if _record_bracket_progress(trade, orders):
             return False
         ids = {str(order.id) for order in orders}
+        if any(_status_str(order) not in active | terminal | {"pending_cancel"} for order in orders):
+            raise ValueError("unverified protection status; leaving all linked orders unchanged")
         for order in orders:
             status = _status_str(order)
             if status in active:
-                tc.cancel_order_by_id(order.id)
-            elif status not in terminal | {"pending_cancel"}:
-                raise ValueError(f"unverified bracket status: {status}")
+                try:
+                    tc.cancel_order_by_id(order.id)
+                except Exception as exc:
+                    # Canceling one bracket/OCO leg cancels its sibling too.
+                    # The stale second cancel may reject; only fresh terminal
+                    # evidence below can authorize a replacement or market sell.
+                    log.warning("  %s cancellation response for %s: %s; verifying state",
+                                trade["ticker"], order.id, exc)
         for attempt in range(5):
             refreshed = [tc.get_order_by_id(oid) for oid in ids]
             if {str(order.id) for order in refreshed} != ids:
@@ -1879,31 +1848,8 @@ def _execute_exit_intent(
 ) -> bool:
     """Cancel protection, refresh quantity, and submit the persisted intent."""
     ticker = trade["ticker"]
-    strat_obj = REGISTRY.get(trade.get("strategy", ""))
-    stop_progress: list[dict] = []
-
-    if strat_obj is not None and strat_obj.exit_mode == "signal_with_stop":
-        safe_to_sell, stop_orders = _cancel_attached_signal_stop(tc, trade)
-        for stop_order in stop_orders:
-            progress = _account_order_progress(trade, stop_order)
-            if progress is not None:
-                stop_progress.append(progress)
-        if stop_progress and _finalize_accumulated_exit(
-            trade, "stop_loss", stop_progress[-1]
-        ):
-            return False
-        if not safe_to_sell:
-            # A fully filled stop may have finished the exit while cancellation
-            # was being attempted. Record it, but never race it with a market sell.
-            try:
-                tc.get_open_position(ticker)
-            except Exception:
-                if stop_progress:
-                    _record_confirmed_exit(trade, stop_progress[-1], "stop_loss")
-            return False
-    else:
-        if not _cancel_owned_bracket(tc, trade):
-            return False
+    if not _cancel_owned_bracket(tc, trade):
+        return False
 
     # Cancellation is asynchronous, so the position used to decide the exit may
     # now be stale. Refetch and subtract every durable partial fill before sizing.
@@ -1917,7 +1863,7 @@ def _execute_exit_intent(
     remaining_ours = max(0.0, our_qty - filled_shares) if our_qty > 0 else 0.0
     if live_pos is None:
         if _finalize_accumulated_exit(
-            trade, reason, stop_progress[-1] if stop_progress else None
+            trade, reason, None
         ):
             return False
         _reconcile_closed(tc, trade)
@@ -1927,7 +1873,7 @@ def _execute_exit_intent(
     qty_to_close = int(min(remaining_ours, pos_qty)) if our_qty > 0 else int(pos_qty)
     if qty_to_close < 1:
         if _finalize_accumulated_exit(
-            trade, reason, stop_progress[-1] if stop_progress else None
+            trade, reason, None
         ):
             return False
         log.warning(
