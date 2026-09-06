@@ -145,6 +145,18 @@ def test_reconcile_covers_trades_from_other_strategies(monkeypatch):
         def get_open_position(self, _ticker):
             return SimpleNamespace(qty="2", current_price="105")
 
+        def get_order_by_id(self, order_id, **_kwargs):
+            assert order_id == "entry-3"
+            return SimpleNamespace(
+                id="entry-3", client_order_id=trade["client_order_id"],
+                symbol="AMD", side="buy", status="filled",
+                filled_qty="2", filled_avg_price="100",
+                legs=[SimpleNamespace(
+                    id=oid, symbol="AMD", side="sell", status="new",
+                    filled_qty="0", filled_avg_price=None,
+                ) for oid in ("tp-3", "sl-3")],
+            )
+
     closed = []
     monkeypatch.setattr(bot, "_get_trading", lambda: _Client())
     monkeypatch.setattr(bot.db_mod, "get_open_trades", lambda: [trade])

@@ -1090,7 +1090,8 @@ def _reconcile_and_exit(
         try:
             if not _resolve_pending_entry(tc, trade):
                 continue
-            _backfill_entry_fill(tc, trade)
+            if strat_obj.exit_mode == "signal_with_stop":
+                _backfill_entry_fill(tc, trade)
             try:
                 pos = tc.get_open_position(ticker)
             except Exception:
@@ -1101,6 +1102,15 @@ def _reconcile_and_exit(
             # Never place a second sell while the first is still live/unknown.
             if trade.get("exit_alpaca_order_id") and _reconcile_pending_exit(tc, trade):
                 continue
+
+            # Account-wide symbol quantity does not prove that OUR trade is
+            # still open. Its bracket may have filled while another owner holds
+            # the same symbol. Reconcile exact linked orders first, even when
+            # the account still has a position (or a durable exit intent).
+            if strat_obj.exit_mode == "bracket":
+                linked = _owned_bracket_orders(tc, trade)
+                if _record_bracket_progress(trade, linked):
+                    continue
 
             if pos is None:
                 if trade.get("exit_intent_reason") and _finalize_accumulated_exit(
@@ -1739,27 +1749,116 @@ def _cancel_attached_signal_stop(tc, trade: dict) -> tuple[bool, list]:
     return False, confirmed_legs
 
 
-def _cancel_owned_legs_best_effort(tc, trade: dict):
-    """Release legacy bracket shares without weakening their existing behavior."""
-    try:
-        from alpaca.trading.requests import GetOrderByIdRequest
-        entry_id = trade.get("alpaca_order_id")
-        if not entry_id:
-            return
-        entry_order = tc.get_order_by_id(
-            entry_id, filter=GetOrderByIdRequest(nested=True)
+def _owned_bracket_orders(tc, trade: dict) -> list | None:
+    """Read exact stored parents and their children; never infer from a symbol.
+
+    Raises on incomplete/unverified evidence so callers cannot initiate a sell.
+    Child client ids are broker-generated: their parent link proves ownership.
+    None means a verified terminal entry with zero fills was retired locally.
+    """
+    from alpaca.trading.requests import GetOrderByIdRequest
+
+    def parent(id_key, coid_key, side):
+        oid, coid = trade.get(id_key), trade.get(coid_key)
+        if not oid or not coid or not str(coid).startswith(CLIENT_ORDER_PREFIX + "-"):
+            raise ValueError("missing owned order references")
+        result = tc.get_order_by_id(oid, filter=GetOrderByIdRequest(nested=True))
+        actual_side = getattr(result.side, "value", result.side)
+        if (str(result.id) != str(oid) or result.client_order_id != coid
+                or result.symbol != trade["ticker"] or actual_side != side):
+            raise ValueError("broker order does not match stored ownership")
+        return result
+
+    entry = parent("alpaca_order_id", "client_order_id", "buy")
+    if _status_str(entry) not in {"filled", "closed", "canceled", "expired", "rejected"}:
+        raise ValueError("entry quantity is still unsettled")
+    qty = float(entry.filled_qty)
+    price = float(entry.filled_avg_price or 0)
+    if qty == 0 and _status_str(entry) in {"canceled", "expired", "rejected"}:
+        db_mod.close_trade(
+            trade["id"], datetime.now(timezone.utc).isoformat(),
+            trade["entry_price"], "entry_not_filled", 0, 0.0, 0.0, 0.0,
+            exit_client_order_id=trade["client_order_id"],
+            exit_alpaca_order_id=trade["alpaca_order_id"],
         )
-        for leg in (getattr(entry_order, "legs", None) or []):
-            if _status_str(leg) in (
-                "new", "accepted", "held", "pending_new", "partially_filled"
-            ):
-                try:
-                    tc.cancel_order_by_id(leg.id)
-                    log.info("  Cancelled bracket leg %s for %s", leg.id, trade["ticker"])
-                except Exception as e:
-                    log.debug("  Could not cancel leg %s: %s", getattr(leg, "id", "?"), e)
-    except Exception as e:
-        log.debug("  Could not inspect bracket legs for %s: %s", trade["ticker"], e)
+        return None
+    if not (math.isfinite(qty) and qty > 0 and math.isfinite(price) and price > 0):
+        raise ValueError("entry has no verified positive fill")
+    db_mod.set_entry_fill(trade["id"], price, qty)
+    trade.update(shares=qty, entry_filled_price=price)
+
+    linked = list(entry.legs or [])
+    if len(linked) != 2 or len({str(order.id) for order in linked}) != 2:
+        raise ValueError("both distinct entry bracket children are required")
+    if trade.get("protect_alpaca_order_id") or trade.get("protect_client_order_id"):
+        protection = parent("protect_alpaca_order_id", "protect_client_order_id", "sell")
+        if (len(protection.legs or []) != 1
+                or str(protection.legs[0].id) == str(protection.id)):
+            raise ValueError("complete replacement OCO parent and stop are required")
+        linked.extend([protection, *protection.legs])
+    unique = {}
+    for child in linked:
+        _validate_bracket_child(child, trade)
+        unique[str(child.id)] = child
+    return list(unique.values())
+
+
+def _validate_bracket_child(order, trade: dict) -> None:
+    side = getattr(order.side, "value", order.side)
+    if not order.id or order.symbol != trade["ticker"] or side != "sell":
+        raise ValueError("invalid linked sell order")
+    qty = float(order.filled_qty)
+    if not math.isfinite(qty) or qty < 0:
+        raise ValueError("invalid linked fill quantity")
+    if qty > 0:
+        price = float(order.filled_avg_price or 0)
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("linked fill price is unavailable")
+
+
+def _record_bracket_progress(trade: dict, orders: list | None) -> bool:
+    """Persist cumulative partial/final fills once per Alpaca child order id."""
+    if orders is None:
+        return True
+    reference = None
+    for order in orders:
+        progress = _account_order_progress(trade, order)
+        if progress is not None:
+            reference = progress
+    return _finalize_accumulated_exit(trade, "bracket_filled", reference)
+
+
+def _cancel_owned_bracket(tc, trade: dict) -> bool:
+    """Confirm owned protection inactive and record racing fills before selling."""
+    terminal = {"filled", "closed", "canceled", "expired", "rejected"}
+    active = {"new", "accepted", "held", "pending_new", "partially_filled"}
+    try:
+        orders = _owned_bracket_orders(tc, trade)
+        if _record_bracket_progress(trade, orders):
+            return False
+        ids = {str(order.id) for order in orders}
+        for order in orders:
+            status = _status_str(order)
+            if status in active:
+                tc.cancel_order_by_id(order.id)
+            elif status not in terminal | {"pending_cancel"}:
+                raise ValueError(f"unverified bracket status: {status}")
+        for attempt in range(5):
+            refreshed = [tc.get_order_by_id(oid) for oid in ids]
+            if {str(order.id) for order in refreshed} != ids:
+                raise ValueError("bracket lookup returned different order ids")
+            for order in refreshed:
+                _validate_bracket_child(order, trade)
+            if _record_bracket_progress(trade, refreshed):
+                return False
+            if all(_status_str(order) in terminal for order in refreshed):
+                return True
+            if attempt < 4:
+                time.sleep(0.2)
+        raise ValueError("bracket cancellation is not confirmed")
+    except Exception as exc:
+        log.error("  %s exit blocked: owned bracket state unverified (%s)", trade["ticker"], exc)
+        return False
 
 
 def _account_order_progress(trade: dict, order, require_prefix: bool = False) -> dict | None:
@@ -1803,7 +1902,8 @@ def _execute_exit_intent(
                     _record_confirmed_exit(trade, stop_progress[-1], "stop_loss")
             return False
     else:
-        _cancel_owned_legs_best_effort(tc, trade)
+        if not _cancel_owned_bracket(tc, trade):
+            return False
 
     # Cancellation is asynchronous, so the position used to decide the exit may
     # now be stale. Refetch and subtract every durable partial fill before sizing.

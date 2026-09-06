@@ -39,6 +39,14 @@ P1 means address before relying on the affected execution or research result. P2
 
 ### F01 — Reconcile owned bracket fills before looking at the aggregate position
 
+**Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
+validate stored parent references and reconcile linked child fills before any
+new exit. Manual exits confirm all linked protection is inactive and subtract
+cumulative fills, including fills during cancellation. Completed owned trades
+close locally even when foreign shares remain. Added lifecycle regression tests;
+the findings below retain their original reviewed-baseline locations. Other
+findings remain separate work, including persistent protection (F02).
+
 **Locations:** [bot.py](../bot.py), lines 1105–1111, 1140–1151, 1826–1827.
 
 `_reconcile_and_exit` calls `_reconcile_closed` when the broker's entire symbol position is absent. On a shared account, this bot's bracket can finish while another owner still holds that symbol. The original entry continues to pass `_verify_owned`, but that proves historical ownership, not remaining ownership. A later time stop can sell again.

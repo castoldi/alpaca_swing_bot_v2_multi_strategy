@@ -284,6 +284,25 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.3] - 2026-09-06
+
+### Added
+
+### Fixed
+- **Bracket ownership reconciliation (review F01)** — reconcile the exact stored
+  Alpaca entry and replacement-protection references before treating a symbol
+  position as this bot's inventory. Persist cumulative child fills by order ID,
+  use actual terminal entry quantities, and finalize completed trades even when
+  another owner still holds the symbol. Manual exits now confirm cancellation
+  of all linked protection, record fills racing cancellation, and sell only the
+  remaining owned quantity. Missing, incomplete, mismatched, or unreadable order
+  evidence blocks the sell; terminal zero-fill entries release their local slot.
+  Regression tests cover shared holdings, partial fills, retries, replacement
+  OCO orders, and broker/cancellation failures.
+
+### Changed
+
 ## [0.24.2] - 2026-09-05
 
 ### Added
