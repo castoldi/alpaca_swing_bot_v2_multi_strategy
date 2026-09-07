@@ -53,9 +53,21 @@ def test_creation_time_rechecked_immediately_before_termination(manager, monkeyp
     proc = Process(manager.root, created=100)
     snapshot = runtime.process_identity(proc, "bot", manager.root)
     proc.created = 200
+    def still_running(timeout=None):
+        raise psutil.TimeoutExpired(timeout, proc.pid)
+    proc.wait = still_running
     monkeypatch.setattr(psutil, "Process", lambda pid: proc)
     with pytest.raises(RuntimeError, match="identity"):
         manager.stop_identity(snapshot)
+    assert not proc.killed
+
+
+def test_exiting_launcher_after_worker_stop_does_not_block_cleanup(manager, monkeypatch):
+    proc = Process(manager.root, created=100)
+    snapshot = runtime.process_identity(proc, "bot", manager.root)
+    monkeypatch.setattr(psutil, "Process", lambda pid: proc)
+    monkeypatch.setattr(runtime, "process_identity", lambda *args: None)
+    manager.stop_identity(snapshot)
     assert not proc.killed
 
 

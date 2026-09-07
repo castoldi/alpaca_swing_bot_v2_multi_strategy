@@ -288,6 +288,18 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.7] - 2026-09-07
+
+### Added
+
+### Fixed
+- Treat a launcher that exits immediately after its verified worker stops as
+  gone, while continuing to reject a live PID whose identity or creation time
+  changed before termination.
+
+### Changed
+
 ## [0.24.6] - 2026-09-07
 
 ### Added

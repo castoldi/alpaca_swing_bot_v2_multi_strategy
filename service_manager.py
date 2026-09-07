@@ -95,6 +95,15 @@ class Manager:
             proc = psutil.Process(identity["pid"])
             actual = runtime.process_identity(proc, identity["service"], self.root, self.port)
             if actual is None or actual["process_created"] != identity["process_created"]:
+                # Stopping the verified interpreter can make its launcher exit
+                # between the inventory snapshot and its own stop. Treat only
+                # a promptly exited launcher as gone; a live changed PID stays
+                # fail-closed in case Windows reused it for another process.
+                try:
+                    proc.wait(timeout=1)
+                    return
+                except psutil.TimeoutExpired:
+                    pass
                 raise RuntimeError(f"Process identity changed for PID {identity['pid']}; stop refused")
             # psutil checks PID reuse; never kill an unverified descendant tree.
             proc.terminate()

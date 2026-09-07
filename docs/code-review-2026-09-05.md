@@ -112,7 +112,7 @@ Alpaca documents automatic cancellation of unfilled DAY orders after the closing
 
 ### F03 — Singleton checks race, and process matching can affect unrelated projects
 
-**Status: FIXED — 2026-09-07, v0.24.6.** `scripts/manage.ps1` now delegates
+**Status: FIXED — 2026-09-07, v0.24.6–v0.24.7.** `scripts/manage.ps1` now delegates
 to a project-local manager that holds a service-specific OS lock through check,
 stop, launch, and readiness. Runtime services hold a separate lifetime lock,
 so a direct second bot, dashboard, or same-year backtest cannot overwrite the
@@ -135,7 +135,7 @@ enough readable process identity for safe adoption. The manager leaves it
 running and marks it unverified instead of stopping it. New dashboard launches
 use an absolute project entry point and are fully tracked.
 
-**Validation:** 480 tests passed, including 30 process-control and manager
+**Validation:** 481 tests passed, including 31 process-control and manager
 regressions covering concurrent starts, foreign commands and port owners, PID
 reuse, metadata ownership, restart settings, in-flight identity replacement,
 and independent bot/dashboard/backtest records. One existing dependency
