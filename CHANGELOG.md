@@ -287,6 +287,30 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.6] - 2026-09-07
+
+### Added
+- Verified `run/processes.json` inventory that keeps the PID groups for the
+  bot, dashboard, and each active annual backtest separate.
+- Process-control regressions for concurrent starts, PID reuse, foreign command
+  lines and ports, ownership-token cleanup, recovery settings, and readiness
+  races.
+
+### Fixed
+- **Singleton process management (review F03)** — serialize every manager and
+  watchdog lifecycle operation with OS-held locks; require exact project
+  executable/script identity and process creation time before adoption or stop;
+  and preserve each service owner's runtime files. A bot launcher/interpreter
+  pair is one instance. Unknown, foreign, or changed process identity fails
+  closed and is never terminated.
+- Track dashboard and backtest runs in the same durable runtime registry. New
+  dashboard launches use an absolute project entry point, and watchdog recovery
+  preserves the active bot strategy and interval.
+
+### Changed
+- Mark F03 fixed in the code-review analysis; F04 is the next unresolved item.
+
 ## [0.24.5] - 2026-09-06
 
 ### Added

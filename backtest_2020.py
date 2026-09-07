@@ -123,6 +123,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="2020 multi-strategy backtest")
     parser.add_argument("--strategy", type=str, help="Run a single strategy by name")
     args = parser.parse_args()
-    if args.strategy:
-        sys.exit(run_single(args.strategy))
-    sys.exit(run_full_backtest())
+    import runtime
+    with runtime.tracked("backtest_2020", {"strategy": args.strategy or "all"}):
+        if args.strategy:
+            sys.exit(run_single(args.strategy))
+        sys.exit(run_full_backtest())

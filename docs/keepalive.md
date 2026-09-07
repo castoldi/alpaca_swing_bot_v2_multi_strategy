@@ -5,8 +5,8 @@
 `keep_alive.py` is a watchdog script that runs every 30 minutes via Windows Task Scheduler. It checks whether the bot and the dashboard are healthy and restarts whichever one is not, then exits silently. It runs under `pythonw.exe` so no console window ever appears.
 
 **Healthy means:**
-- Bot: `run/bot.pid` process is alive AND `run/bot.heartbeat` was written within `(interval * 2 * 60) + 300` seconds (same formula as `manage.ps1 Get-BotHealth`)
-- Dashboard: `GET http://localhost:8004` returns a 2xx–4xx HTTP status
+- Bot: the exact project bot process and its creation time match runtime metadata, and `run/bot.heartbeat` is fresh within `(interval * 2 * 60) + 300` seconds.
+- Dashboard: the exact project dashboard process owns port 8004 and responds to HTTP.
 
 If both are healthy the script finishes in under one second and does nothing.
 
@@ -18,6 +18,7 @@ If both are healthy the script finishes in under one second and does nothing.
 | `scripts/setup_keepalive_task.ps1` | Registers / removes the Windows Scheduled Task |
 | `logs/keepalive.log` | Watchdog log — one entry per unhealthy event |
 | `logs/keepalive_manage.log` | stdout/stderr from manage.ps1 calls spawned by the watchdog |
+| `run/processes.json` | Verified PID groups for bot, dashboard, and active backtests |
 
 ## One-time setup (Admin PowerShell)
 
@@ -62,7 +63,7 @@ pwsh scripts\setup_keepalive_task.ps1 -Unregister
 
 ## Why not call bot.py / uvicorn directly?
 
-`keep_alive.py` delegates all start/restart work to `manage.ps1` which contains the full idempotency logic (checks health before spawning, kills stragglers, waits for pidfile confirmation). Duplicating that logic in Python would create a maintenance burden and divergence risk.
+`keep_alive.py` delegates all start/restart work to `manage.ps1`. The shared manager serializes lifecycle work with OS locks, validates each process's project identity and creation time, and never stops a process it cannot prove belongs to this project. It also preserves the bot's saved strategy and interval during recovery.
 
 ## Logging
 

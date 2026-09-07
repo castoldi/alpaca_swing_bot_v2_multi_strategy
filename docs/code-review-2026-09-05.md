@@ -20,7 +20,7 @@ P1 means address before relying on the affected execution or research result. P2
 |---|---|---|---|
 | F01 — **FIXED** | P1 | Filled brackets can lead to selling another owner's shares | Fixed in v0.24.3 (`b9dd867`); ownership regression tests |
 | F02 — **FIXED** | P1 | Multi-day protection uses DAY orders with no active repair path | Fixed in v0.24.5; Alpaca documentation + protection lifecycle regressions |
-| F03 | P1 | Manager is not atomic and does not reliably establish project identity | Source trace |
+| F03 — **FIXED** | P1 | Manager is not atomic and does not reliably establish project identity | Fixed in v0.24.6; process-control regressions |
 | F04 | P1 | Bracket backtests record the wrong entry price and time | Synthetic reproduction |
 | F05 | P1 | Bracket stop simulation fills through gaps at unavailable prices | Synthetic reproduction |
 | F06 | P1 | Earnings avoidance is missing live and wrong historically | Source + synthetic reproduction |
@@ -41,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F03 is the next unresolved finding following the F02 resolution below.
+F04 is the next unresolved finding following the F03 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -111,6 +111,38 @@ Alpaca documents automatic cancellation of unfilled DAY orders after the closing
 **Regression:** both entry types specify the intended persistent TIF; simulate a session boundary and missing/expired protection; verify exactly one repair or controlled exit. Persistence does not itself provide extended-hours execution.
 
 ### F03 — Singleton checks race, and process matching can affect unrelated projects
+
+**Status: FIXED — 2026-09-07, v0.24.6.** `scripts/manage.ps1` now delegates
+to a project-local manager that holds a service-specific OS lock through check,
+stop, launch, and readiness. Runtime services hold a separate lifetime lock,
+so a direct second bot, dashboard, or same-year backtest cannot overwrite the
+first service's records. Runtime metadata includes a per-run ownership token,
+PID birth time, executable, command, and project root; it is removed only by
+the same owner.
+
+The manager verifies exact executable and script/module identity, process
+creation time, and (for the dashboard) the verified listener and HTTP response
+before adoption or termination. It refuses a foreign port owner, an ambiguous
+legacy dashboard, a reused PID, or a process whose identity changes while it
+is being checked. Stops address exact verified PIDs only—never a broad process
+tree or a command-line substring. The watchdog uses the same lock and manager,
+preserving the live strategy and interval. `run/processes.json` records the
+separate PID groups for the bot, dashboard, and each active backtest; a normal
+launcher/interpreter pair is one instance.
+
+**Migration note:** an elevated dashboard started by the old manager may lack
+enough readable process identity for safe adoption. The manager leaves it
+running and marks it unverified instead of stopping it. New dashboard launches
+use an absolute project entry point and are fully tracked.
+
+**Validation:** 480 tests passed, including 30 process-control and manager
+regressions covering concurrent starts, foreign commands and port owners, PID
+reuse, metadata ownership, restart settings, in-flight identity replacement,
+and independent bot/dashboard/backtest records. One existing dependency
+deprecation warning remains. **Next unresolved finding: F04 (backtest entry
+fill price and time).**
+
+The description below records the original reviewed baseline.
 
 **Locations:** [scripts/manage.ps1](../scripts/manage.ps1), `Get-BotProcesses`, `Get-BotHealth`, `Start-Bot`, `Stop-Bot`, `Start-Dashboard`, `Stop-Dashboard`; [runtime.py](../runtime.py), `register`/`unregister`; [keep_alive.py](../keep_alive.py), `main`.
 
