@@ -72,7 +72,7 @@ class Broker:
 @pytest.fixture
 def lifecycle(monkeypatch):
     monkeypatch.setattr(bot, "send_notification", lambda *a, **k: None)
-    monkeypatch.setattr(bot, "_days_held", lambda _: 10)
+    monkeypatch.setattr(bot, "_hold_days_since_entry", lambda _: 10)
     monkeypatch.setattr(bot.time, "sleep", lambda _: None)
     trade_id = db.save_trade(
         "AMD", "ensemble", "2026-09-01", 100, 90, 110, shares=2,

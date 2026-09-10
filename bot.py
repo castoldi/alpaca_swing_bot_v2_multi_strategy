@@ -1064,6 +1064,22 @@ def _days_held(entry_date: str) -> int:
         return 0
 
 
+def _hold_days_since_entry(trade: dict) -> float:
+    """Real elapsed days since this bot actually entered — never the signal bar.
+
+    ``entry_date`` is the strategy signal's bar timestamp, which can be hours to
+    days old by the time the order actually fills (e.g. after a bot outage or a
+    stale bar). Time-stop decisions must count from the fill (``created_at``,
+    written the moment the entry order is accepted) or a stale signal gets
+    time-stopped the instant the position opens. Falls back to ``entry_date``
+    only if ``created_at`` is unreadable.
+    """
+    entry_ts = _parse_timestamp(trade.get("created_at")) or _parse_timestamp(trade.get("entry_date"))
+    if entry_ts is None:
+        return 0.0
+    return (datetime.now(timezone.utc) - entry_ts).total_seconds() / 86400.0
+
+
 def _verify_owned(tc, trade: dict) -> bool:
     """Prove this trade is ours: the Alpaca entry order must carry our correlation id.
 
@@ -1201,7 +1217,7 @@ def _reconcile_and_exit(
                     _ensure_owned_protection(tc, trade)
                 continue
 
-            held = _days_held(trade["entry_date"])
+            held = _hold_days_since_entry(trade)
             # max-hold is expressed in 4h bars (~2 per trading day); convert to a
             # calendar-day backstop for the live time-stop so it tracks the backtest.
             max_hold = max(1, round(_max_hold_days(trade_strat) / 2))
@@ -1519,7 +1535,7 @@ def _finalize_accumulated_exit(
             datetime.now(timezone.utc).isoformat(),
             exit_price,
             reason,
-            _days_held(trade["entry_date"]),
+            round(_hold_days_since_entry(trade)),
             total_shares,
             pnl,
             pnl_pct,

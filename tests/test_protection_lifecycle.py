@@ -85,7 +85,7 @@ class Broker:
 @pytest.fixture
 def lifecycle(monkeypatch):
     monkeypatch.setattr(bot, "send_notification", lambda *a, **k: None)
-    monkeypatch.setattr(bot, "_days_held", lambda _: 0)
+    monkeypatch.setattr(bot, "_hold_days_since_entry", lambda _: 0)
     monkeypatch.setattr(bot.time, "sleep", lambda _: None)
     monkeypatch.setattr(bot, "_signal_exit_frame", lambda *a: pd.DataFrame())
 
@@ -277,7 +277,7 @@ def test_unknown_submit_blocks_new_repairs_and_manual_exit(lifecycle, monkeypatc
     trade = run()
     assert trade["protect_client_order_id"]
     broker.lookup_unknown = True
-    monkeypatch.setattr(bot, "_days_held", lambda _: 10)
+    monkeypatch.setattr(bot, "_hold_days_since_entry", lambda _: 10)
     run()
     assert len(broker.submitted) == 1
 
