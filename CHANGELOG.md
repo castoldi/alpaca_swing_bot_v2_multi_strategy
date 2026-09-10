@@ -50,6 +50,18 @@ _Changes landed but not yet released under a new version number go here._
   `db.log_experiment(..., evidence=report.as_dict())` persists them and warns
   when a `KEPT` verdict is logged without any. Existing rows migrate to NULL —
   the trials count behind them was never captured and cannot be reconstructed.
+- **Live-account readiness assessment** ([docs/live-readiness-2026-09-10.md](docs/live-readiness-2026-09-10.md)) —
+  audits whether the bot is ready to trade real money. **Verdict: no**, on three
+  independent grounds. The live record is unattributable (shared key; bot ledger
+  $161,690 vs broker $107,290; 4 trades closed by another project), the 9% stop
+  has already been breached twice (META −12.31% on an earnings gap — `ensemble`
+  never calls `add_earnings_filter`; AMZN −9.86%), and 2022 loses −16.9% with no
+  cheap fix available. Also finds 24 duplicate trade rows out of 67 corrupting
+  every reported statistic, and that tuning at `initial_backtest_equity = $1,000`
+  understates drawdown by **3.5×** versus the live account size (2026 `ensemble`:
+  PF 2.54 / 4.6% DD at $1k, PF 1.24 / 16.4% DD at $107k, same signals).
+  Includes a phased remediation plan; a separate Alpaca account is deferred by
+  operator decision, replaced by a virtual capital allocation.
 - **Bear-market defence research** ([docs/bear-market-defence.md](docs/bear-market-defence.md)) —
   answers whether the bot can avoid losing money in bear markets while still
   making money in bull markets. Yes, at a cost of ~65% of the return:
