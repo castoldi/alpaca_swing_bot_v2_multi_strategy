@@ -303,14 +303,21 @@ def _max_holding_days(signal: EntrySignal, p: StrategyParams) -> int:
 
 
 def simulate_exit(
-    df: pd.DataFrame, entry_idx: int, signal: EntrySignal, p: StrategyParams = PARAMS
+    df: pd.DataFrame, entry_idx: int, signal: EntrySignal, p: StrategyParams = PARAMS,
+    *, entry_at_open: bool = False,
 ) -> tuple[pd.Timestamp, float, str, int]:
+    """Simulate barriers after a close entry, or on an explicitly modeled open.
+
+    For an open fill, include that bar's range and count elapsed bars from the
+    fill (zero on its own bar), matching the signal-exit engine's convention.
+    The signal supplied by the caller carries the executed entry basis.
+    """
     sl = signal.stop_loss
     tp = signal.take_profit
     entry_price = signal.entry_price
     max_days = _max_holding_days(signal, p)
 
-    for i in range(entry_idx + 1, len(df)):
+    for i in range(entry_idx if entry_at_open else entry_idx + 1, len(df)):
         bar = df.iloc[i]
         bars_held = i - entry_idx
         if bar["low"] <= sl:
@@ -325,8 +332,10 @@ def simulate_exit(
 
 
 def simulate_exit_scaleout(
-    df: pd.DataFrame, entry_idx: int, signal: EntrySignal, p: StrategyParams = PARAMS
+    df: pd.DataFrame, entry_idx: int, signal: EntrySignal, p: StrategyParams = PARAMS,
+    *, entry_at_open: bool = False,
 ) -> list[ExitLeg]:
+    """Research scale-out with the same entry clock as ``simulate_exit``."""
     entry = signal.entry_price
     tps = [signal.tp1, signal.tp2, signal.tp3]
     fracs = list(TP_SPLITS)
@@ -337,7 +346,7 @@ def simulate_exit_scaleout(
     tp_hit = [False, False, False]
     remaining = 1.0
 
-    for i in range(entry_idx + 1, len(df)):
+    for i in range(entry_idx if entry_at_open else entry_idx + 1, len(df)):
         bar = df.iloc[i]
         bars_held = i - entry_idx
 

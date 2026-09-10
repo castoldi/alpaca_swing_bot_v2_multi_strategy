@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import groupby
 from typing import TYPE_CHECKING, Callable
 
@@ -30,6 +30,13 @@ from strategies.base import (
 
 @dataclass(frozen=True)
 class BacktestCandidate:
+    """Execution basis plus signal provenance for a modeled next-open entry.
+
+    ``signal_date`` labels the source bar, not when its close was knowable.
+    At this OHLC resolution, ``signal_available_at`` is conservatively modeled
+    at the next bar's open, also the execution time in ``entry_date``. Exact
+    session-close timing requires the finer session model tracked in F05.
+    """
     ticker: str
     entry_date: pd.Timestamp
     entry_price: float
@@ -38,6 +45,8 @@ class BacktestCandidate:
     strategy: str
     single_legs: tuple[ExitLeg, ...]
     scaled_legs: tuple[ExitLeg, ...]
+    signal_date: pd.Timestamp | None = None
+    signal_available_at: pd.Timestamp | None = None
 
 
 @dataclass(frozen=True)
@@ -538,6 +547,8 @@ def _signal_exit_candidate(
         strategy=strategy.name,
         single_legs=(leg,),
         scaled_legs=(leg,),
+        signal_date=pd.Timestamp(frame.index[signal_idx]),
+        signal_available_at=pd.Timestamp(entry_bar.name),
     )
 
 
@@ -596,21 +607,27 @@ def collect_backtest_candidates(
         # tick-level data cached, so the next bar's open is the closest available
         # proxy for "the price a live snapshot would see shortly after the
         # signal bar closed" — the same convention already used for
-        # signal_with_stop entries below. A signal on the last bar of the window
+        # signal_with_stop entries above. A signal on the last bar of the window
         # has no next bar to price a fill from and is skipped, matching
         # `_signal_exit_candidate`'s identical boundary rule.
         fill_idx = idx + 1
         if fill_idx > end_idx:
             continue
         fill_price = float(data.iloc[fill_idx]["open"])
+        if not math.isfinite(fill_price) or fill_price <= 0:
+            continue
         if signal.entry_price > 0:
             slippage = abs(fill_price - signal.entry_price) / signal.entry_price
             if slippage > params.entry_max_slippage_pct:
                 continue
 
+        fill_date = pd.Timestamp(data.index[fill_idx])
+        # Live submits the signal's absolute SL/TP levels. Preserve every
+        # target while giving exit accounting the executed basis and clock.
+        fill_signal = replace(signal, date=fill_date, entry_price=fill_price)
         clipped = data.iloc[: end_idx + 1]
         exit_date, exit_price, exit_reason, bars_held = simulate_exit(
-            clipped, idx, signal, params
+            clipped, fill_idx, fill_signal, params, entry_at_open=True
         )
         single_leg = ExitLeg(
             pd.Timestamp(exit_date),
@@ -619,19 +636,23 @@ def collect_backtest_candidates(
             bars_held,
             1.0,
         )
-        scaled_legs = tuple(simulate_exit_scaleout(clipped, idx, signal, params))
+        scaled_legs = tuple(simulate_exit_scaleout(
+            clipped, fill_idx, fill_signal, params, entry_at_open=True
+        ))
         if not scaled_legs:
             continue
         candidates.append(
             BacktestCandidate(
                 ticker=ticker,
-                entry_date=pd.Timestamp(signal.date),
-                entry_price=signal.entry_price,
+                entry_date=fill_date,
+                entry_price=fill_price,
                 stop_loss=signal.stop_loss,
                 take_profit=signal.tp3,
                 strategy=strategy.name,
                 single_legs=(single_leg,),
                 scaled_legs=scaled_legs,
+                signal_date=pd.Timestamp(signal.date),
+                signal_available_at=fill_date,
             )
         )
     return candidates

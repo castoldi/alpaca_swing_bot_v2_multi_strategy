@@ -111,8 +111,8 @@ def test_candidate_collection_keeps_repeated_signals_for_portfolio_filtering():
     )
 
     assert [candidate.entry_date for candidate in candidates] == [
-        frame.index[1],
         frame.index[2],
+        frame.index[3],
     ]
 
 
@@ -350,7 +350,91 @@ def test_slippage_within_tolerance_is_admitted():
     )
 
     assert len(candidates) == 1
-    assert candidates[0].entry_date == frame.index[1]
+    assert candidates[0].entry_date == frame.index[2]
+
+
+@pytest.mark.parametrize("fill_price, shares, pnl", [(101.0, 1, 9.0), (99.0, 2, 22.0)])
+def test_bracket_gap_fill_drives_basis_sizing_and_profit(fill_price, shares, pnl):
+    frame = _bars_with_gap(2, fill_price)
+    frame.loc[frame.index[3], "high"] = 111.0
+    candidates = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS,
+        _RepeatedSignalStrategy({1}),
+    )
+    candidate = candidates[0]
+    assert candidate.entry_price == fill_price
+    assert candidate.entry_date == frame.index[2]
+    assert candidate.signal_date == frame.index[1]
+    assert candidate.signal_available_at == frame.index[2]
+    assert (candidate.stop_loss, candidate.take_profit) == (90.0, 110.0)
+    assert candidate.single_legs[0].bars_held == 1
+    result = run_annual_portfolio(
+        candidates, initial_equity=1000, position_fraction=0.2,
+        max_positions=5, apply_tax=False,
+    )
+    assert result.trades[0].shares == shares
+    assert result.trades[0].pnl_dollars == pnl
+    assert result.trades[0].pnl_pct == pytest.approx((110.0 - fill_price) / fill_price)
+    assert result.ending_equity == 1000 + pnl
+
+
+@pytest.mark.parametrize("barrier, value, reason", [
+    ("high", 111.0, "take_profit"), ("low", 89.0, "stop_loss"),
+])
+def test_bracket_can_exit_on_fill_bar_without_counting_signal_bar(barrier, value, reason):
+    frame = _bars_with_gap(2, 101.0)
+    frame.loc[frame.index[2], barrier] = value
+    candidate = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS,
+        _RepeatedSignalStrategy({1}),
+    )[0]
+    assert candidate.single_legs[0].reason == reason
+    assert candidate.single_legs[0].exit_date == candidate.entry_date
+    assert candidate.single_legs[0].bars_held == 0
+    assert all(leg.bars_held == 0 for leg in candidate.scaled_legs)
+
+
+def test_bracket_time_stop_uses_fill_basis_and_elapsed_bars():
+    from dataclasses import replace
+
+    frame = _bars_with_gap(2, 101.0)
+    # At the holding threshold the close exceeds the signal but loses on the fill.
+    frame.loc[frame.index[4], "close"] = 100.5
+    frame.loc[frame.index[5], "close"] = 102.0
+    candidate = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1],
+        replace(PARAMS, max_holding_days=2), _RepeatedSignalStrategy({1}),
+    )[0]
+    for leg in (candidate.single_legs[-1], candidate.scaled_legs[-1]):
+        assert leg.reason == "time_stop"
+        assert leg.exit_date == frame.index[5]
+        assert leg.bars_held == 3
+
+
+@pytest.mark.parametrize("exit_date, accepted", [
+    ("2026-01-02 12:00", 2), ("2026-01-03", 1), ("2026-01-03 12:00", 1),
+])
+def test_collected_entry_uses_only_cash_released_before_fill(exit_date, accepted):
+    frame = _bars_with_gap(2, 101.0)
+    candidate = collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS,
+        _RepeatedSignalStrategy({1}),
+    )[0]
+    prior = _single_candidate("A", "2026-01-01", 100, exit_date, 100)
+    result = run_annual_portfolio(
+        [candidate, prior], initial_equity=200, position_fraction=1.0,
+        max_positions=5, apply_tax=False,
+    )
+    assert result.accepted_positions == accepted
+
+
+@pytest.mark.parametrize("fill_price", [0.0, -1.0, float("nan"), float("inf")])
+def test_invalid_next_open_cannot_create_a_candidate(fill_price):
+    frame = _bars_with_gap(2, fill_price)
+    assert collect_backtest_candidates(
+        frame, "TEST", frame.index[0], frame.index[-1], PARAMS,
+        _RepeatedSignalStrategy({1}),
+    ) == []
 
 
 def test_slippage_beyond_tolerance_is_skipped():

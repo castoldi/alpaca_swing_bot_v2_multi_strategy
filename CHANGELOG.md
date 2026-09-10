@@ -301,6 +301,16 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.8] - 2026-09-10
+
+### Fixed
+- F04: bracket backtests now record the modeled next-open fill price and time
+  for position sizing, cash reservations, P&L, event ordering, and elapsed bars.
+  Exit checks include the fill bar and preserve the signal's absolute SL/TP
+  levels. Candidates retain separate signal timestamps; invalid opens are skipped.
+  Previously saved backtest results require regeneration to reflect this fix.
+
 ## [0.24.7] - 2026-09-07
 
 ### Added

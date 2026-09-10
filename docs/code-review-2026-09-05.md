@@ -21,7 +21,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F01 — **FIXED** | P1 | Filled brackets can lead to selling another owner's shares | Fixed in v0.24.3 (`b9dd867`); ownership regression tests |
 | F02 — **FIXED** | P1 | Multi-day protection uses DAY orders with no active repair path | Fixed in v0.24.5; Alpaca documentation + protection lifecycle regressions |
 | F03 — **FIXED** | P1 | Manager is not atomic and does not reliably establish project identity | Fixed in v0.24.6; process-control regressions |
-| F04 | P1 | Bracket backtests record the wrong entry price and time | Synthetic reproduction |
+| F04 — **FIXED** | P1 | Bracket backtests record the wrong entry price and time | Fixed in v0.24.8; next-open accounting regressions |
 | F05 | P1 | Bracket stop simulation fills through gaps at unavailable prices | Synthetic reproduction |
 | F06 | P1 | Earnings avoidance is missing live and wrong historically | Source + synthetic reproduction |
 | F07 | P1 | Daily-loss backtest accounting can miss losses and use future closes | Synthetic reproduction + source |
@@ -41,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F04 is the next unresolved finding following the F03 resolution below.
+F05 is the next unresolved finding following the F04 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -139,8 +139,7 @@ use an absolute project entry point and are fully tracked.
 regressions covering concurrent starts, foreign commands and port owners, PID
 reuse, metadata ownership, restart settings, in-flight identity replacement,
 and independent bot/dashboard/backtest records. One existing dependency
-deprecation warning remains. **Next unresolved finding: F04 (backtest entry
-fill price and time).**
+deprecation warning remains. F04 was subsequently resolved below.
 
 The description below records the original reviewed baseline.
 
@@ -157,6 +156,36 @@ The scheduled task already uses `MultipleInstances IgnoreNew`, which is useful, 
 **Regression:** concurrent starts yield one service; a foreign `bot.py --strategy` is untouched; a stale PID and foreign port owner are rejected; exiting an older process cannot remove a newer owner's state. These destructive/concurrency scenarios were not exercised against running services during review.
 
 ### F04 — The next-open slippage check does not change the simulated entry
+
+**Status: FIXED — 2026-09-10, v0.24.8.** Accepted bracket candidates use the
+next bar's open and timestamp for entry basis, whole-share sizing, cash,
+P&L, portfolio ordering, and elapsed holding bars. Exit simulation includes the
+fill bar (zero elapsed bars), including its SL/TP touches. Time-stop profitability
+and research scale-out breakeven use the executed basis. The signal's absolute
+SL/TP levels remain unchanged, matching the live bracket submission convention.
+
+Candidates retain `signal_date` (source bar label) and `signal_available_at`
+separately from `entry_date` (execution). At current OHLC resolution, information
+availability is conservatively modeled at the next open. Exact session-close
+and eligible-session execution timing remain F05; the bar-count versus calendar
+holding-limit disagreement remains F11. Invalid or missing next opens cannot
+produce bracket candidates. Existing saved reports/database results have not
+been regenerated and still reflect their original execution model.
+
+**Regression coverage:** positive/negative gaps affect basis, share counts, and
+P&L; signal levels survive repricing; fill-bar exits remain active; time stops
+use fill basis and elapsed bars; cash released before a fill can fund it, while
+same-bar/later exits cannot. Existing drift and annual-window guards remain tested.
+
+**Validation:** 493 tests passed with one existing dependency deprecation warning
+in a temporary copy of committed HEAD plus this F04 patch. The shared workspace
+run had 490 passes and three failures in `test_bracket_ownership.py` caused by
+the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
+and excluded from this release. The focused backtest run passed all 40 tests.
+
+**Next unresolved finding: F05 (gap-stop fills and trading sessions).**
+
+The description below records the original reviewed baseline.
 
 **Location:** [backtest_portfolio.py](../backtest_portfolio.py), lines 601–635.
 
