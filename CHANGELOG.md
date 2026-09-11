@@ -302,6 +302,26 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.9] - 2026-09-10
+
+### Added
+- Separate one-minute backtest execution clock and XNYS session calendar,
+  including holidays, early closes, DST, and execution-model documentation.
+
+### Fixed
+- F05: sell stops fill at the available open after a gap; backtest orders execute
+  only on regular-session minutes. Intraminute barrier proceeds become available
+  at minute end, and ambiguous barrier touches use stop first. Research scale-out
+  and signal exits share the same session clock.
+
+### Changed
+- Default candidate collection loads matching Alpaca minute history from cache;
+  custom signal frames require explicit execution bars. The old coarse model is
+  retained only behind `legacy_execution=True`. The optimizer uses the shared SIP
+  history loader to avoid mixing signal and execution price sources.
+- Existing saved backtest outputs require regeneration to apply the new model.
+
 ## [0.24.8] - 2026-09-10
 
 ### Fixed
@@ -1427,6 +1447,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

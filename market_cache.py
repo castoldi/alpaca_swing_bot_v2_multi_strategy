@@ -294,7 +294,9 @@ class MarketDataCache:
             )
             self._store_segment(key, segment_start, segment_end, frame)
 
-        return self._read(key, start_ts, end_ts)
+        result = self._read(key, start_ts, end_ts)
+        result.attrs.update(timeframe=key[1], feed=key[2], adjustment=key[3])
+        return result
 
     def status(self) -> list[dict]:
         """Describe every cached series and its successful request coverage."""

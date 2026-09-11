@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from functools import partial
 
 from backtest_portfolio import (
     BacktestCandidate,
-    collect_backtest_candidates,
+    collect_backtest_candidates as _collect_candidates,
     materialize_candidate,
     run_annual_portfolio,
 )
 from config import PARAMS
 from strategies.base import BaseStrategy, EntrySignal, ExitLeg
+
+# These fixtures deliberately model a synthetic candle clock (including
+# weekends). Real session execution is covered in test_backtest_execution.py.
+collect_backtest_candidates = partial(_collect_candidates, legacy_execution=True)
 
 
 def _candidate(*, scaled_legs: tuple[ExitLeg, ...] | None = None):
@@ -319,7 +324,7 @@ def test_strategies_package_exports_candidate_api():
     )
 
     assert ExportedCandidate is BacktestCandidate
-    assert exported_collect is collect_backtest_candidates
+    assert exported_collect is _collect_candidates
     assert exported_materialize is materialize_candidate
 
 

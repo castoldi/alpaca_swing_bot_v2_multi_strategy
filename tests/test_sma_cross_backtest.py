@@ -24,7 +24,7 @@ def test_signal_exit_backtest_fills_next_open_and_exits_next_open():
     ]
     trades = backtest_ticker(
         bars(rows), "TEST", pd.Timestamp("2026-01-01"),
-        PARAMS, REGISTRY["sma_50_cross"],
+        PARAMS, REGISTRY["sma_50_cross"], legacy_execution=True,
     )
     assert len(trades) == 1
     assert trades[0].entry_price == 103
@@ -45,7 +45,7 @@ def test_signal_exit_backtest_honors_gap_through_stop_without_time_exit():
     ]
     trade = backtest_ticker(
         bars(rows), "TEST", pd.Timestamp("2026-01-01"),
-        PARAMS, REGISTRY["sma_50_cross"],
+        PARAMS, REGISTRY["sma_50_cross"], legacy_execution=True,
     )[0]
     assert trade.exit_price == 90
     assert trade.exit_reason == "gap_stop"
@@ -63,7 +63,7 @@ def test_signal_exit_backtest_honors_intraday_emergency_stop():
     ]
     trade = backtest_ticker(
         bars(rows), "TEST", pd.Timestamp("2026-01-01"),
-        PARAMS, REGISTRY["sma_50_cross"],
+        PARAMS, REGISTRY["sma_50_cross"], legacy_execution=True,
     )[0]
     assert trade.exit_price == 92.7
     assert trade.exit_reason == "stop_loss"

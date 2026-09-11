@@ -559,8 +559,16 @@ def collect_backtest_candidates(
     window_end: pd.Timestamp,
     params: StrategyParams = PARAMS,
     strategy: BaseStrategy | None = None,
+    *, execution_bars: pd.DataFrame | None = None,
+    legacy_execution: bool = False,
 ) -> list[BacktestCandidate]:
-    """Collect entry opportunities without applying portfolio constraints."""
+    """Collect entries using regular-session minute execution by default.
+
+    Custom signal frames require explicit one-minute ``execution_bars``. Alpaca
+    frames with feed metadata load these from the persistent cache. The explicit
+    ``legacy_execution`` option is only for synthetic/legacy comparison tests;
+    it treats every supplied candle as executable, without session filtering.
+    """
     if strategy is None:
         raise ValueError("strategy must be a BaseStrategy instance")
     if frame.empty:
@@ -569,6 +577,18 @@ def collect_backtest_candidates(
     data = add_indicators(frame, params)
     if strategy.name in SKIP_EARNINGS_STRATEGIES:
         data = add_earnings_filter(data, ticker, params)
+
+    if not legacy_execution:
+        from backtest_execution import (
+            collect_session_candidates, load_execution_bars, validate_execution_provenance,
+        )
+        if execution_bars is None:
+            execution_bars = load_execution_bars(frame, ticker, window_start, window_end)
+        else:
+            validate_execution_provenance(frame, execution_bars)
+        return collect_session_candidates(
+            data, ticker, window_start, window_end, params, strategy, execution_bars
+        )
 
     start = pd.Timestamp(window_start)
     end = pd.Timestamp(window_end)

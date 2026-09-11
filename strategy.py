@@ -24,7 +24,7 @@ def get_entry_checker(strategy):
     return REGISTRY[name].check_entry
 
 
-def backtest_ticker(df, ticker, window_start, p=None, strategy=None):
+def backtest_ticker(df, ticker, window_start, p=None, strategy=None, **execution_options):
     """Legacy wrapper: accepts StrategyType enum, string, or BaseStrategy instance."""
     from strategies.base import backtest_ticker as _bt, BaseStrategy
     from config import StrategyType, PARAMS as _PARAMS
@@ -33,7 +33,7 @@ def backtest_ticker(df, ticker, window_start, p=None, strategy=None):
         from config import StrategyType
         name = strategy.value if isinstance(strategy, StrategyType) else str(strategy)
         strategy = REGISTRY[name]
-    return _bt(df, ticker, window_start, p, strategy)
+    return _bt(df, ticker, window_start, p, strategy, **execution_options)
 
 
 def check_entry(df, idx, p=None):

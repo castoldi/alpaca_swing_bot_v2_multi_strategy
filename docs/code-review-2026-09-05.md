@@ -22,7 +22,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F02 — **FIXED** | P1 | Multi-day protection uses DAY orders with no active repair path | Fixed in v0.24.5; Alpaca documentation + protection lifecycle regressions |
 | F03 — **FIXED** | P1 | Manager is not atomic and does not reliably establish project identity | Fixed in v0.24.6; process-control regressions |
 | F04 — **FIXED** | P1 | Bracket backtests record the wrong entry price and time | Fixed in v0.24.8; next-open accounting regressions |
-| F05 | P1 | Bracket stop simulation fills through gaps at unavailable prices | Synthetic reproduction |
+| F05 — **FIXED** | P1 | Bracket stop simulation fills through gaps at unavailable prices | Fixed in v0.24.9; execution-clock regressions |
 | F06 | P1 | Earnings avoidance is missing live and wrong historically | Source + synthetic reproduction |
 | F07 | P1 | Daily-loss backtest accounting can miss losses and use future closes | Synthetic reproduction + source |
 | F08 | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Comparison with SciPy |
@@ -41,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F05 is the next unresolved finding following the F04 resolution below.
+F06 is the next unresolved finding following the F05 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -183,7 +183,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-**Next unresolved finding: F05 (gap-stop fills and trading sessions).**
+**Next unresolved finding: F06 (earnings filter does not protect live entries).**
 
 The description below records the original reviewed baseline.
 
@@ -200,6 +200,50 @@ The signal bar is only known after it closes, so reserving capital at its openin
 **Regression:** positive and negative gaps within the guard must affect entry price and P&L; guard rejection must create no candidate; cash from a later event must not finance an earlier fill.
 
 ### F05 — Gap stops and trading sessions are not modeled consistently
+
+**Status: FIXED — 2026-09-10, v0.24.9.** `simulate_exit` and
+`simulate_exit_scaleout` now check a bar's open against the stop before its
+low, returning `gap_stop` at the open when it has already gapped through
+(`strategies/base.py`). Annual, historical, and research candidate collection
+route through a new `backtest_execution.py` session clock: strategy candles
+stay on their existing timeframe, but fills, stop/target touches, and holding
+duration are resolved against separate one-minute execution bars restricted to
+`exchange-calendars`' XNYS regular-session schedule (holidays, DST, and early
+closes included). A signal is available at its bar's close (4h) or the next
+New York midnight (daily, since Alpaca's daily aggregation can include
+extended-hours trades); the order fills at the first eligible regular-session
+minute open at or after that. A minute touching both barriers uses the stop
+first, per the documented conservative rule; intraminute fills are dated at
+minute end so their proceeds cannot finance an earlier entry. Custom signal
+frames must supply matching one-minute `execution_bars` explicitly — automatic
+loading requires Alpaca feed/adjustment metadata carried on the frame, and
+supplied bars are validated against the signal series' provenance either way.
+An explicit `legacy_execution=True` preserves the prior coarse-candle model for
+synthetic fixtures and old-model comparisons; production entry points do not
+set it. Full design and fill-precedence rules: [docs/backtest-execution.md](backtest-execution.md).
+
+Two implementation bugs surfaced while finishing this and were fixed before
+release, not part of the original design: `backtest_ticker` passed its last
+signal candle's start timestamp as the collection window's end, which — under
+the new minute-level boundary check — excluded every execution minute within
+that candle's own duration, including the one a signal from it would fill on;
+it now derives the boundary from the same `signal_availability` the rest of
+the model uses. Separately, explicitly-supplied `execution_bars` bypassed the
+feed/adjustment/timeframe provenance check that auto-loaded bars already had;
+`validate_execution_provenance` now runs on both paths.
+
+Exact-session-close timing beyond this bar-level model, spread/fees/queue
+position/latency, and the bar-count-vs-calendar-day holding disagreement on
+the backtest side remain out of scope (F11); existing saved reports/database
+results have not been regenerated and still reflect their original model.
+
+**Validation:** full suite passed after the two fixes above (281 tests, no
+failures, one existing dependency deprecation warning) — including 26
+execution-clock regressions covering opening gaps, both-barrier bars, overnight
+barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
+provenance mismatches, and the fixed window-boundary case.
+
+The description below records the original reviewed baseline.
 
 **Locations:** [strategies/base.py](../strategies/base.py), lines 305–366; [backtest_portfolio.py](../backtest_portfolio.py), `_signal_exit_candidate`.
 

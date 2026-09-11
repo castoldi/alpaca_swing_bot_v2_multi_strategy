@@ -25,9 +25,9 @@ def test_backtest_ticker_emits_single_exit_trades():
     df = _make_df()
     df[["open", "high", "low", "close"]] *= 0.4
     trades = S.backtest_ticker(df, "TEST", pd.Timestamp("2025-07-01"),
-                               PARAMS, StrategyType.TREND_PULLBACK)
+                               PARAMS, StrategyType.TREND_PULLBACK, legacy_execution=True)
     assert trades
     reasons = {t.exit_reason for t in trades}
     # One bracket per entry: SL/TP/time/end-of-data only, never partial TP legs.
-    assert reasons <= {"take_profit", "stop_loss", "time_stop", "end_of_data"}
+    assert reasons <= {"take_profit", "stop_loss", "gap_stop", "time_stop", "end_of_data"}
     assert all(t.shares > 0 for t in trades)

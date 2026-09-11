@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import itertools
 import random
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 from config import PARAMS, TICKERS, StrategyParams, StrategyType
 from logger_setup import get_logger
@@ -35,22 +34,10 @@ REPORTS_DIR = ROOT / "reports"
 # ── Data helper ──────────────────────────────────────────────────────────────
 
 def download_history(ticker: str, start: date, end: date) -> pd.DataFrame:
-    warmup_start = date(start.year - 1, start.month, start.day)
-    raw = yf.download(
-        ticker,
-        start=warmup_start.isoformat(),
-        end=(end + timedelta(days=1)).isoformat(),
-        interval="1d",
-        auto_adjust=True,
-        progress=False,
-    )
-    if raw.empty:
-        return raw
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
-    df = raw.rename(columns=str.lower)[["open", "high", "low", "close", "volume"]]
-    df.index = pd.to_datetime(df.index).tz_localize(None)
-    return df
+    # Signal and minute execution prices must share feed/adjustment provenance.
+    # The optimizer's existing daily signal timeframe remains tracked in F15.
+    from backtest_2025 import download_history as shared_history
+    return shared_history(ticker, start, end, '1d')
 
 
 def run_backtest_for_params(

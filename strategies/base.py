@@ -320,6 +320,8 @@ def simulate_exit(
     for i in range(entry_idx if entry_at_open else entry_idx + 1, len(df)):
         bar = df.iloc[i]
         bars_held = i - entry_idx
+        if float(bar['open']) < sl:
+            return bar.name, float(bar['open']), 'gap_stop', bars_held
         if bar["low"] <= sl:
             return bar.name, sl, "stop_loss", bars_held
         if bar["high"] >= tp:
@@ -350,6 +352,9 @@ def simulate_exit_scaleout(
         bar = df.iloc[i]
         bars_held = i - entry_idx
 
+        if float(bar['open']) < stop:
+            legs.append(ExitLeg(bar.name, float(bar['open']), 'gap_stop', bars_held, remaining))
+            return legs
         if float(bar["low"]) <= stop:
             legs.append(ExitLeg(bar.name, stop, "stop_loss", bars_held, remaining))
             return legs
@@ -397,6 +402,8 @@ def backtest_ticker(
     window_start: pd.Timestamp,
     p: StrategyParams = PARAMS,
     strategy: Optional[BaseStrategy] = None,
+    *, execution_bars: pd.DataFrame | None = None,
+    legacy_execution: bool = False,
 ) -> list[Trade]:
     if strategy is None:
         raise ValueError("strategy must be a BaseStrategy instance")
@@ -408,13 +415,25 @@ def backtest_ticker(
         run_annual_portfolio,
     )
 
+    window_end = pd.Timestamp(df.index[-1])
+    if not legacy_execution:
+        # df.index[-1] is the START of the last signal candle. The minute-level
+        # window filter in collect_session_candidates requires a fill's whole
+        # minute to lie at or before window_end, so a boundary at the candle's
+        # own start timestamp excludes every minute within that candle's
+        # duration — including the one a signal from it would fill on.
+        from backtest_execution import signal_availability
+        window_end = pd.Timestamp(signal_availability(df.index[-1:], strategy.timeframe)[-1])
+
     candidates = collect_backtest_candidates(
         df,
         ticker,
         pd.Timestamp(window_start),
-        pd.Timestamp(df.index[-1]),
+        window_end,
         p,
         strategy,
+        execution_bars=execution_bars,
+        legacy_execution=legacy_execution,
     )
     result = run_annual_portfolio(
         candidates,

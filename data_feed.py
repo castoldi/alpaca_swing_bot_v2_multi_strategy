@@ -66,6 +66,8 @@ def _normalize(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
 
 
 def _timeframe_parts(timeframe: str) -> tuple[int, str]:
+    if timeframe == "1min":
+        return 1, "Minute"
     if timeframe == "4h":
         return 4, "Hour"
     if timeframe == "1d":
@@ -108,7 +110,9 @@ def fetch_bars(
             **_feed_options(feed),
         )
         bars = _get_client().get_stock_bars(req)
-        return _normalize(bars.df, ticker)
+        frame = _normalize(bars.df, ticker)
+        frame.attrs.update(timeframe=timeframe, feed=feed.lower(), adjustment='all')
+        return frame
     except Exception as e:
         if strict:
             raise

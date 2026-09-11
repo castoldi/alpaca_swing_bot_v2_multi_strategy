@@ -69,7 +69,9 @@ def download_history(
         timeframe,
         feed="sip",
     )
-    return data_feed.completed_bars(bars, timeframe)
+    bars = data_feed.completed_bars(bars, timeframe)
+    bars.attrs.update(timeframe=timeframe, feed='sip', adjustment='all')
+    return bars
 
 
 def compute_stats(trades: list[Trade]) -> dict:

@@ -188,7 +188,7 @@ def test_backtest_uses_strategy_stop_fraction():
     strat = get_strategy("tqqq_momentum")
     df = _frame(_walk())
     cands = collect_backtest_candidates(
-        df, "TQQQ", df.index[WARMUP], df.index[-1], PARAMS, strat
+        df, "TQQQ", df.index[WARMUP], df.index[-1], PARAMS, strat, legacy_execution=True
     )
     assert cands, "expected at least one candidate"
     c = cands[0]
