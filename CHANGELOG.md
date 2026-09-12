@@ -303,6 +303,14 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.10] - 2026-09-11
+
+### Fixed
+- F05 follow-up: preserve strategy exit signals received while an entry waits
+  for a regular-session fill. Apply the queued exit at the fill's opening price
+  without counting the pre-entry waiting period as time held.
+
 ## [0.24.9] - 2026-09-10
 
 ### Added

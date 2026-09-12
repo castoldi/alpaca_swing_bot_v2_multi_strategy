@@ -266,3 +266,20 @@ def test_explicit_execution_data_rejects_conflicting_provenance(metadata):
     minutes.attrs.update(metadata)
     with pytest.raises(ValueError, match='execution'):
         collect(signals, minutes)
+
+
+def test_exit_signal_received_before_delayed_entry_fill_is_preserved():
+    class IntradaySignal(DailySignal):
+        timeframe = '4h'
+
+    # Entry becomes known at Monday's close. An opposite signal is known at
+    # midnight, before the queued entry can fill at Tuesday's regular open.
+    signals = bars(['2026-03-09 16:00', '2026-03-09 20:00'])
+    minutes = bars(['2026-03-10 13:30', '2026-03-10 13:31'],
+                   [(100, 101, 99, 100), (100, 102, 99, 101)])
+    candidate = collect(signals, minutes, IntradaySignal())[0]
+    leg = candidate.single_legs[0]
+    assert candidate.entry_date == pd.Timestamp('2026-03-10 13:30')
+    assert (leg.reason, leg.exit_date, leg.exit_price, leg.bars_held) == (
+        'sma_cross_down', pd.Timestamp('2026-03-10 13:30'), 100, 0,
+    )

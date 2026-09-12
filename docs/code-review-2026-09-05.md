@@ -201,7 +201,7 @@ The signal bar is only known after it closes, so reserving capital at its openin
 
 ### F05 — Gap stops and trading sessions are not modeled consistently
 
-**Status: FIXED — 2026-09-10, v0.24.9.** `simulate_exit` and
+**Status: FIXED — v0.24.9; follow-up v0.24.10 on 2026-09-11.** `simulate_exit` and
 `simulate_exit_scaleout` now check a bar's open against the stop before its
 low, returning `gap_stop` at the open when it has already gapped through
 (`strategies/base.py`). Annual, historical, and research candidate collection
@@ -232,16 +232,23 @@ the model uses. Separately, explicitly-supplied `execution_bars` bypassed the
 feed/adjustment/timeframe provenance check that auto-loaded bars already had;
 `validate_execution_provenance` now runs on both paths.
 
+The v0.24.10 follow-up preserves an opposite strategy signal that arrives while
+an entry waits for the next regular session. The simulated entry and queued exit
+fill at that opening price, with zero holding bars; the wait before entry does
+not count toward the holding limit. Opening protective fills retain precedence.
+
 Exact-session-close timing beyond this bar-level model, spread/fees/queue
 position/latency, and the bar-count-vs-calendar-day holding disagreement on
 the backtest side remain out of scope (F11); existing saved reports/database
 results have not been regenerated and still reflect their original model.
 
-**Validation:** full suite passed after the two fixes above (281 tests, no
-failures, one existing dependency deprecation warning) — including 26
+**Validation (2026-09-11):** 520 tests passed, with no failures and one existing
+dependency deprecation warning, including 27
 execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
-provenance mismatches, and the fixed window-boundary case.
+provenance mismatches, the fixed window-boundary case, and exit signals received
+before delayed entry fills. The full suite ran with child console windows
+suppressed. **Next unresolved finding: F06 (earnings avoidance).**
 
 The description below records the original reviewed baseline.
 

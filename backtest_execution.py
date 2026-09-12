@@ -107,7 +107,7 @@ def validate_execution_provenance(signal_frame, execution_bars):
 
 
 def _exits(rows, entry_idx, signal, known, signal_closes, exit_reasons,
-           params, strategy, scaled=False):
+           params, strategy, source_signal_idx, scaled=False):
     """Run one full-position bracket or the research scale-out on the same clock."""
     stop = signal.stop_loss
     targets = [signal.tp1, signal.tp2, signal.tp3] if scaled else [signal.tp3]
@@ -118,7 +118,10 @@ def _exits(rows, entry_idx, signal, known, signal_closes, exit_reasons,
     remaining = 1.0
     legs = []
     baseline = known[entry_idx]
-    cursor = baseline
+    # A queued entry can fill after later signal candles have completed.
+    # Preserve any intervening exit signal, while measuring holding bars
+    # from the fill rather than counting the time spent waiting to enter.
+    cursor = source_signal_idx if strategy.exit_mode == 'signal_with_stop' else baseline
     pending = None
     max_bars = _max_holding_days(signal, params)
 
@@ -213,9 +216,9 @@ def collect_session_candidates(data, ticker, start, end, params, strategy, execu
                 if strategy.exit_mode == 'signal_with_stop' else signal.stop_loss)
         fill_signal = replace(signal, date=fill_date, entry_price=fill_price, stop_loss=stop)
         single = tuple(_exits(rows, fill_idx, fill_signal, known, closes, exit_reasons,
-                              params, strategy))
+                              params, strategy, idx))
         scaled = (tuple(_exits(rows, fill_idx, fill_signal, known, closes, exit_reasons,
-                               params, strategy, scaled=True))
+                               params, strategy, idx, scaled=True))
                   if strategy.exit_mode != 'signal_with_stop' else single)
         candidates.append(BacktestCandidate(
             ticker, fill_date, fill_price, stop,

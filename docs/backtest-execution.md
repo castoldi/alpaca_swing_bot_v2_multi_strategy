@@ -38,6 +38,10 @@ are not fabricated; the next available eligible minute is used.
   opening price for the remaining quantity.
 - Strategy exits and time-stop decisions use completed signal candles and fill
   at the next eligible minute open. An opening protective fill takes precedence.
+  If an opposite strategy signal arrives while an entry waits overnight, the
+  modeled entry fills and closes at that same eligible open; the pending exit
+  is preserved even though it predates the entry fill. This assumes immediate
+  full fills at the open, without order cancellation or broker-latency modeling.
   Holding bars count completed **signal** candles after entry, not minutes. The
   separate disagreement between bars and calendar holding days remains F11.
 - End-of-window liquidation uses the last complete regular-session minute close.
