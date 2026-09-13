@@ -20,6 +20,7 @@ import pandas as pd
 
 from config import PARAMS, TICKERS, ALL_TICKERS, BAR_TIMEFRAME
 from strategy import add_indicators, simulate_exit
+from strategies.base import add_earnings_filter, SKIP_EARNINGS_STRATEGIES
 from strategies import strategy_universe, get_all
 from strategies.base import backtest_signal_exit_ticker
 from logger_setup import get_logger
@@ -34,6 +35,7 @@ _WARMUP = 60                     # indicators/ensemble need 60 bars before first
 _BARS_BEFORE = 15                # candles to show before the entry
 _BARS_AFTER = 8                  # candles to show after the exit
 _MAX_EXAMPLES = 2
+_EARNINGS_POLICY = 'observed_schedule_v1'
 
 _mem: dict = {"ts": 0.0, "data": None}
 
@@ -114,6 +116,10 @@ def _build_example(ticker: str, idx: int, sig, df: pd.DataFrame, strategy) -> di
 
 def _examples_for_strategy(strategy, frames: dict[str, pd.DataFrame]) -> list[dict]:
     checker = strategy.check_entry
+    if strategy.name in SKIP_EARNINGS_STRATEGIES:
+        # Historical examples must use the archive, never today's schedule.
+        frames = {ticker: add_earnings_filter(df, ticker, PARAMS)
+                  for ticker, df in frames.items()}
 
     # Collect every signal across the universe, newest first.
     hits: list[tuple[pd.Timestamp, str, int, object]] = []
@@ -197,6 +203,7 @@ def _compute() -> dict:
 
     return {
         "generated_at": pd.Timestamp.now("UTC").isoformat(),
+        "earnings_policy": _EARNINGS_POLICY,
         "timeframe": BAR_TIMEFRAME,
         "timeframes": {strategy.name: strategy.timeframe for strategy in strategies},
         "universe": sorted(universe),
@@ -209,7 +216,8 @@ def _load_disk_cache() -> dict | None:
         if _CACHE_FILE.exists() and (time.time() - _CACHE_FILE.stat().st_mtime) < _TTL_SECONDS:
             data = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
             expected = {strategy.name for strategy in get_all()}
-            if set(data.get("examples", {})) == expected and data.get("timeframes"):
+            if (set(data.get("examples", {})) == expected and data.get("timeframes")
+                    and data.get('earnings_policy') == _EARNINGS_POLICY):
                 return data
     except Exception as e:
         log.debug("strategy_examples: disk cache read failed: %s", e)
@@ -227,7 +235,8 @@ def _save_disk_cache(data: dict) -> None:
 def get_examples(force: bool = False) -> dict:
     """Return cached per-strategy examples, recomputing if the cache is stale."""
     now = time.time()
-    if not force and _mem["data"] is not None and (now - _mem["ts"]) < _TTL_SECONDS:
+    if (not force and _mem["data"] is not None and (now - _mem["ts"]) < _TTL_SECONDS
+            and _mem['data'].get('earnings_policy') == _EARNINGS_POLICY):
         return _mem["data"]
 
     if not force:

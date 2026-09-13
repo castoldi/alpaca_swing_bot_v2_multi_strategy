@@ -37,45 +37,13 @@ def split_qty(qty: int) -> list[int]:
 
 # ── Earnings filter ───────────────────────────────────────────────────────────
 
-SKIP_EARNINGS_STRATEGIES: set[str] = {"trend_pullback"}
-_EARNINGS_CACHE: dict[str, list[pd.Timestamp]] = {}
+SKIP_EARNINGS_STRATEGIES: set[str] = {"trend_pullback", "ensemble"}
 
 
-def _get_earnings_dates(ticker: str) -> list[pd.Timestamp]:
-    if ticker not in _EARNINGS_CACHE:
-        import yfinance as yf
-        try:
-            t = yf.Ticker(ticker)
-            ed = t.earnings_dates
-            if ed is not None and not ed.empty:
-                dates = sorted(pd.DatetimeIndex(ed.index).tz_localize(None).tolist())
-                _EARNINGS_CACHE[ticker] = dates
-            else:
-                _EARNINGS_CACHE[ticker] = []
-        except Exception:
-            _EARNINGS_CACHE[ticker] = []
-    return _EARNINGS_CACHE[ticker]
-
-
-def add_earnings_filter(df: pd.DataFrame, ticker: str, p: StrategyParams = PARAMS) -> pd.DataFrame:
-    out = df.copy()
-    out["near_earnings"] = False
-    earnings_dates = _get_earnings_dates(ticker)
-    if not earnings_dates:
-        return out
-    avoid_days = p.earnings_avoid_days
-    df_end = out.index[-1]
-    for ed in earnings_dates:
-        if ed > df_end:
-            continue
-        mask = out.index <= ed
-        if not mask.any():
-            continue
-        last_before = out.index[mask][-1]
-        pos = out.index.get_loc(last_before)
-        start = max(0, pos - avoid_days)
-        out.iloc[start:pos, out.columns.get_loc("near_earnings")] = True
-    return out
+def add_earnings_filter(df: pd.DataFrame, ticker: str, p: StrategyParams = PARAMS,
+                        **policy_options) -> pd.DataFrame:
+    from earnings_calendar import apply_filter
+    return apply_filter(df, ticker, p, **policy_options)
 
 
 # ── Indicators ────────────────────────────────────────────────────────────────

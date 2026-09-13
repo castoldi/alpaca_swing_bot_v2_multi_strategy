@@ -63,7 +63,10 @@ $1,000 annual account; 2026 is year-to-date through the latest completed bar.*
 - [ ] Adaptive position sizing (Kelly criterion)
 - [ ] Multi-timeframe confirmation (1h + daily)
 - [ ] Sector rotation overlay
-- [x] Earnings-date avoidance filter — ✅ **2026-06-02: +$65.22 combined for Trend Pullback** (+126% 2025, +22% 2026). Skip entries 3 trading days before earnings to avoid gap risk. First *new signal source* (not parameter tweak) to pass cross-year test. Applied to Trend Pullback only — Breakout didn't benefit.
+- [x] Earnings-date avoidance filter — implementation corrected in v0.24.11 (F06).
+  The old +$65.22 combined improvement claim is withdrawn: it used row-based
+  windows and today's event history, not point-in-time schedules. Revalidation
+  requires archived observations and regenerated backtests.
 - [x] Daily SMA 50 price cross — ✅ **2026-07-18: +$655.55 across 2025–2026** on Alpaca daily bars. Long-only with a 10% emergency stop beat pure long-only, long/short reversal, and the shared TP/time-stop overlay in the option test. Added as an independent strategy without changing the six 4-hour strategies.
 - [ ] Correlation-based drawdown protection
 - [x] **Market-wide regime entry gate (SPY drawdown / SMA)** — ❌ **2026-08-24: REFUTED across 17 variants.** The gate recommended by `docs/bear-markets-and-crashes.md` §8 made 2022 *worse* (−$754 vs −$667) while cutting bull years −$3,654. It was ON for 72% of 2022 and 21% of 2023, suppressing the bear-market rallies (Mar/Jul/Nov 2022 were the year's most profitable months) and the entire 2023 recovery. Per-ticker gating, volatility-targeted sizing and stop widening all landed on the same tradeoff frontier. Full writeup: [docs/bear-market-defence.md](docs/bear-market-defence.md).
@@ -85,6 +88,10 @@ $1,000 annual account; 2026 is year-to-date through the latest completed bar.*
 | MACD hold 6→8 days | Increase max holding days | +$34.19 vs +$13.31 | +$25.30 vs +$47.80 | ❌ reverted (2026 worse) |
 | MR remove SMA50 filter | Removed close>sma_slow uptrend requirement | -$53.51 vs -$26.31 | +$103.61 vs +$26.68 | ❌ reverted (let in 76 bad trades in 2025, 93 vs 17 total trades) |
 | Breakout VIX filter | VIX < SMA(20) filter — skip during elevated VIX | -$38.86 vs -$26.51 | +$74.87 vs +$117.66 | ❌ reverted (both years worse, VIX alone doesn't filter breakout quality) |
-| **Earnings avoidance filter** 🚀 | Skip entries 3 trading days before earnings (Trend Pullback only) | **+$71.37 vs +$31.62 (+$39.76)** | **+$142.02 vs +$116.55 (+$25.47)** | **✅ KEPT — +$65.22 combined** |
+| Earnings avoidance filter (original model) | Historical numbers retained for audit; calendar model was invalid | +$71.37 vs +$31.62 | +$142.02 vs +$116.55 | Improvement claim withdrawn; requires point-in-time revalidation (F06) |
 
-**Lesson update 2026-06-02**: The earnings avoidance filter is the FIRST experiment (out of 8) that passed the cross-year test with a genuine improvement. Key difference: it's a *new signal source* (earnings calendar data), not a parameter tweak or volatility filter. This validates the hypothesis that future research should focus on external data sources rather than indicator parameters. Remaining untested ideas: Kelly criterion sizing, multi-timeframe confirmation, sector rotation, correlation-based drawdown protection.
+**Correction 2026-09-13:** The original earnings experiment does not establish an
+improvement because its event timing and historical knowledge were modeled
+incorrectly. Its old results cannot support a conclusion about external data
+sources. Remaining untested ideas include Kelly sizing, multi-timeframe
+confirmation, sector rotation and correlation-based drawdown protection.

@@ -23,7 +23,8 @@ import pandas as pd
 
 from config import PARAMS, TICKERS, LEVERAGED_TICKERS, ALPACA_KEY, ALPACA_SECRET, ALPACA_PAPER, StrategyType, BAR_TIMEFRAME
 from logger_setup import get_logger
-from strategies import REGISTRY, add_indicators, is_tp_reachable_in_days, strategy_universe
+from strategies import (REGISTRY, add_indicators, is_tp_reachable_in_days,
+                        strategy_universe, add_earnings_filter, SKIP_EARNINGS_STRATEGIES)
 from dashboard import db as db_mod
 from dashboard import bot_hooks
 from notifier import send_notification
@@ -724,6 +725,15 @@ def run_once(strategy: StrategyType) -> int:
                 continue
 
             df = add_indicators(df, PARAMS)
+            if strat_name in SKIP_EARNINGS_STRATEGIES:
+                try:
+                    df = add_earnings_filter(df, ticker, PARAMS, live=True)
+                except Exception as exc:
+                    # Calendar/storage failures must suppress this signal,
+                    # while leaving other strategies and exit reconciliation running.
+                    log.warning('%s: earnings policy unavailable (%s)', ticker, type(exc).__name__)
+                    df['near_earnings'] = True
+                    df['earnings_status'] = 'unknown'
             frames[ticker] = df
             idx = len(df) - 1
 

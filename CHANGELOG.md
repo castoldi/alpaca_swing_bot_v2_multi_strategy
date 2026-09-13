@@ -304,6 +304,27 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.11] - 2026-09-13
+
+### Added
+- Append-only earnings schedule archive with observation times, expiry, source
+  provenance and explicit unknown-data handling for historical decisions.
+
+### Fixed
+- F06: apply the earnings policy before live Trend Pullback entries and its
+  Ensemble vote; count trading sessions, preserve upcoming/date-only events,
+  and distinguish before/after-market times. Backtests and dashboard examples
+  use only observations available at their decision times.
+- Refresh live schedules after six hours, retry unknown results after five
+  minutes, and clear yfinance's indefinite HTTP cache on actual refreshes.
+  Calendar failures suppress the affected signal without skipping live exits.
+
+### Changed
+- Withdraw the previous earnings-filter improvement claim pending revalidation
+  with point-in-time historical schedules. Missing historical coverage blocks
+  affected signals; old saved reports have not been regenerated.
+
 ## [0.24.10] - 2026-09-11
 
 ### Fixed

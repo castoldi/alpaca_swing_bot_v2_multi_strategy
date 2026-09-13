@@ -14,7 +14,8 @@ import exchange_calendars as xcals
 import numpy as np
 import pandas as pd
 
-from strategies.base import ExitLeg, TP_SPLITS, _max_holding_days, is_tp_reachable_in_days
+from strategies.base import (ExitLeg, TP_SPLITS, _max_holding_days, is_tp_reachable_in_days,
+                             add_earnings_filter, SKIP_EARNINGS_STRATEGIES)
 
 
 def utc(value):
@@ -189,6 +190,10 @@ def collect_session_candidates(data, ticker, start, end, params, strategy, execu
                       & (minutes.index + pd.Timedelta(minutes=1) <= utc(end))]
     if minutes.empty:
         return []
+    if strategy.name in SKIP_EARNINGS_STRATEGIES:
+        fill_indexes = minutes.index.searchsorted(available)
+        decision_times = [minutes.index[i] if i < len(minutes) else pd.NaT for i in fill_indexes]
+        data = add_earnings_filter(data, ticker, params, decision_times=decision_times)
     rows = list(minutes[['open', 'high', 'low', 'close']].itertuples(name=None))
     known = available.searchsorted(minutes.index, side='right') - 1
     closes = data['close'].to_numpy()

@@ -27,3 +27,11 @@ def isolate_database(tmp_path, monkeypatch):
 
     monkeypatch.setattr(db_mod, "_DB", tmp_path / "test_swing_bot.db")
     db_mod.init_db()
+
+
+@pytest.fixture(autouse=True)
+def isolate_earnings_calendar(tmp_path, monkeypatch):
+    """Keep tests offline and prevent fake schedules reaching the live archive."""
+    import earnings_calendar
+    monkeypatch.setattr(earnings_calendar, '_STORE', earnings_calendar.CalendarStore(
+        tmp_path / 'earnings.db', fetcher=lambda _: []))

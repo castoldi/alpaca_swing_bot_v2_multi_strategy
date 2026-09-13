@@ -25,8 +25,10 @@ class TrendPullbackStrategy(BaseStrategy):
         prev = df.iloc[idx - 1]
         if pd.isna(row["sma_slow"]) or pd.isna(row["atr"]):
             return None
-        if "near_earnings" in df.columns and row["near_earnings"]:
-            return None
+        if p.earnings_avoid_days > 0:
+            near_earnings = row.get('near_earnings', True)
+            if pd.isna(near_earnings) or bool(near_earnings):
+                return None
         if not (row["close"] > row["sma_slow"]):
             return None
         rsi_window = df["rsi"].iloc[max(0, idx - p.rsi_lookback + 1): idx + 1]

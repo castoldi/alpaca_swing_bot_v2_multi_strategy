@@ -575,8 +575,6 @@ def collect_backtest_candidates(
         return []
 
     data = add_indicators(frame, params)
-    if strategy.name in SKIP_EARNINGS_STRATEGIES:
-        data = add_earnings_filter(data, ticker, params)
 
     if not legacy_execution:
         from backtest_execution import (
@@ -589,6 +587,10 @@ def collect_backtest_candidates(
         return collect_session_candidates(
             data, ticker, window_start, window_end, params, strategy, execution_bars
         )
+
+    if strategy.name in SKIP_EARNINGS_STRATEGIES:
+        data = add_earnings_filter(data, ticker, params,
+                                   decision_times=list(data.index[1:]) + [pd.NaT])
 
     start = pd.Timestamp(window_start)
     end = pd.Timestamp(window_end)

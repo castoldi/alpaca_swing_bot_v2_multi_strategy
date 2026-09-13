@@ -75,7 +75,10 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 - The stock must be trading above its 50-day moving average (uptrend confirmed)
 - RSI must have dipped below 55 at some point in the last 10 days (a brief pullback occurred)
 - Today's close must be higher than yesterday's close *and* RSI must be rising — indicating the dip is ending and buying pressure is returning
-- **Earnings avoidance:** The strategy skips entries within 3 trading days of a known earnings date to avoid gap risk
+- **Earnings avoidance:** Trend Pullback (including its Ensemble vote) blocks the
+  three trading sessions before scheduled earnings and the unreleased event
+  period. Missing/stale schedules suppress that signal. Historical results need
+  archived observations; see [the earnings policy](docs/earnings-policy.md).
 
 **In plain terms:** Wait for a strong stock to take a breather, then buy the moment it starts recovering — don't fight the trend, ride it.
 

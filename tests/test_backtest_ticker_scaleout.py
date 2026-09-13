@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import strategy as S
 from config import PARAMS, StrategyType
+from dataclasses import replace
 
 def _make_df():
     # 120-bar uptrend with noise so that RSI varies and trend_pullback signals fire.
@@ -25,7 +26,8 @@ def test_backtest_ticker_emits_single_exit_trades():
     df = _make_df()
     df[["open", "high", "low", "close"]] *= 0.4
     trades = S.backtest_ticker(df, "TEST", pd.Timestamp("2025-07-01"),
-                               PARAMS, StrategyType.TREND_PULLBACK, legacy_execution=True)
+                               replace(PARAMS, earnings_avoid_days=0),
+                               StrategyType.TREND_PULLBACK, legacy_execution=True)
     assert trades
     reasons = {t.exit_reason for t in trades}
     # One bracket per entry: SL/TP/time/end-of-data only, never partial TP legs.

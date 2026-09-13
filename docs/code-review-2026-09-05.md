@@ -23,7 +23,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F03 — **FIXED** | P1 | Manager is not atomic and does not reliably establish project identity | Fixed in v0.24.6; process-control regressions |
 | F04 — **FIXED** | P1 | Bracket backtests record the wrong entry price and time | Fixed in v0.24.8; next-open accounting regressions |
 | F05 — **FIXED** | P1 | Bracket stop simulation fills through gaps at unavailable prices | Fixed in v0.24.9; execution-clock regressions |
-| F06 | P1 | Earnings avoidance is missing live and wrong historically | Source + synthetic reproduction |
+| F06 — **FIXED** | P1 | Earnings avoidance is missing live and wrong historically | Fixed in v0.24.11; observed-calendar and live/backtest regressions |
 | F07 | P1 | Daily-loss backtest accounting can miss losses and use future closes | Synthetic reproduction + source |
 | F08 | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Comparison with SciPy |
 | F09 | P2 | Adjusted cache can splice prices from different adjustment vintages | Fake data-source reproduction |
@@ -41,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F06 is the next unresolved finding following the F05 resolution below.
+F07 is the next unresolved finding following the F06 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -183,7 +183,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-**Next unresolved finding: F06 (earnings filter does not protect live entries).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F07 (daily-loss backtest accounting).**
 
 The description below records the original reviewed baseline.
 
@@ -248,7 +248,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. **Next unresolved finding: F06 (earnings avoidance).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F07 (daily-loss backtest accounting).**
 
 The description below records the original reviewed baseline.
 
@@ -267,6 +267,40 @@ The simulator also processes every nonzero-volume 4h bucket without an exchange-
 **Regression:** opening gaps, both-barrier bars, overnight barrier touches, holidays, early closes, and gaps between signal and the next eligible session.
 
 ### F06 — The earnings filter does not protect live entries
+
+**Status: FIXED** in v0.24.11 (2026-09-13).
+
+Live entries, portfolio backtests, and dashboard examples now share an
+observation-time earnings policy. It counts exchange trading sessions, retains
+upcoming events beyond the frame, and distinguishes before-market, after-market,
+and unknown announcement times. Trend Pullback requires a valid clear calendar;
+in Ensemble, this gates only the Trend Pullback vote.
+
+An append-only SQLite archive records when each schedule was observed and its
+validity. Live snapshots refresh after six hours, failed or missing schedules
+retry after five minutes, and provider refreshes clear yfinance's underlying
+HTTP cache. Unknown or expired coverage suppresses the affected signal instead
+of silently permitting it. Historical execution uses only snapshots observed by
+the actual entry decision time and never fetches today's calendar as historical
+evidence. Dashboard examples also apply the archived policy and invalidate old
+unfiltered example caches.
+
+**Validation:** 544 tests passed, including 24 earnings regressions; one existing
+dependency deprecation warning. Tests cover session/holiday windows, event timing,
+refresh failures and recovery, the real yfinance cache/parser with simulated HTTP
+responses, schedule revisions, live Trend Pullback and Ensemble voting, historical
+execution timing, and dashboard example cache invalidation.
+
+**Data limitation:** historical periods without archived schedules suppress Trend
+Pullback entries; Ensemble can still qualify through its other votes. Prior
+earnings-filter P&L improvement claims have been withdrawn pending revalidation
+with schedules known at each historical decision. Saved reports and database
+results have not been regenerated. See [earnings policy](earnings-policy.md) for
+archive provenance, import instructions, and explicit missing-data behavior.
+
+**Next unresolved finding: F07 (daily-loss backtest accounting).**
+
+The description below records the original reviewed baseline.
 
 **Locations:** [bot.py](../bot.py), lines 668–683; [strategies/base.py](../strategies/base.py), lines 44–78; [strategies/trend_pullback.py](../strategies/trend_pullback.py), lines 28–29.
 
