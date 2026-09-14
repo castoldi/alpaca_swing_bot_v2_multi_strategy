@@ -24,7 +24,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F04 — **FIXED** | P1 | Bracket backtests record the wrong entry price and time | Fixed in v0.24.8; next-open accounting regressions |
 | F05 — **FIXED** | P1 | Bracket stop simulation fills through gaps at unavailable prices | Fixed in v0.24.9; execution-clock regressions |
 | F06 — **FIXED** | P1 | Earnings avoidance is missing live and wrong historically | Fixed in v0.24.11; observed-calendar and live/backtest regressions |
-| F07 | P1 | Daily-loss backtest accounting can miss losses and use future closes | Synthetic reproduction + source |
+| F07 — **FIXED** | P1 | Daily-loss backtest accounting can miss losses and use future closes | Fixed in v0.24.12; session-baseline and observable-price regressions |
 | F08 | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Comparison with SciPy |
 | F09 | P2 | Adjusted cache can splice prices from different adjustment vintages | Fake data-source reproduction |
 | F10 | P2 | Historical SIP and live IEX inputs do not match | Source + broker documentation |
@@ -41,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F07 is the next unresolved finding following the F06 resolution below.
+F08 is the next unresolved finding following the F07 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -183,7 +183,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F07 (daily-loss backtest accounting).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F08 (invalid t-statistic guard).**
 
 The description below records the original reviewed baseline.
 
@@ -248,7 +248,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F07 (daily-loss backtest accounting).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F08 (invalid t-statistic guard).**
 
 The description below records the original reviewed baseline.
 
@@ -298,7 +298,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F07 (daily-loss backtest accounting).**
+**Next unresolved finding: F08 (invalid t-statistic guard).**
 
 The description below records the original reviewed baseline.
 
@@ -315,6 +315,37 @@ The helper itself skips every earnings date beyond `df_end`, precisely the upcom
 **Regression:** upcoming earnings, same-session events, Friday-to-Monday windows, historical trailing bars, failed refresh, and successful later refresh. Re-evaluate previous claims of earnings-filter P&L improvement after this correction.
 
 ### F07 — The backtest daily-loss guard can forget today's losses
+
+**Status: FIXED** in v0.24.12 (2026-09-14).
+
+The portfolio replays exits through the previous XNYS session close and values
+the remaining inventory before processing today's exits. This also reconstructs
+the correct baseline across sessions with no candidates. Holiday, DST, early-close
+and exact-close exit cases use the exchange calendar.
+
+Valuation uses regular-session minute opens at their timestamps and closes only
+at minute end, with the next open taking precedence at a shared boundary. Annual
+signal frames load matching minute history through the execution cache. Custom
+callers supply minute OHLCV or explicitly timestamped observed prices; ambiguous
+bars and missing held-position prices fail instead of silently corrupting equity.
+Simultaneous exit proceeds count toward current risk without making their cash
+available to the simultaneous entry. Recovery re-enables entries, and the guard
+does not block exits.
+
+Sparse minute data carries the last observed price; this does not guarantee quote
+freshness. Historical/optimizer callers that omit price frames still have no guard
+(F15). Saved reports and database results have not been regenerated. Full valuation
+contract: [backtest execution model](backtest-execution.md).
+
+**Validation:** 565 tests passed, including 21 new F07 regressions, with one
+existing dependency deprecation warning. Independent review found no important
+issues and separately passed both daily-loss modules (35 tests). The full suite
+ran with child console windows suppressed and isolated test databases. No market
+backtests, broker orders, or service restarts were performed for this change.
+
+**Next unresolved finding: F08 (invalid t-statistic guard).**
+
+The description below records the original reviewed baseline.
 
 **Location:** [backtest_portfolio.py](../backtest_portfolio.py), lines 110–166 and 270–299.
 

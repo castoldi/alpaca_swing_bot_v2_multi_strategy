@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from config import LEVERAGED_TICKERS, PARAMS, StrategyParams
 from position_sizing import leveraged_headroom, whole_share_position_size
+from backtest_valuation import prepare_valuation_frames, previous_session_close, session_date
 import tax as tax_mod
 from strategies.base import (
     BaseStrategy,
@@ -119,23 +120,14 @@ def materialize_candidate(
 def _price_asof(
     frame: pd.DataFrame | None, as_of: pd.Timestamp, *, strict: bool = False
 ) -> float | None:
-    """Last known close before (or at-or-before) ``as_of``, else None.
-
-    A boolean mask rather than ``Series.asof`` — ``asof`` casts ``as_of`` to
-    the index's own stored datetime64 resolution and raises if that cast would
-    lose precision (e.g. subtracting a nanosecond against a microsecond- or
-    second-resolution index, which is exactly how a cached frame is often
-    stored). A boolean comparison has no such restriction and never looks
-    forward, so this stays causal either way.
-    """
+    """Last observation in a prepared valuation frame, never a bar-start close."""
     if frame is None or frame.empty:
         return None
     close = frame["close"]
-    mask = (close.index < as_of) if strict else (close.index <= as_of)
-    matched = close.loc[mask]
-    if matched.empty:
+    position = close.index.searchsorted(as_of, side='left' if strict else 'right') - 1
+    if position < 0:
         return None
-    value = matched.iloc[-1]
+    value = close.iloc[position]
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
     return float(value)
@@ -154,8 +146,9 @@ def _mark_to_market_equity(
 
     ``cash`` already had each position's cost basis deducted at entry, so this
     needs no separate accounting for what was paid — only what it is worth now.
-    ``strict=True`` looks strictly before ``as_of`` (for "yesterday's close");
-    otherwise at-or-before (for "right now", where the current bar counts).
+    Prices are prepared observations: opens at bar starts, closes at bar ends.
+    Missing held-position prices invalidate the run, rather than silently
+    removing owned inventory from the account valuation.
     """
     equity = cash
     for position_id, qty in open_remaining.items():
@@ -163,8 +156,9 @@ def _mark_to_market_equity(
             continue
         ticker = position_tickers.get(position_id)
         price = _price_asof(price_frames.get(ticker), as_of, strict=strict)
-        if price is not None:
-            equity += qty * price
+        if price is None:
+            raise ValueError(f'Missing valuation price for held position {ticker} at {as_of}')
+        equity += qty * price
     return equity
 
 
@@ -190,7 +184,7 @@ def run_annual_portfolio(
     so backtests cannot show exposure the bot would refuse to take. Both
     default to the configured values.
 
-    ``price_frames`` (ticker -> OHLCV, this call's own timeframe) enables the
+    ``price_frames`` (ticker -> signal or minute OHLCV with provenance) enables the
     daily-loss kill switch: mirrors ``bot.py``'s live check, which compares
     Alpaca's mark-to-market ``account.equity`` right now against yesterday's
     closing equity, and blocks new entries once the drop reaches
@@ -202,6 +196,10 @@ def run_annual_portfolio(
     were already resolved at candidate-collection time and never gate on this.
     ``apply_kill_switch`` defaults to on whenever ``price_frames`` is supplied,
     off otherwise, so existing callers that never pass frames see no change.
+    Signal frames load matching regular-session minute valuation data. Custom
+    callers supply timeframe='1min' OHLCV or explicit observed close-only prices.
+    Baselines include all fills through the previous exchange-session close,
+    regardless of how many intervening sessions had no candidates.
     """
     if not math.isfinite(initial_equity) or initial_equity <= 0:
         raise ValueError("initial_equity must be finite and positive")
@@ -233,7 +231,7 @@ def run_annual_portfolio(
     kill_switch_blocked_entries = 0
     regime_blocked_entries = 0
     kill_switch_trip_days: set = set()
-    kill_switch_day: pd.Timestamp | None = None
+    kill_switch_day = None
     kill_switch_day_baseline = float(initial_equity)
 
     cash = float(initial_equity)
@@ -251,10 +249,11 @@ def run_annual_portfolio(
     event_sequence = 0
     position_sequence = 0
 
-    def realize_before(timestamp: pd.Timestamp | None) -> None:
+    def realize_before(timestamp: pd.Timestamp | None, *, inclusive: bool = False) -> None:
         nonlocal cash, realized_pnl, open_leveraged_notional
         while exit_events and (
             timestamp is None or exit_events[0][0] < timestamp
+            or (inclusive and exit_events[0][0] == timestamp)
         ):
             _, _, position_id, trade = heapq.heappop(exit_events)
             cash += trade.shares * trade.exit_price
@@ -275,8 +274,24 @@ def run_annual_portfolio(
                     del open_tickers[ticker]
 
     ordered = sorted(candidates, key=lambda item: (item.entry_date, item.ticker))
+    if apply_kill_switch and ordered:
+        price_frames = prepare_valuation_frames(
+            price_frames, ordered[0].entry_date, ordered[-1].entry_date,
+        )
     grouped = groupby(ordered, key=lambda item: pd.Timestamp(item.entry_date))
     for entry_date, timestamp_candidates in grouped:
+        if apply_kill_switch:
+            bar_day = session_date(entry_date)
+            if kill_switch_day is None or bar_day != kill_switch_day:
+                boundary = previous_session_close(entry_date)
+                # Replay the ledger through the previous close first. Today's
+                # exits must not leak into yesterday's baseline; exits during
+                # candidate-free sessions must already be included in it.
+                realize_before(boundary, inclusive=True)
+                kill_switch_day_baseline = _mark_to_market_equity(
+                    cash, position_tickers, open_remaining, price_frames, boundary,
+                )
+                kill_switch_day = bar_day
         # Every candidate at one timestamp is sized from the same pre-event
         # realized account. An exit dated on that bar is not known at its open.
         realize_before(entry_date)
@@ -290,16 +305,16 @@ def run_annual_portfolio(
 
         kill_switch_tripped_now = False
         if apply_kill_switch:
-            bar_day = entry_date.normalize()
-            if kill_switch_day is None or bar_day != kill_switch_day:
-                kill_switch_day_baseline = _mark_to_market_equity(
-                    cash, position_tickers, open_remaining, price_frames,
-                    bar_day, strict=True,
-                )
-                kill_switch_day = bar_day
             current_equity = _mark_to_market_equity(
                 cash, position_tickers, open_remaining, price_frames, entry_date
             )
+            # Equal-time exits cannot fund this entry under the conservative
+            # cash policy, but their actual proceeds replace the sold shares'
+            # mark for risk accounting. A rebound after a stop cannot erase it.
+            for exit_date, _, _, trade in exit_events:
+                if exit_date == entry_date:
+                    mark = _price_asof(price_frames.get(trade.ticker), entry_date)
+                    current_equity += trade.shares * (trade.exit_price - mark)
             if kill_switch_day_baseline > 0:
                 loss_pct = (
                     (kill_switch_day_baseline - current_equity)

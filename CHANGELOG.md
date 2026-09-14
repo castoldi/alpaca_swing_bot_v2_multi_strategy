@@ -305,6 +305,27 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.12] - 2026-09-14
+
+### Fixed
+
+- **F07 — backtest daily-loss accounting:** capture previous exchange-session
+  closing equity before today's exits, including sessions without entry
+  candidates. Value holdings from regular-session minute opens and completed
+  minute closes instead of future 4h/daily closes. Count simultaneous exit
+  losses in the guard while preserving conservative cash reuse and entry
+  recovery after a breach. Reject ambiguous custom valuation data and missing
+  held-position prices. Add synthetic portfolio and session-boundary regressions.
+  Validation: 565 tests passed (21 new F07 cases), one existing dependency warning;
+  independent review found no important issues.
+
+### Changed
+
+- Document minute valuation and explicit custom observation timestamps in
+  `docs/backtest-execution.md`; update the code-review resolution record.
+  Existing saved reports and trading database results are not regenerated.
+
 ## [0.24.11] - 2026-09-13
 
 ### Added

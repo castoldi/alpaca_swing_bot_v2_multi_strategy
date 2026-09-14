@@ -51,8 +51,41 @@ are not fabricated; the next available eligible minute is used.
 These are bar-based assumptions, not a simulation of the order book. Spread,
 fees, queue position, partial fills, latency and market impact remain unmodeled.
 The entry drift guard is an acceptance filter, not a transaction-cost estimate.
-The daily-loss valuation issue remains F07. Different adjustment vintages in the
-incremental cache remain F09; matching feed/adjustment keys does not fix that.
+Different adjustment vintages in the incremental cache remain F09; matching
+feed/adjustment keys does not fix that.
+
+## Daily-loss valuation (F07, v0.24.12)
+
+The daily entry guard uses the same regular-session minute price source as
+execution. A minute's open is observable at its start; its close is observable
+one minute later. At a shared boundary the next minute's open takes precedence.
+The 4h or daily signal candle's eventual close cannot affect an earlier entry.
+If no new minute is available, valuation carries the last observed price;
+this is a sparse-data approximation, not an assertion of a fresh broker quote.
+
+Each New York trading date compares current equity with the prior XNYS session
+close, including holidays, DST and early closes. Before valuing that baseline,
+the portfolio replays all exits through and including the previous close. It
+then processes today's exits. This ordering applies even across several sessions
+without entry candidates: a loss before today's first candidate remains today's
+loss, and a loss realized in a prior session is already in the baseline.
+
+Exits at the exact entry timestamp count at their actual proceeds for risk
+accounting, while their cash remains unavailable for sizing that simultaneous
+entry under the existing conservative reuse rule. The guard is reevaluated at
+each entry timestamp; recovery below the loss threshold permits entries again.
+It never blocks exits. Reported trip days count dates with a breached entry
+evaluation, not breaches during periods when no entry was considered.
+
+`run_annual_portfolio(price_frames=...)` loads matching minute history for
+signal frames carrying timeframe/feed/adjustment metadata. Custom callers can
+instead pass one-minute OHLCV frames with `attrs['timeframe'] = '1min'`. Synthetic
+observation series must be close-only and explicitly set
+`attrs['price_timestamps'] = 'observed'`; their timestamps mean when prices were
+known, not when candles started. Ambiguous custom bars and missing prices for
+held inventory raise an error instead of silently using future closes or valuing
+shares at zero. Runs without price frames still leave this guard disabled;
+unifying the historical/optimizer risk configuration remains F15.
 
 ## Running and extending backtests
 

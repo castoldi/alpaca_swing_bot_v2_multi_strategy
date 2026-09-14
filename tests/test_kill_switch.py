@@ -38,7 +38,9 @@ def _single_candidate(ticker, entry_date, entry_price, exit_date, exit_price):
 def _frame(pairs):
     """pairs: [(timestamp_str, close), ...]"""
     idx = pd.to_datetime([p[0] for p in pairs])
-    return pd.DataFrame({"close": [p[1] for p in pairs]}, index=idx)
+    frame = pd.DataFrame({"close": [p[1] for p in pairs]}, index=idx)
+    frame.attrs['price_timestamps'] = 'observed'
+    return frame
 
 
 # ── _price_asof / _mark_to_market_equity ──────────────────────────────────────
@@ -73,15 +75,12 @@ def test_mark_to_market_equity_sums_cash_and_open_positions():
     assert equity == 1000.0   # 800 cash + 4 * 50
 
 
-def test_mark_to_market_equity_ignores_a_position_with_no_frame():
-    # Missing frames contribute 0 on both sides of a later delta, rather than
-    # crashing - acceptable for callers that only have partial data, though
-    # production always supplies the full universe.
-    equity = _mark_to_market_equity(
-        cash=800.0, position_tickers={1: "UNKNOWN"}, open_remaining={1: 4},
-        price_frames={}, as_of=pd.Timestamp("2026-01-02 16:00"),
-    )
-    assert equity == 800.0
+def test_mark_to_market_equity_rejects_a_position_with_no_frame():
+    with pytest.raises(ValueError, match='UNKNOWN'):
+        _mark_to_market_equity(
+            cash=800.0, position_tickers={1: "UNKNOWN"}, open_remaining={1: 4},
+            price_frames={}, as_of=pd.Timestamp("2026-01-02 16:00"),
+        )
 
 
 # ── The verified scenario ──────────────────────────────────────────────────────
@@ -97,26 +96,30 @@ def test_mark_to_market_equity_ignores_a_position_with_no_frame():
 _TICK_FRAME = _frame([
     ("2026-01-02 16:00", 100.0),   # day1 entry
     ("2026-01-02 20:00", 100.0),   # day1 EOD -> day2 baseline
-    ("2026-01-03 12:00", 70.0),    # day2 crash bar
-    ("2026-01-03 16:00", 97.0),    # day2 recovery bar (same day, <3% now)
-    ("2026-01-03 20:00", 90.0),    # day2 EOD -> day3 baseline
-    ("2026-01-04 12:00", 90.0),    # day3 bar
+    ("2026-01-05 15:00", 70.0),    # day2 crash observation
+    ("2026-01-05 16:00", 97.0),    # day2 recovery (same day, <3% now)
+    ("2026-01-05 21:00", 90.0),    # day2 close -> day3 baseline
+    ("2026-01-06 15:00", 90.0),    # day3 observation
 ])
 
 
 def _scenario_candidates():
     return [
         _single_candidate("TICK", "2026-01-02 16:00", 100, "2026-01-10", 100),
-        _single_candidate("BLOCKED1", "2026-01-03 12:00", 50, "2026-01-10", 50),
-        _single_candidate("ALLOWED1", "2026-01-03 16:00", 50, "2026-01-10", 50),
-        _single_candidate("ALLOWED2", "2026-01-04 12:00", 50, "2026-01-10", 50),
+        _single_candidate("BLOCKED1", "2026-01-05 15:00", 50, "2026-01-10", 50),
+        _single_candidate("ALLOWED1", "2026-01-05 16:00", 50, "2026-01-10", 50),
+        _single_candidate("ALLOWED2", "2026-01-06 15:00", 50, "2026-01-10", 50),
     ]
 
 
 def _run_scenario(**kwargs):
     return run_annual_portfolio(
         _scenario_candidates(), initial_equity=1000.0, position_fraction=0.20,
-        max_positions=5, price_frames={"TICK": _TICK_FRAME}, apply_tax=False,
+        max_positions=5, price_frames={
+            'TICK': _TICK_FRAME,
+            **{ticker: _frame([('2026-01-02 16:00', 50.0)])
+               for ticker in ['BLOCKED1', 'ALLOWED1', 'ALLOWED2']},
+        }, apply_tax=False,
         **kwargs,
     )
 
