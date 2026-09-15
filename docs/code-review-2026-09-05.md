@@ -14,9 +14,9 @@ each fixed finding has a resolution and validation record.
 |---|---|---|
 | F07: session-based daily-loss accounting and observable valuation | v0.24.12, `6aa0daa`, pushed 2026-09-14 | 565 tests passed, including 21 new regressions; independent review complete |
 | F08: corrected t-statistics, bootstrap tails and numerical consistency | v0.24.13, `32d1f46`, pushed 2026-09-15 | 601 tests passed, including 36 new regressions; independent review complete |
-| F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14; release publication recorded in the F09 section | 617 tests passed, including 16 new regressions; independent review complete |
+| F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14, `6894074`, pushed 2026-09-15 | 617 tests passed, including 16 new regressions; independent review complete |
 
-The F07/F08 release commits and their build tags were verified on `origin/main`.
+The F07/F08/F09 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. These fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -434,6 +434,8 @@ The code returns `(0.0, 1.0)` if `abs(t) > sqrt(n)` and describes this as numeri
 ### F09 — Incremental adjusted-price caching can invent a price discontinuity
 
 **Status: FIXED** in v0.24.14 (2026-09-15).
+Release commit: `6894074a5ebcecf806f21f31d19ca8c2b567d2b1`;
+push and tag `v0.24.14+build91-20260915-133000` verified on the remote.
 
 The cache now fetches and replaces the full covered union when extending a
 range, on daily expiry, on explicit `refresh=True`, or when old coverage lacks

@@ -332,6 +332,8 @@ _Changes landed but not yet released under a new version number go here._
 - Document full-range refresh costs, freshness policy, legacy migration and
   snapshot limitations in `docs/market-cache.md`; update the review resolution.
   Real historical cache contents and saved backtest reports are not regenerated.
+- Record verified F09 release commit `6894074` and its pushed build tag in the
+  review's current-status summary and resolution record.
 
 ## [0.24.13] - 2026-09-14
 
