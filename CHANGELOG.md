@@ -307,6 +307,32 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.14] - 2026-09-15
+
+### Fixed
+
+- **F09 — adjusted-price cache consistency:** replace the full covered union on
+  extension, daily expiry, explicit refresh or legacy migration instead of
+  splicing separately fetched edges. Atomically publish prices, coverage and
+  metadata; preserve the previous snapshot on failure. Remove withdrawn rows,
+  reject malformed/empty destructive refreshes and serialize concurrent writers.
+  Validation: 617 tests passed, including 16 new F09 cases, with one existing
+  dependency warning. Independent review verified real legacy-schema migration
+  and found no blocking issues.
+
+### Added
+
+- Snapshot IDs, versioned data fingerprints and durable per-process read
+  manifests in the market-data cache, with IDs returned on frames and logged.
+  Export manifests with `MarketDataCache.read_manifest()`.
+
+### Changed
+
+- Document full-range refresh costs, freshness policy, legacy migration and
+  snapshot limitations in `docs/market-cache.md`; update the review resolution.
+  Real historical cache contents and saved backtest reports are not regenerated.
+
 ## [0.24.13] - 2026-09-14
 
 ### Fixed

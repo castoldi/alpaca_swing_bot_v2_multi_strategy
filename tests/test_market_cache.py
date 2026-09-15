@@ -68,7 +68,7 @@ def test_cache_populates_once_then_serves_without_fetch(tmp_path):
     assert calls[0][4] == {"feed": "sip", "strict": True}
 
 
-def test_wider_request_fetches_only_missing_prefix_and_suffix(tmp_path):
+def test_wider_request_refetches_the_full_union(tmp_path):
     calls, fetcher = recording_fetcher()
     cache = fixed_cache(tmp_path, fetcher)
 
@@ -77,8 +77,7 @@ def test_wider_request_fetches_only_missing_prefix_and_suffix(tmp_path):
 
     assert [(call[1].date(), call[2].date()) for call in calls] == [
         (date(2020, 1, 5), date(2020, 1, 10)),
-        (date(2020, 1, 1), date(2020, 1, 5)),
-        (date(2020, 1, 10), date(2020, 1, 15)),
+        (date(2020, 1, 1), date(2020, 1, 15)),
     ]
 
 
@@ -95,7 +94,7 @@ def test_overlapping_bars_are_upserted_without_duplicates(tmp_path):
         "AMD", date(2020, 1, 1), date(2020, 1, 15), "1d"
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert out.index.is_unique
     assert len(out) == 3
 

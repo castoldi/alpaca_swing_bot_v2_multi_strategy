@@ -1,15 +1,23 @@
-"""Persistent, incremental cache for historical Alpaca OHLCV bars."""
+"""Historical adjusted-price cache with atomic full-range generations."""
 from __future__ import annotations
 
 import sqlite3
+import hashlib
+import os
+import sys
+from contextlib import closing
+from functools import lru_cache
+from uuid import uuid4
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 import pandas as pd
+import numpy as np
 
 import data_feed
 import yfinance_history
+from logger_setup import get_logger
 
 
 ROOT = Path(__file__).parent
@@ -18,6 +26,13 @@ OHLCV = ["open", "high", "low", "close", "volume"]
 
 SeriesKey = tuple[str, str, str, str]
 Fetcher = Callable[..., pd.DataFrame]
+log = get_logger(__name__)
+
+
+@lru_cache(maxsize=4)
+def _read_run_id(pid: int) -> str:
+    """Group reads across cache instances in one research process."""
+    return uuid4().hex
 
 
 def _timestamp(value: date | datetime | pd.Timestamp) -> pd.Timestamp:
@@ -64,13 +79,13 @@ class MarketDataCache:
         return data_feed.fetch_bars(ticker, start, end, timeframe, feed=feed, strict=strict)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(str(self.path))
+        connection = sqlite3.connect(str(self.path), timeout=120)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
         return connection
 
     def _ensure_schema(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS bars (
@@ -100,22 +115,26 @@ class MarketDataCache:
                 );
                 CREATE INDEX IF NOT EXISTS idx_bars_series_time
                 ON bars (symbol, timeframe, feed, adjustment, timestamp);
+                CREATE TABLE IF NOT EXISTS cache_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL, timeframe TEXT NOT NULL,
+                    feed TEXT NOT NULL, adjustment TEXT NOT NULL,
+                    requested_start TEXT NOT NULL, requested_end TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL, content_sha256 TEXT NOT NULL,
+                    hash_format TEXT NOT NULL, bar_count INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS cache_reads (
+                    id INTEGER PRIMARY KEY,
+                    run_id TEXT NOT NULL, pid INTEGER NOT NULL, consumer TEXT NOT NULL,
+                    snapshot_id TEXT NOT NULL, read_at TEXT NOT NULL,
+                    requested_start TEXT NOT NULL, requested_end TEXT NOT NULL
+                );
                 """
             )
-
-    def _coverage(self, key: SeriesKey) -> tuple[pd.Timestamp, pd.Timestamp] | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT requested_start, requested_end
-                FROM coverage
-                WHERE symbol=? AND timeframe=? AND feed=? AND adjustment=?
-                """,
-                key,
-            ).fetchone()
-        if row is None:
-            return None
-        return pd.Timestamp(row["requested_start"]), pd.Timestamp(row["requested_end"])
+            connection.execute('BEGIN IMMEDIATE')
+            columns = {row['name'] for row in connection.execute('PRAGMA table_info(coverage)')}
+            if 'snapshot_id' not in columns:
+                connection.execute('ALTER TABLE coverage ADD COLUMN snapshot_id TEXT')
 
     @staticmethod
     def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -133,183 +152,170 @@ class MarketDataCache:
         index = pd.to_datetime(normalized.index)
         if getattr(index, "tz", None) is not None:
             index = index.tz_convert("UTC").tz_localize(None)
-        normalized.index = index
+        if index.hasnans:
+            raise ValueError('Historical bars contain missing timestamps')
+        normalized.index = index.as_unit('ns')
         normalized.index.name = "timestamp"
+        values = normalized.to_numpy()
+        if not np.isfinite(values).all():
+            raise ValueError('Historical bars contain nonfinite values')
+        if (normalized[['open', 'high', 'low', 'close']] <= 0).any().any() or (normalized.volume < 0).any():
+            raise ValueError('Historical bars contain invalid prices or volume')
         return normalized[~normalized.index.duplicated(keep="last")].sort_index()
 
-    def _store_segment(
-        self,
-        key: SeriesKey,
-        requested_start: pd.Timestamp,
-        requested_end: pd.Timestamp,
-        frame: pd.DataFrame,
-    ) -> None:
+    def _replace_snapshot(self, connection, key, start, end, frame, now):
         normalized = self._normalize_frame(frame)
-        records = [
-            (
-                *key,
-                pd.Timestamp(timestamp).isoformat(),
-                float(row.open),
-                float(row.high),
-                float(row.low),
-                float(row.close),
-                float(row.volume),
-            )
-            for timestamp, row in normalized.iterrows()
-        ]
-
-        with self._connect() as connection:
-            if records:
-                connection.executemany(
-                    """
-                    INSERT INTO bars (
-                        symbol, timeframe, feed, adjustment, timestamp,
-                        open, high, low, close, volume
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (
-                        symbol, timeframe, feed, adjustment, timestamp
-                    ) DO UPDATE SET
-                        open=excluded.open,
-                        high=excluded.high,
-                        low=excluded.low,
-                        close=excluded.close,
-                        volume=excluded.volume
-                    """,
-                    records,
-                )
-
-            existing = connection.execute(
-                """
-                SELECT requested_start, requested_end
-                FROM coverage
-                WHERE symbol=? AND timeframe=? AND feed=? AND adjustment=?
-                """,
+        normalized = normalized[(normalized.index >= start) & (normalized.index < end)]
+        if normalized.empty:
+            previous = connection.execute(
+                'SELECT 1 FROM bars WHERE symbol=? AND timeframe=? AND feed=? AND adjustment=? LIMIT 1',
                 key,
             ).fetchone()
-            if existing is None:
-                combined_start = requested_start
-                combined_end = requested_end
-            else:
-                combined_start = min(
-                    pd.Timestamp(existing["requested_start"]), requested_start
-                )
-                combined_end = max(
-                    pd.Timestamp(existing["requested_end"]), requested_end
-                )
+            if previous:
+                raise ValueError('Empty refresh would erase an existing populated price history')
+        digest = hashlib.sha256(
+            pd.util.hash_pandas_object(normalized, index=True).to_numpy(dtype='<u8').tobytes()
+        ).hexdigest()
+        snapshot = dict(
+            snapshot_id=uuid4().hex, symbol=key[0], timeframe=key[1], feed=key[2],
+            adjustment=key[3], requested_start=start.isoformat(), requested_end=end.isoformat(),
+            fetched_at=now.isoformat(), content_sha256=digest,
+            hash_format=f'pandas-{pd.__version__}-hash_pandas_object-float64-utc-ns-sha256',
+            bar_count=len(normalized),
+        )
+        # Replacement, not upsert: withdrawn provider rows must disappear too.
+        connection.execute('DELETE FROM bars WHERE symbol=? AND timeframe=? AND feed=? AND adjustment=?', key)
+        connection.executemany(
+            'INSERT INTO bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ((*key, pd.Timestamp(row[0]).isoformat(), *row[1:])
+             for row in normalized.itertuples(name=None)),
+        )
+        connection.execute(
+            '''INSERT INTO cache_snapshots VALUES (
+               :snapshot_id, :symbol, :timeframe, :feed, :adjustment,
+               :requested_start, :requested_end, :fetched_at, :content_sha256,
+               :hash_format, :bar_count)''', snapshot,
+        )
+        connection.execute(
+            '''INSERT INTO coverage (symbol, timeframe, feed, adjustment,
+               requested_start, requested_end, updated_at, snapshot_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (symbol, timeframe, feed, adjustment) DO UPDATE SET
+               requested_start=excluded.requested_start, requested_end=excluded.requested_end,
+               updated_at=excluded.updated_at, snapshot_id=excluded.snapshot_id''',
+            (*key, start.isoformat(), end.isoformat(), now.isoformat(), snapshot['snapshot_id']),
+        )
+        return snapshot
 
-            connection.execute(
-                """
-                INSERT INTO coverage (
-                    symbol, timeframe, feed, adjustment,
-                    requested_start, requested_end, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (symbol, timeframe, feed, adjustment) DO UPDATE SET
-                    requested_start=excluded.requested_start,
-                    requested_end=excluded.requested_end,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    *key,
-                    combined_start.isoformat(),
-                    combined_end.isoformat(),
-                    _timestamp(self.now_fn()).isoformat(),
-                ),
-            )
-
-    def _read(
-        self,
-        key: SeriesKey,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> pd.DataFrame:
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT timestamp, open, high, low, close, volume
-                FROM bars
-                WHERE symbol=? AND timeframe=? AND feed=? AND adjustment=?
-                  AND timestamp>=? AND timestamp<?
-                ORDER BY timestamp
-                """,
-                (*key, start.isoformat(), end.isoformat()),
-            ).fetchall()
+    @staticmethod
+    def _read(connection, key, start, end):
+        rows = connection.execute(
+            '''SELECT timestamp, open, high, low, close, volume FROM bars
+               WHERE symbol=? AND timeframe=? AND feed=? AND adjustment=?
+               AND timestamp>=? AND timestamp<? ORDER BY timestamp''',
+            (*key, start.isoformat(), end.isoformat()),
+        ).fetchall()
         if not rows:
             return _empty_frame()
         frame = pd.DataFrame([dict(row) for row in rows])
-        frame.index = pd.to_datetime(frame.pop("timestamp"))
-        frame.index.name = "timestamp"
+        frame.index = pd.to_datetime(frame.pop('timestamp')).astype('datetime64[ns]')
+        frame.index.name = 'timestamp'
         return frame[OHLCV]
 
     def get_bars(
-        self,
-        ticker: str,
-        start: date | datetime,
-        end: date | datetime,
-        timeframe: str,
-        *,
-        feed: str = "sip",
-        adjustment: str = "all",
+        self, ticker: str, start: date | datetime, end: date | datetime,
+        timeframe: str, *, feed: str = 'sip', adjustment: str = 'all',
+        refresh: bool = False,
     ) -> pd.DataFrame:
-        """Return cached bars for ``[start, end)``, downloading missing edges."""
-        normalized_feed = feed.lower()
-        # "yfinance" is not a real Alpaca feed — it is a cache-key partition for
-        # pre-2016 daily history (see yfinance_history.py), kept in the same
-        # bars/coverage tables so it gets the same incremental-download and
-        # read-through behaviour as the Alpaca feeds.
-        if normalized_feed not in {"iex", "sip", "yfinance"}:
-            raise ValueError(f"Unsupported stock feed: {feed}")
-        if adjustment.lower() != "all":
-            raise ValueError("Only adjustment='all' is supported by this cache")
+        """Return one adjusted-price generation for [start, end).
 
+        An extension, explicit refresh, new UTC day, or unversioned legacy cache
+        replaces the entire covered union. Provider failures never advance
+        coverage or return stale data as refreshed. Snapshot fingerprints and
+        per-process read manifests are retained; old bar generations are not.
+        """
+        key = (ticker.upper(), timeframe.lower(), feed.lower(), adjustment.lower())
+        if key[2] not in {'iex', 'sip', 'yfinance'}:
+            raise ValueError(f'Unsupported stock feed: {feed}')
+        if key[3] != 'all':
+            raise ValueError("Only adjustment='all' is supported by this cache")
+        now = _timestamp(self.now_fn())
         start_ts = _timestamp(start)
         end_ts = min(_timestamp(end), _completed_data_ceiling(self.now_fn()))
         if end_ts <= start_ts:
             return _empty_frame()
 
-        key: SeriesKey = (
-            ticker.upper(),
-            timeframe.lower(),
-            normalized_feed,
-            adjustment.lower(),
-        )
-        coverage = self._coverage(key)
-        segments: list[tuple[pd.Timestamp, pd.Timestamp]] = []
-        if coverage is None:
-            segments.append((start_ts, end_ts))
-        else:
-            covered_start, covered_end = coverage
-            if start_ts < covered_start:
-                segments.append((start_ts, covered_start))
-            if end_ts > covered_end:
-                segments.append((covered_end, end_ts))
-
-        for segment_start, segment_end in segments:
-            frame = self.fetcher(
-                ticker,
-                segment_start.to_pydatetime(),
-                segment_end.to_pydatetime(),
-                timeframe,
-                feed=normalized_feed,
-                strict=True,
+        # Serialize refresh decisions, provider calls, replacement and the
+        # returned read. WAL readers can still see the preceding committed
+        # generation; competing writers cannot publish out-of-order segments.
+        with closing(self._connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            coverage = connection.execute(
+                'SELECT * FROM coverage WHERE symbol=? AND timeframe=? AND feed=? AND adjustment=?', key,
+            ).fetchone()
+            snapshot = None
+            full_start, full_end = start_ts, end_ts
+            if coverage:
+                full_start = min(start_ts, pd.Timestamp(coverage['requested_start']))
+                full_end = max(end_ts, pd.Timestamp(coverage['requested_end']))
+                row = connection.execute('SELECT * FROM cache_snapshots WHERE snapshot_id=?',
+                                         (coverage['snapshot_id'],)).fetchone()
+                snapshot = dict(row) if row else None
+            needs_refresh = (
+                refresh or snapshot is None
+                or pd.Timestamp(snapshot['fetched_at']).normalize() != now.normalize()
+                or full_start < pd.Timestamp(snapshot['requested_start'])
+                or full_end > pd.Timestamp(snapshot['requested_end'])
             )
-            self._store_segment(key, segment_start, segment_end, frame)
+            if needs_refresh:
+                frame = self.fetcher(key[0], full_start.to_pydatetime(), full_end.to_pydatetime(),
+                                     key[1], feed=key[2], strict=True)
+                snapshot = self._replace_snapshot(connection, key, full_start, full_end, frame, now)
+            result = self._read(connection, key, start_ts, end_ts)
+            run_id = _read_run_id(os.getpid())
+            connection.execute(
+                '''INSERT INTO cache_reads (run_id, pid, consumer, snapshot_id, read_at,
+                   requested_start, requested_end) VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (run_id, os.getpid(), Path(sys.argv[0]).name, snapshot['snapshot_id'],
+                 now.isoformat(), start_ts.isoformat(), end_ts.isoformat()),
+            )
+            result.attrs.update(timeframe=key[1], feed=key[2], adjustment=key[3],
+                                cache_snapshot=snapshot, cache_read_run_id=run_id)
+            log.info('Historical data snapshot: run=%s snapshot=%s %s/%s/%s [%s, %s)',
+                     run_id, snapshot['snapshot_id'], key[0], key[1], key[2], start_ts, end_ts)
+            return result
 
-        result = self._read(key, start_ts, end_ts)
-        result.attrs.update(timeframe=key[1], feed=key[2], adjustment=key[3])
-        return result
+    def read_manifest(self, run_id: str | None = None) -> list[dict]:
+        """Exact read ranges and immutable fingerprints for one research process.
+
+        The run ID is returned on frames and logged. Old price rows are not
+        retained: this is an audit manifest, not an offline snapshot archive.
+        """
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                '''SELECT r.id, r.run_id, r.pid, r.consumer, r.read_at,
+                   r.requested_start AS read_start, r.requested_end AS read_end, s.*
+                   FROM cache_reads r JOIN cache_snapshots s ON s.snapshot_id=r.snapshot_id
+                   WHERE r.run_id=? ORDER BY r.id''',
+                (run_id or _read_run_id(os.getpid()),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
 
     def status(self) -> list[dict]:
         """Describe every cached series and its successful request coverage."""
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT
                     c.symbol, c.timeframe, c.feed, c.adjustment,
-                    c.requested_start, c.requested_end, c.updated_at,
+                    c.requested_start, c.requested_end, c.updated_at, c.snapshot_id,
+                    s.content_sha256, s.hash_format,
                     COUNT(b.timestamp) AS bar_count,
                     MIN(b.timestamp) AS first_bar,
                     MAX(b.timestamp) AS last_bar
                 FROM coverage AS c
+                LEFT JOIN cache_snapshots AS s ON s.snapshot_id=c.snapshot_id
                 LEFT JOIN bars AS b
                   ON b.symbol=c.symbol
                  AND b.timeframe=c.timeframe

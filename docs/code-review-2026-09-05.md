@@ -6,16 +6,17 @@
 
 ## Current remediation status — updated 2026-09-15
 
-**F01–F08 are fixed; F09–F16 remain open. Next: F09, adjusted-price cache
-consistency.** Original findings and baseline reproductions are retained below;
+**F01–F09 are fixed; F10–F16 remain open. Next: F10, historical/live feed
+alignment.** Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
 |---|---|---|
 | F07: session-based daily-loss accounting and observable valuation | v0.24.12, `6aa0daa`, pushed 2026-09-14 | 565 tests passed, including 21 new regressions; independent review complete |
 | F08: corrected t-statistics, bootstrap tails and numerical consistency | v0.24.13, `32d1f46`, pushed 2026-09-15 | 601 tests passed, including 36 new regressions; independent review complete |
+| F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14; release publication recorded in the F09 section | 617 tests passed, including 16 new regressions; independent review complete |
 
-Both release commits and their build tags were verified on `origin/main`.
+The F07/F08 release commits and their build tags were verified on `origin/main`.
 One existing dependency deprecation warning remains. These fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -47,7 +48,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F06 — **FIXED** | P1 | Earnings avoidance is missing live and wrong historically | Fixed in v0.24.11; observed-calendar and live/backtest regressions |
 | F07 — **FIXED** | P1 | Daily-loss backtest accounting can miss losses and use future closes | Fixed in v0.24.12; session-baseline and observable-price regressions |
 | F08 — **FIXED** | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Fixed in v0.24.13; SciPy comparisons and bootstrap-tail regressions |
-| F09 | P2 | Adjusted cache can splice prices from different adjustment vintages | Fake data-source reproduction |
+| F09 — **FIXED** | P2 | Adjusted cache can splice prices from different adjustment vintages | Fixed in v0.24.14; revision, rollback, concurrency and migration regressions |
 | F10 | P2 | Historical SIP and live IEX inputs do not match | Source + broker documentation |
 | F11 | P2 | Holding-period rules disagree across config, backtest, and live | Source + synthetic reproduction |
 | F12 | P2 | Terminal partial entries retain the wrong quantity and basis | Fake broker reproduction |
@@ -62,7 +63,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F09 is the next unresolved finding following the F08 resolution below.
+F10 is the next unresolved finding following the F09 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -118,7 +119,7 @@ regular hours or at the stop price.
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
 was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F09 (adjusted-price cache consistency).**
+finding: F10 (historical/live feed alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -205,7 +206,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F09 (adjusted-price cache consistency).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F10 (historical/live feed alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -270,7 +271,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F09 (adjusted-price cache consistency).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F10 (historical/live feed alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -320,7 +321,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F09 (adjusted-price cache consistency).**
+**Next unresolved finding: F10 (historical/live feed alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -366,7 +367,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F09 (adjusted-price cache consistency).**
+**Next unresolved finding: F10 (historical/live feed alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -414,7 +415,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F09 (adjusted-price cache consistency).**
+**Next unresolved finding: F10 (historical/live feed alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -431,6 +432,42 @@ The code returns `(0.0, 1.0)` if `abs(t) > sqrt(n)` and describes this as numeri
 **Regression:** varied samples above and below `sqrt(n)`, zero variance, near-zero variance, negative means, and bootstrap tail behavior. No previous significance verdict should be assumed unchanged.
 
 ### F09 — Incremental adjusted-price caching can invent a price discontinuity
+
+**Status: FIXED** in v0.24.14 (2026-09-15).
+
+The cache now fetches and replaces the full covered union when extending a
+range, on daily expiry, on explicit `refresh=True`, or when old coverage lacks
+snapshot metadata. It never joins newly fetched edges to older adjusted bars.
+Replacement removes rows withdrawn by the provider. A transaction serializes
+check/fetch/replace/read and commits prices, coverage and snapshot metadata
+together. Failed or invalid refreshes preserve the preceding complete generation
+and raise; an empty refresh cannot erase previously populated history.
+
+Returned frames and logs identify the snapshot and process read group. Persistent
+`cache_snapshots` and `cache_reads` retain versioned content fingerprints, fetched
+coverage and exact read ranges; `read_manifest()` exports those audit records.
+Old price contents are not archived, and a process group may cover multiple
+strategies/experiments. This does not pin all provider requests to one revision.
+
+**Validation:** 617 tests passed, including 16 new F09 regressions, with one
+existing dependency warning. Tests cover split/dividend revisions, prefix/suffix
+extension, expiry, explicit/repeated refresh, withdrawn rows, invalid/empty/failed
+responses, out-of-range rows, retained fingerprints, legacy metadata and concurrent
+extensions. Independent review also created a genuine old-schema cache from the
+previous implementation and verified migration and adjusted-price replacement.
+No blocking review findings remain.
+
+**Limits:** large minute-history refreshes cost more downloads and serialize all
+cache calls, including unrelated symbols, with a 120-second lock timeout. Covered
+same-day requests reuse cached data; an intraday provider revision needs explicit
+refresh or the next day's refresh. Provider pagination and cross-series consistency
+are not guaranteed. The real market-data history and old backtest reports were not
+regenerated; legacy series refresh on their next request. Full policy and manifest
+usage: [adjusted historical cache](market-cache.md).
+
+**Next unresolved finding: F10 (historical/live feed alignment).**
+
+The description below records the original reviewed baseline.
 
 **Location:** [market_cache.py](../market_cache.py), lines 243–296; [data_feed.py](../data_feed.py), `_feed_options`.
 

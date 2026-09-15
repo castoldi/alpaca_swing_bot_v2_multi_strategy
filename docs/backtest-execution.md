@@ -51,8 +51,9 @@ are not fabricated; the next available eligible minute is used.
 These are bar-based assumptions, not a simulation of the order book. Spread,
 fees, queue position, partial fills, latency and market impact remain unmodeled.
 The entry drift guard is an acceptance filter, not a transaction-cost estimate.
-Different adjustment vintages in the incremental cache remain F09; matching
-feed/adjustment keys does not fix that.
+F09 now replaces full cached ranges when extending or refreshing adjusted history
+and records snapshot fingerprints. The [cache policy](market-cache.md) explains
+refresh timing, manifests, migration and the limits of provider consistency.
 
 ## Daily-loss valuation (F07, v0.24.12)
 
@@ -91,7 +92,8 @@ unifying the historical/optimizer risk configuration remains F15.
 
 Install `requirements.txt` before running the existing backtest commands. The
 first run for a symbol/year needs more data and storage to populate minute
-history; later runs reuse the persistent cache. Fetch failures or entirely
+history; covered requests reuse a fresh snapshot during the same UTC day.
+Extensions and refreshes download the full covered union. Fetch failures or entirely
 missing execution data stop the run rather than substituting strategy OHLC.
 Pre-2016 or custom-price history needs matching execution data supplied explicitly.
 
