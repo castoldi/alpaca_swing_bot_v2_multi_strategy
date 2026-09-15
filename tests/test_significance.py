@@ -130,24 +130,15 @@ def test_bootstrap_hurdle_is_deterministic_for_a_seed():
     assert a == pytest.approx(b)
 
 
-def test_degenerate_resample_cannot_explode_the_t_statistic():
-    """A near-constant sample must read as no evidence, not t = 1e15.
+def test_near_constant_nonzero_variance_retains_its_statistic():
+    """Small nonzero variance is not grounds to discard a valid statistic."""
+    from scipy.stats import ttest_1samp
 
-    Regression: a 3-trade strategy's bootstrap resample landed on two distinct
-    values with lopsided counts. Variance was tiny but non-zero, so an
-    `sd == 0` check missed it, and the resulting t of order 1e15 set the
-    best-of-N hurdle for the whole year to 8.44 instead of ~2.5.
-    """
     almost_constant = [0.02] * 40 + [0.020000000001]
     t, p = t_statistic(almost_constant)
-    assert t == 0.0 and p == 1.0
-
-    # The one-sample t-statistic is bounded by sqrt(n); nothing may exceed it.
-    rng = np.random.default_rng(17)
-    for _ in range(50):
-        sample = rng.normal(0.01, 0.05, size=rng.integers(3, 60))
-        t, _ = t_statistic(sample)
-        assert abs(t) <= np.sqrt(len(sample))
+    expected = ttest_1samp(almost_constant, 0, alternative='greater')
+    assert t == pytest.approx(expected.statistic)
+    assert p == pytest.approx(expected.pvalue)
 
 
 def test_thin_strategies_do_not_set_the_hurdle():

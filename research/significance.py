@@ -94,10 +94,14 @@ class SignificanceReport:
             f"haircut Sharpe={self.haircut_sharpe:.2f} (from {self.sharpe:.2f})",
         ]
         if not self.significant:
-            lines.append(
-                "  -> Best-of-N selection explains this result. Do not keep the change "
-                "on this evidence alone."
-            )
+            if not math.isfinite(self.hurdle_t) or 'not testable' in self.method:
+                lines.append('  -> Evidence not calibrated: insufficient or degenerate data. '
+                             'Do not keep the change on this evidence alone.')
+            else:
+                lines.append(
+                    "  -> Best-of-N selection explains this result. Do not keep the change "
+                    "on this evidence alone."
+                )
         return "\n".join(lines)
 
     # NOTE: every string returned from this module is deliberately ASCII-only.
@@ -109,37 +113,40 @@ class SignificanceReport:
 
 # ── Single-test statistics ────────────────────────────────────────────────────
 
+def _sample_t(arr: np.ndarray) -> float | None:
+    """Unbounded one-sample t, or None when the sample cannot be studentized."""
+    n = arr.size
+    # Exact equality avoids artificial variance from rounding a constant mean.
+    # Small but nonzero variance is legitimate; there is no sqrt(n) bound.
+    if n < 2 or not np.isfinite(arr).all() or np.all(arr == arr[0]):
+        return None
+    with np.errstate(over='ignore', under='ignore', invalid='ignore'):
+        mean = float(np.mean(arr))
+        sd = float(np.std(arr, ddof=1))
+        if sd == 0 or not math.isfinite(sd) or not math.isfinite(mean):
+            scaled = arr / np.max(np.abs(arr))
+            mean = float(np.mean(scaled))
+            sd = float(np.std(scaled, ddof=1))
+    if sd == 0 or not math.isfinite(sd):
+        return None
+    t = mean / (sd / math.sqrt(n))
+    return t if math.isfinite(t) else None
+
+
 def t_statistic(returns: Sequence[float]) -> tuple[float, float]:
     """One-sided t-statistic and p-value for H0: mean trade return <= 0.
 
-    Returns (0.0, 1.0) for samples too small or too degenerate to test, so
-    callers never have to special-case an empty backtest.
+    Finite nonconstant samples retain their statistic, however large. Too few
+    observations, exact constants and unrepresentable statistics return (0, 1)
+    as an explicit no-evidence convention, not a mathematical t-test result.
+    Bootstrap degeneracy is handled separately so tails cannot be erased.
     """
     arr = np.asarray([r for r in returns if r is not None], dtype=float)
     arr = arr[np.isfinite(arr)]
-    n = arr.size
-    if n < 2:
+    t = _sample_t(arr)
+    if t is None:
         return 0.0, 1.0
-
-    mean = float(np.mean(arr))
-    sd = float(np.std(arr, ddof=1))
-
-    # Degeneracy guard, relative rather than absolute. An exact `sd == 0` test is
-    # not enough: a bootstrap resample of a thin strategy can land on two
-    # distinct values with lopsided counts, giving a variance that is tiny but
-    # non-zero and a t-statistic of order 1e15. That poisoned the best-of-N
-    # hurdle for any year containing a 3-trade strategy. The one-sample
-    # t-statistic is bounded by sqrt(n), so anything beyond that is numerical
-    # noise by definition, not evidence.
-    scale = max(abs(mean), float(np.max(np.abs(arr))), 1e-12)
-    if sd <= 1e-9 * scale:
-        return 0.0, 1.0
-
-    t = mean / (sd / math.sqrt(n))
-    if not math.isfinite(t) or abs(t) > math.sqrt(n):
-        return 0.0, 1.0
-
-    p = float(stats.t.sf(t, df=n - 1))
+    p = float(stats.t.sf(t, df=arr.size - 1))
     return t, p
 
 
@@ -147,10 +154,17 @@ def sharpe_ratio(returns: Sequence[float]) -> float:
     """Per-trade Sharpe: mean / stdev of trade returns (no annualisation)."""
     arr = np.asarray([r for r in returns if r is not None], dtype=float)
     arr = arr[np.isfinite(arr)]
-    if arr.size < 2:
+    t = _sample_t(arr)
+    return t / math.sqrt(arr.size) if t is not None else 0.0
+
+
+def _finite_mean(values: Sequence[float]) -> float:
+    """Mean of already-filtered finite values, without overflowing their sum."""
+    if len(values) == 0:
         return 0.0
-    sd = float(np.std(arr, ddof=1))
-    return float(np.mean(arr)) / sd if sd > 0 else 0.0
+    arr = np.asarray(values, dtype=float)
+    scale = float(np.max(np.abs(arr)))
+    return float(np.mean(arr / scale)) * scale if scale else 0.0
 
 
 # ── Multiple-testing adjustments (Harvey, Liu & Zhu 2016) ─────────────────────
@@ -234,9 +248,22 @@ def _period_key(when: Any) -> str:
     return f"{ts.year:04d}-{ts.month:02d}"
 
 
-#: A strategy with fewer trades than this is not a credible selection candidate,
-#: and its bootstrap resamples are numerically unstable. Excluded from the max.
+#: Minimum original and resampled trade count for panel calibration. This is
+#: a policy floor, not a guarantee that the sample supports reliable inference.
 MIN_TRADES_FOR_PANEL = 20
+MIN_MONTHS_FOR_PANEL = 2
+
+
+def _panel_problem(observations, min_trades=MIN_TRADES_FOR_PANEL):
+    values = [(when, float(r)) for when, r in observations
+              if r is not None and np.isfinite(float(r))]
+    if len(values) < max(2, min_trades):
+        return 'too few finite trades'
+    if len({_period_key(when) for when, _ in values}) < MIN_MONTHS_FOR_PANEL:
+        return 'fewer than two calendar months'
+    if _sample_t(np.asarray([r for _, r in values])) is None:
+        return 'constant or unrepresentable returns'
+    return None
 
 
 def bootstrap_max_t_hurdle(
@@ -255,7 +282,18 @@ def bootstrap_max_t_hurdle(
     The hurdle is the (1 - alpha) quantile of the resulting maximum t-statistic.
 
     Returns (hurdle, distribution of bootstrapped maxima).
+    Original variants need enough finite trades, two months and nonzero
+    variance. An underfilled resample receives +inf, not a silent omission.
+    A constant positive null resample has an infinite upper tail; constant
+    nonpositive resamples contribute zero to the positive maximum. Infinite
+    hurdles cannot establish significance. No resamples are redrawn/dropped.
     """
+    if isinstance(n_boot, bool) or not isinstance(n_boot, int) or n_boot < 1:
+        raise ValueError('n_boot must be a positive integer')
+    if not 0 < alpha < 1:
+        raise ValueError('alpha must be between zero and one')
+    if isinstance(min_trades, bool) or not isinstance(min_trades, int) or min_trades < 2:
+        raise ValueError('min_trades must be an integer of at least two')
     if not configs:
         return float("inf"), np.array([])
 
@@ -268,12 +306,16 @@ def bootstrap_max_t_hurdle(
             for when, r in observations
             if r is not None and np.isfinite(float(r))
         ]
-        if len(values) < max(2, min_trades):
+        if _panel_problem(values, min_trades) is not None:
             by_period[name] = {}
             continue
-        mean = float(np.mean([r for _, r in values]))
+        # t is scale-invariant. Scale BEFORE centering, so a large finite
+        # sample cannot overflow its mean into -inf residuals/zero maxima.
+        raw = np.asarray([r for _, r in values])
+        scaled = raw / np.max(np.abs(raw))
+        mean = _finite_mean(scaled)
         buckets: dict[str, list[float]] = defaultdict(list)
-        for when, r in values:
+        for (when, _), r in zip(values, scaled):
             key = _period_key(when)
             buckets[key].append(r - mean)
             months.add(key)
@@ -299,16 +341,22 @@ def bootstrap_max_t_hurdle(
                 block = buckets.get(month)
                 if block:
                     sample.extend(block)
-            # Below `min_trades` a resample is both meaningless and numerically
-            # unstable — see the degeneracy guard in `t_statistic`.
-            if len(sample) < max(2, min_trades):
-                continue
-            t, _ = t_statistic(sample)
+            if len(sample) < min_trades:
+                best = float('inf')
+                break
+            arr = np.asarray(sample)
+            t = _sample_t(arr)
+            if t is None:
+                # Never reuse the observed-sample no-evidence convention for
+                # a null upper tail. Doing so would lower the selection hurdle.
+                t = (0.0 if np.isfinite(arr).all() and np.all(arr == arr[0]) and arr[0] <= 0
+                     else float('inf'))
             if t > best:
                 best = t
         maxima[b] = best
 
-    hurdle = float(np.quantile(maxima, 1.0 - alpha))
+    # Select an observed order statistic, avoiding inf-inf interpolation/NaN.
+    hurdle = float(np.quantile(maxima, 1.0 - alpha, method='higher'))
     return hurdle, maxima
 
 
@@ -355,11 +403,14 @@ def evaluate(
     hurdle = analytic_max_t_hurdle(trials, df, alpha)
     haircut = _haircut(sharpe, t_stat, adjusted_p, df)
     sharpe_annual = (t_stat / math.sqrt(span_years)) if span_years and span_years > 0 else None
+    method = f"Bonferroni over {trials} trial(s)"
+    if _sample_t(np.asarray(arr)) is None:
+        method += '; sample not testable: too few, constant or unrepresentable returns'
 
     return SignificanceReport(
         n_trades=n,
         trials=trials,
-        mean_return=float(np.mean(arr)) if arr else 0.0,
+        mean_return=_finite_mean(arr),
         sharpe=sharpe,
         sharpe_annual=sharpe_annual,
         t_stat=t_stat,
@@ -368,7 +419,7 @@ def evaluate(
         hurdle_t=hurdle,
         haircut_sharpe=haircut,
         alpha=alpha,
-        method=f"Bonferroni over {trials} trial(s)",
+        method=method,
         significant=bool(n >= 2 and t_stat >= hurdle and adjusted_p <= alpha),
     )
 
@@ -412,11 +463,15 @@ def evaluate_search(
     t_stat, p_value = stats_by_name[winner]
     sharpe = sharpe_ratio(win_returns)
     adjusted_p = bhy_adjusted[winner]
+    problem = _panel_problem(configs[winner])
+    method = f"month-block bootstrap max-t over {len(names)} variants (BHY p-values)"
+    if problem:
+        method += f'; winner not testable: {problem}'
 
     report = SignificanceReport(
         n_trades=n,
         trials=len(names),
-        mean_return=float(np.mean(win_returns)) if win_returns else 0.0,
+        mean_return=_finite_mean(win_returns),
         sharpe=sharpe,
         sharpe_annual=None,
         t_stat=t_stat,
@@ -425,8 +480,9 @@ def evaluate_search(
         hurdle_t=hurdle,
         haircut_sharpe=_haircut(sharpe, t_stat, adjusted_p, df),
         alpha=alpha,
-        method=f"month-block bootstrap max-t over {len(names)} variants (BHY p-values)",
-        significant=bool(n >= 2 and t_stat >= hurdle),
+        method=method,
+        significant=bool(problem is None and math.isfinite(hurdle)
+                         and t_stat > 0 and t_stat >= hurdle),
     )
     return report, bhy_adjusted
 
@@ -507,9 +563,13 @@ def backtest_verdict(
         f"Sharpe {report.sharpe:.2f} -> {report.haircut_sharpe:.2f} after haircut.",
     ]
     if not report.significant:
-        lines.append(
-            "  -> Best-of-N selection explains this. Do not keep a change on it alone."
-        )
+        if not math.isfinite(report.hurdle_t) or 'not testable' in report.method:
+            lines.append(f'  Calibration: {report.method}')
+            lines.append('  -> Evidence not calibrated: insufficient or degenerate data.')
+        else:
+            lines.append(
+                "  -> Best-of-N selection explains this. Do not keep a change on it alone."
+            )
     if too_thin:
         listed = ", ".join(f"{n} ({c})" for n, c in sorted(too_thin.items()))
         lines += [

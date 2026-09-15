@@ -306,6 +306,29 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.13] - 2026-09-14
+
+### Fixed
+
+- **F08 — research significance:** remove the mathematically invalid `sqrt(n)`
+  t-statistic cap and near-constant variance cutoff. Preserve valid finite
+  statistics and one-sided p-values; handle exact constants separately.
+  Retain large bootstrap tails and use explicit conservative policies for
+  underfilled/degenerate resamples, original trade/month eligibility, and
+  infinite calibration hurdles. An ineligible winner cannot claim significance
+  using another variant's hurdle. Reports explain uncalibrated evidence.
+  Stable scaling is shared across t/Sharpe reporting and bootstrap centering;
+  exact constant single-candidate samples are explicitly marked untestable.
+  Validation: 601 tests passed, including 36 new F08 cases, with one existing
+  dependency warning. Independent review found no remaining issues after fixes.
+
+### Changed
+
+- Document the corrected inference conventions and historical revalidation
+  procedure in `docs/research-significance.md`. No complete archived optimizer
+  search panels were available for replay; old verdicts remain unvalidated.
+
 ## [0.24.12] - 2026-09-14
 
 ### Fixed

@@ -25,7 +25,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F05 — **FIXED** | P1 | Bracket stop simulation fills through gaps at unavailable prices | Fixed in v0.24.9; execution-clock regressions |
 | F06 — **FIXED** | P1 | Earnings avoidance is missing live and wrong historically | Fixed in v0.24.11; observed-calendar and live/backtest regressions |
 | F07 — **FIXED** | P1 | Daily-loss backtest accounting can miss losses and use future closes | Fixed in v0.24.12; session-baseline and observable-price regressions |
-| F08 | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Comparison with SciPy |
+| F08 — **FIXED** | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Fixed in v0.24.13; SciPy comparisons and bootstrap-tail regressions |
 | F09 | P2 | Adjusted cache can splice prices from different adjustment vintages | Fake data-source reproduction |
 | F10 | P2 | Historical SIP and live IEX inputs do not match | Source + broker documentation |
 | F11 | P2 | Holding-period rules disagree across config, backtest, and live | Source + synthetic reproduction |
@@ -41,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F08 is the next unresolved finding following the F07 resolution below.
+F09 is the next unresolved finding following the F08 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -183,7 +183,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F08 (invalid t-statistic guard).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F09 (adjusted-price cache consistency).**
 
 The description below records the original reviewed baseline.
 
@@ -248,7 +248,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F08 (invalid t-statistic guard).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F09 (adjusted-price cache consistency).**
 
 The description below records the original reviewed baseline.
 
@@ -298,7 +298,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F08 (invalid t-statistic guard).**
+**Next unresolved finding: F09 (adjusted-price cache consistency).**
 
 The description below records the original reviewed baseline.
 
@@ -343,7 +343,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F08 (invalid t-statistic guard).**
+**Next unresolved finding: F09 (adjusted-price cache consistency).**
 
 The description below records the original reviewed baseline.
 
@@ -360,6 +360,38 @@ There is a second timing issue: `_price_asof` includes the close at the entry ti
 **Regression:** loss before first candidate, no candidates for several sessions, overnight gaps, recovery later in a session, and future-close changes that must not alter an earlier entry decision. The current live guard re-enables entries after recovery, and existing backtest tests preserve that behavior. Keep this an explicit policy rather than inferring it from comments saying “for the rest of the day.”
 
 ### F08 — A t-statistic is not bounded by the square root of sample size
+
+**Status: FIXED** in v0.24.13 (2026-09-14).
+
+Removed the false t-statistic bound and relative near-constant variance cutoff.
+Finite nonconstant samples, including large positive/negative statistics and
+small nonzero variance, retain the one-sided result. Exact constants and
+insufficient observed samples use an explicit no-evidence convention.
+
+Bootstrap calibration requires sufficient original trades, at least two months,
+and nonconstant returns. Large finite tail statistics are preserved. Underfilled
+resamples and constant positive null resamples receive infinite upper bounds
+instead of being dropped or zeroed; the upper empirical quantile handles infinity
+without interpolation. An ineligible winner or infinite hurdle cannot establish
+significance, and reports identify uncalibrated evidence.
+
+No complete archived optimizer search panels were found for replay; the experiment
+table contains no rows and stored historical summaries are not full search panels.
+Old significance verdicts remain unvalidated. The policy, limitations and replay
+procedure are documented in [research significance](research-significance.md).
+
+**Validation:** 601 tests passed, including 36 new F08 regressions, with one
+existing dependency warning. Tests cover SciPy agreement, exact/near constants,
+negative statistics, bootstrap upper tails, insufficient trades/months, infinite
+quantiles, report explanations and numerical scale invariance end to end.
+Independent review reproduced and verified fixes for extreme-scale centering
+and degenerate single-report inconsistencies; no findings remain. The full suite
+ran with child console windows suppressed and isolated test databases. No market
+backtests, broker orders, or service restarts were performed.
+
+**Next unresolved finding: F09 (adjusted-price cache consistency).**
+
+The description below records the original reviewed baseline.
 
 **Location:** [research/significance.py](../research/significance.py), lines 127–140.
 
@@ -525,7 +557,7 @@ Only apply the formula for a valid positive stop distance; retain whole shares, 
 2. **Research correctness:** F04–F11 and F14–F16. Centralize execution time, session/feed configuration, historical price basis, risk settings, and strategy universe across annual, historical, and optimizer paths. Recompute baselines with immutable data/run metadata.
 3. **Risk reporting:** mark-to-market equity, net returns, actual maximum drawdown, exposure, turnover, gap losses, and capital utilization. Include cash and a same-universe buy-and-hold benchmark with comparable capital and data conventions.
 4. **Controlled experiments:** register a small hypothesis set, parameter ranges, costs, and acceptance criteria before running it. For already-used history, use rolling train/validation folds with boundaries that prevent overlapping trade labels from leaking information. Reserve genuinely unseen future paper results for final confirmation. Keep losing variants in the trial ledger.
-5. **Accept only supported changes:** compare paired baseline/candidate account returns; report uncertainty, effect size, worst folds, and dependence-aware bootstrap results after fixing F08. Both 2025 and 2026 improving remains a project requirement, but those reused years are not independent proof. Multiplicity correction addresses search selection, not erroneous fills, missing costs, or lookahead. [Harvey and Liu, False (and Missed) Discoveries in Financial Economics](https://arxiv.org/abs/2006.04269)
+5. **Accept only supported changes:** compare paired baseline/candidate account returns; report uncertainty, effect size, worst folds, and dependence-aware bootstrap results using the corrected F08 implementation. Both 2025 and 2026 improving remains a project requirement, but those reused years are not independent proof. Multiplicity correction addresses search selection, not erroneous fills, missing costs, or lookahead. [Harvey and Liu, False (and Missed) Discoveries in Financial Economics](https://arxiv.org/abs/2006.04269)
 
 For future code changes, update changelog/version and rerun targeted tests plus the suite. Restart affected services only through `scripts/manage.ps1` and verify identity and health. This document itself requires no service restart.
 
