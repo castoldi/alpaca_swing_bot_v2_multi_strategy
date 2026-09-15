@@ -328,6 +328,10 @@ _Changes landed but not yet released under a new version number go here._
 - Document the corrected inference conventions and historical revalidation
   procedure in `docs/research-significance.md`. No complete archived optimizer
   search panels were available for replay; old verdicts remain unvalidated.
+- **Review tracking:** add a current remediation summary, verified F07/F08 release
+  commit references, and F08 implementation/push dates; correct the stale F03
+  next-item pointer. Require future review fixes to update the review document
+  alongside the changelog in `AGENTS.md`. Documentation only; no runtime change.
 
 ## [0.24.12] - 2026-09-14
 

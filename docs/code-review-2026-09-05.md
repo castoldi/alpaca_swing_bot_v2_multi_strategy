@@ -4,7 +4,28 @@
 **Code baseline:** `0063eafe3978cb463154ae3a9c70928f3bced7c1`, version `0.24.1`  
 **Scope:** order execution, reconciliation, singleton management, market data, shared indicators, all eight registered strategies, portfolio backtests, and research evaluation. Dashboard and tax integration were inspected selectively; this is not a comprehensive security or tax audit.
 
-## Assessment
+## Current remediation status — updated 2026-09-15
+
+**F01–F08 are fixed; F09–F16 remain open. Next: F09, adjusted-price cache
+consistency.** Original findings and baseline reproductions are retained below;
+each fixed finding has a resolution and validation record.
+
+| Latest completed work | Release and commit | Validation |
+|---|---|---|
+| F07: session-based daily-loss accounting and observable valuation | v0.24.12, `6aa0daa`, pushed 2026-09-14 | 565 tests passed, including 21 new regressions; independent review complete |
+| F08: corrected t-statistics, bootstrap tails and numerical consistency | v0.24.13, `32d1f46`, pushed 2026-09-15 | 601 tests passed, including 36 new regressions; independent review complete |
+
+Both release commits and their build tags were verified on `origin/main`.
+One existing dependency deprecation warning remains. These fixes did not rerun
+market backtests, regenerate saved reports, place orders, or require service
+restarts. Old significance verdicts remain unvalidated because complete saved
+optimizer search panels were unavailable.
+
+Update this summary and the relevant finding's resolution with each follow-up
+fix: status, release, work completed, verification evidence, remaining limitations,
+and the next unresolved item. Record the release commit once it is available.
+
+## Original assessment — 2026-09-05 baseline
 
 Fix execution ownership and protective-order lifecycle first. Repair the simulator and statistical evaluation before using existing performance rankings to select or tune a strategy. The code has useful safeguards, but several current results describe behavior the running bot cannot reproduce.
 
@@ -20,7 +41,7 @@ P1 means address before relying on the affected execution or research result. P2
 |---|---|---|---|
 | F01 — **FIXED** | P1 | Filled brackets can lead to selling another owner's shares | Fixed in v0.24.3 (`b9dd867`); ownership regression tests |
 | F02 — **FIXED** | P1 | Multi-day protection uses DAY orders with no active repair path | Fixed in v0.24.5; Alpaca documentation + protection lifecycle regressions |
-| F03 — **FIXED** | P1 | Manager is not atomic and does not reliably establish project identity | Fixed in v0.24.6; process-control regressions |
+| F03 — **FIXED** | P1 | Manager is not atomic and does not reliably establish project identity | Fixed in v0.24.6–v0.24.7; process-control regressions |
 | F04 — **FIXED** | P1 | Bracket backtests record the wrong entry price and time | Fixed in v0.24.8; next-open accounting regressions |
 | F05 — **FIXED** | P1 | Bracket stop simulation fills through gaps at unavailable prices | Fixed in v0.24.9; execution-clock regressions |
 | F06 — **FIXED** | P1 | Earnings avoidance is missing live and wrong historically | Fixed in v0.24.11; observed-calendar and live/backtest regressions |
@@ -96,7 +117,8 @@ regular hours or at the stop price.
 **Validation:** 450 tests passed, including 35 new protection lifecycle cases;
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
-was submitted. **Next unresolved finding: F03 (singleton process management).**
+was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
+finding: F09 (adjusted-price cache consistency).**
 
 The description below records the original reviewed baseline.
 
@@ -317,6 +339,7 @@ The helper itself skips every earnings date beyond `df_end`, precisely the upcom
 ### F07 — The backtest daily-loss guard can forget today's losses
 
 **Status: FIXED** in v0.24.12 (2026-09-14).
+Release commit: `6aa0daaf79caaeb8b75b565278a63550032cfbc0`; push and build tag verified.
 
 The portfolio replays exits through the previous XNYS session close and values
 the remaining inventory before processing today's exits. This also reconstructs
@@ -361,7 +384,9 @@ There is a second timing issue: `_price_asof` includes the close at the entry ti
 
 ### F08 — A t-statistic is not bounded by the square root of sample size
 
-**Status: FIXED** in v0.24.13 (2026-09-14).
+**Status: FIXED** in v0.24.13. Implemented and tested 2026-09-14;
+committed and pushed 2026-09-15 as `32d1f469b346b7279316ce74e4bcc1544ca4677a`.
+Release push and build tag verified.
 
 Removed the false t-statistic bound and relative near-constant variance cutoff.
 Finite nonconstant samples, including large positive/negative statistics and

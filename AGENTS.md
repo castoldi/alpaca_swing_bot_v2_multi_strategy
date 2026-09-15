@@ -128,6 +128,10 @@ alpaca_swing_bot_v2_multi_strategy/
 
 1. **Record it in `CHANGELOG.md`.** Add bullet(s) under the current version's
    `### Added/Fixed/Changed`. Nothing ships undocumented.
+   For work addressing `docs/code-review-2026-09-05.md`, also update that
+   document's current-status summary, finding status, resolution, validation
+   evidence, remaining limitations, and next unresolved item. Record the release
+   commit when available; keep completed fixes and outstanding work distinguishable.
 2. **Bump the build version** when the change is user-visible or behavioural:
    `pwsh scripts\version.ps1 -Bump patch|minor|major` (updates `VERSION` and
    scaffolds a dated `CHANGELOG.md` section to fill in). The semantic version
