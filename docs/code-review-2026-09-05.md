@@ -17,9 +17,9 @@ each fixed finding has a resolution and validation record.
 | F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14, `6894074`, pushed 2026-09-15 | 617 tests passed, including 16 new regressions; independent review complete |
 | F10: shared feed policy and persisted source metadata | v0.24.15, `ed97c78`, pushed 2026-09-15 | 631 tests passed, including 14 new cases; independent review complete |
 | F11: shared session-based holding period from actual fill | v0.24.16, `3546e87`, pushed 2026-09-16 | 664 tests passed, including 33 new cases; independent review complete |
-| F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17; publication verification pending | 690 tests passed, including 26 new cases; independent review complete |
+| F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17, `b495dba`, pushed 2026-09-16 | 690 tests passed, including 26 new cases; independent review complete |
 
-The F07/F08/F09/F10/F11 release commits and their build tags were verified on the remote.
+The F07/F08/F09/F10/F11/F12 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -604,7 +604,9 @@ The description below records the original reviewed baseline.
 
 ### F12 — Canceled partial entries retain requested shares
 
-**Status: FIXED** in v0.24.17 (2026-09-16). Publication verification pending.
+**Status: FIXED** in v0.24.17 (2026-09-16), release commit `b495dba`.
+Remote branch and tag `v0.24.17+build97-20260916-124034` were verified against
+the release commit.
 
 **Current-code reproduction:** earlier F01/F02 changes already corrected terminal
 partial entries on the ordinary bracket path. Two bypasses remained: pending

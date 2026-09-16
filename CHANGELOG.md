@@ -313,6 +313,8 @@ _Changes landed but not yet released under a new version number go here._
 
 ## [0.24.17] - 2026-09-16
 
+Release commit `b495dba`; remote branch and build97 tag verified.
+
 ### Fixed
 
 - **F12 — terminal partial entries:** refresh exact verified entry fills before
