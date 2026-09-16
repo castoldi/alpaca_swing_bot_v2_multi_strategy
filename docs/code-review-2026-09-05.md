@@ -6,8 +6,8 @@
 
 ## Current remediation status — updated 2026-09-16
 
-**F01–F12 are fixed; F13–F16 remain open. Next: F13, exit reconciliation
-after entry-processing errors.** Original findings and baseline reproductions are retained below;
+**F01–F13 are fixed; F14–F16 remain open. Next: F14, RSI handling
+for uninterrupted gains/losses and flat series.** Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
@@ -18,6 +18,7 @@ each fixed finding has a resolution and validation record.
 | F10: shared feed policy and persisted source metadata | v0.24.15, `ed97c78`, pushed 2026-09-15 | 631 tests passed, including 14 new cases; independent review complete |
 | F11: shared session-based holding period from actual fill | v0.24.16, `3546e87`, pushed 2026-09-16 | 664 tests passed, including 33 new cases; independent review complete |
 | F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17, `b495dba`, pushed 2026-09-16 | 690 tests passed, including 26 new cases; independent review complete |
+| F13: reconciliation independent of entry scan success | v0.24.18; release verification pending | 716 tests passed, including 26 new cases; independent review complete |
 
 The F07/F08/F09/F10/F11/F12 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
@@ -55,7 +56,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F10 — **FIXED** | P2 | Historical SIP and live IEX inputs do not match | Fixed in v0.24.15; shared configuration, provenance, access and signal comparison |
 | F11 — **FIXED** | P2 | Holding-period rules disagree across config, backtest, and live | Fixed in v0.24.16; shared session deadline and broker fill clock |
 | F12 — **FIXED** | P2 | Terminal partial entries retain the wrong quantity and basis | Fixed in v0.24.17; verified entry refresh before all reconciliation exits |
-| F13 | P2 | An entry-processing exception can skip all exit reconciliation | Fake pipeline reproduction |
+| F13 — **FIXED** | P2 | An entry-processing exception can skip all exit reconciliation | Fixed in v0.24.18; independent reconciliation and ticker failure isolation |
 | F14 | P2 | RSI treats an uninterrupted rise as neutral | Synthetic reproduction |
 | F15 | P2 | Optimizer tests a different timeframe/universe and ineffective parameters | Source trace |
 | F16 | P2 | Advertised strategy guards and parameters do not control the stated rules | Source + synthetic reproduction |
@@ -66,7 +67,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F13 is the next unresolved finding following the F12 resolution below.
+F14 is the next unresolved finding following the F13 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -122,7 +123,7 @@ regular hours or at the stop price.
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
 was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F13 (exit reconciliation after entry errors).**
+finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -209,7 +210,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F13 (exit reconciliation after entry errors).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -274,7 +275,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F13 (exit reconciliation after entry errors).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -324,7 +325,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+**Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -370,7 +371,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+**Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -418,7 +419,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+**Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -470,7 +471,7 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+**Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -529,7 +530,7 @@ The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
 source and lacks attributes needed for automatic minute execution; it was not
 validated end to end. Feed alignment does not resolve the remaining findings.
 
-**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+**Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -588,7 +589,7 @@ remain research approximations. Existing backtest reports were not regenerated
 or retuned; their performance claims require re-evaluation after these fixes.
 Detailed policy: [holding-period policy](holding-period.md).
 
-**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+**Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -651,9 +652,9 @@ still block new exit/protection actions until settlement is verified. Incomplete
 or conflicting broker evidence can defer reconciliation and requires investigation;
 this change does not relax protection-identity requirements. Missing broker fill
 timestamps remain unknown under F11's policy. Historical closed records are not
-rewritten and saved market backtests were not rerun. F13 remains separate work.
+rewritten and saved market backtests were not rerun. F13 was subsequently fixed below.
 
-**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+**Next unresolved finding: F14 (RSI edge cases).**
 
 The description below records the original reviewed baseline.
 
@@ -668,6 +669,53 @@ The description below records the original reviewed baseline.
 **Regression:** canceled and expired partial entries followed by disposal reconcile correct basis, quantity, $18 gross P&L, and closed status. Repeated updates must be idempotent.
 
 ### F13 — Entry exceptions can bypass risk management
+
+**Status: FIXED** in v0.24.18 (2026-09-16). Release verification pending.
+
+**Current-code reproduction:** 21 failing cases confirmed that exceptions escaping
+fetching, completed-bar preparation, indicators, entry signals or entry setup
+left existing exits/protection untouched. An error notification exception also
+prevented the run from being finalized. The successful-cycle control passed.
+
+**Resolution:** isolate unexpected entry errors per ticker and execute normal
+broker reconciliation in a separate guarded phase, even if entry setup or the
+scan fails. Later valid tickers may still be scanned. If an exception escapes
+submission recovery after durable intent exists, further buys are disabled for
+that cycle so potentially stale sizing capacity cannot be reused. Existing
+submission recovery, ownership checks and per-trade exit guards are retained.
+
+Failed ticker frames are removed from the signal cache. Signal exits require
+usable completed data; absent data defers the signal decision while existing
+protection checks continue. Pending fills, durable exits, eligible time stops
+and protection repairs do not depend on successful entry scanning. Phase/ticker
+errors are accumulated for the run record; reporting happens after reconciliation
+and notification failure cannot bypass run finalization.
+
+**Validation:** all **716 tests passed**, including **26 new F13 cases**, with
+one existing `websockets.legacy` deprecation warning. Independent review reran
+the 26 cases and found no actionable issues. The regressions use real reconciliation
+and isolated SQLite with simulated broker/data clients: pending-fill accounting,
+eligible time exits, protection repair, missing daily signal data, repeated-cycle
+idempotency, entry setup errors, notification failures, valid later buys versus
+uncertain submission capacity, corrupt frame eviction and successful runs.
+Full-suite subprocesses were windowless; no test orders went to the broker.
+
+**Activation:** saved and integrity-checked
+`run/backups/before-f13-20260916-174855.db`, then restarted the bot through
+`scripts/manage.ps1`. Final status: one HEALTHY bot and one HEALTHY dashboard,
+HTTP 200, database integrity OK, and four open tracked positions retained.
+The bot retains ensemble, a 30-minute interval and IEX. Dashboard code was
+unchanged and did not require a restart. Dashboard: http://192.168.0.191:8004.
+
+**Limits:** this isolates exceptions; it does not add timeouts or bypass unavailable
+broker/database evidence. A blocked call or process interruption can still delay
+a cycle. Existing per-trade reconciliation guards continue to defer unsafe actions;
+missing signal data never authorizes an exit. No strategy rules, holding-period
+policy, broker ownership checks or saved backtest reports were changed.
+
+**Next unresolved finding: F14 (RSI edge cases).**
+
+The description below records the original reviewed baseline.
 
 **Location:** [bot.py](../bot.py), lines 668–678 and 977–990.
 

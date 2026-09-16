@@ -697,7 +697,14 @@ def run_once(strategy: StrategyType) -> int:
 
     orders_placed = 0
     trades_found = 0
-    error = None
+    errors: list[str] = []
+    tc = None
+
+    def record_error(phase: str, exc: Exception) -> None:
+        message = f"{phase}: {exc}"
+        errors.append(message)
+        log.error("Bot run failed — %s", message)
+
     frames: dict[str, pd.DataFrame] = {}
 
     try:
@@ -709,340 +716,365 @@ def run_once(strategy: StrategyType) -> int:
         # A strategy scoped to its own instruments (e.g. tqqq_momentum) trades
         # only those; everything else trades the shared universe.
         for ticker in strategy_universe(strat_obj, TICKERS):
-            log.info("Checking %s...", ticker)
-            df = fetch_bars(
-                ticker, days=PARAMS.history_days, timeframe=strat_obj.timeframe
-            )
-            df = data_feed.completed_bars(df, strat_obj.timeframe)
-            if df.empty or len(df) < 60:
-                log.warning("%s: insufficient data (got %d bars)", ticker, len(df))
-                continue
-
-            df = add_indicators(df, PARAMS)
-            if strat_name in SKIP_EARNINGS_STRATEGIES:
-                try:
-                    df = add_earnings_filter(df, ticker, PARAMS, live=True)
-                except Exception as exc:
-                    # Calendar/storage failures must suppress this signal,
-                    # while leaving other strategies and exit reconciliation running.
-                    log.warning('%s: earnings policy unavailable (%s)', ticker, type(exc).__name__)
-                    df['near_earnings'] = True
-                    df['earnings_status'] = 'unknown'
-            frames[ticker] = df
-            idx = len(df) - 1
-
-            # Check for entry signal
-            sig = strat_obj.check_entry(df, idx, PARAMS)
-            if sig is not None:
-                trades_found += 1
-                if strat_obj.has_take_profit:
-                    log.info("  SIGNAL: %s entry at $%.2f (SL $%.2f / TP $%.2f)",
-                             ticker, sig.entry_price, sig.stop_loss, sig.take_profit)
-                else:
-                    log.info("  SIGNAL: %s entry at $%.2f (cross exit / emergency stop)",
-                             ticker, sig.entry_price)
-                bot_hooks.log_signal(sig, ticker, strat_name)
-
-                # Only enter if the nearest target (TP1) is reachable within ~2 trading days
-                if (strat_obj.has_take_profit and
-                        not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4)):
-                    log.info("  TP1 $%.2f not reachable (ATR=%.2f) — skipping",
-                             sig.tp1, sig.atr)
+            entry_db_id = None
+            try:
+                log.info("Checking %s...", ticker)
+                df = fetch_bars(
+                    ticker, days=PARAMS.history_days, timeframe=strat_obj.timeframe
+                )
+                df = data_feed.completed_bars(df, strat_obj.timeframe)
+                if df.empty or len(df) < 60:
+                    log.warning("%s: insufficient data (got %d bars)", ticker, len(df))
                     continue
 
-                # Skip if THIS bot already has an open trade for the ticker.
-                if db_mod.get_open_trade(ticker, strat_name):
-                    log.info("  Bot already holds an open %s trade — skipping", ticker)
-                    continue
+                df = add_indicators(df, PARAMS)
+                if strat_name in SKIP_EARNINGS_STRATEGIES:
+                    try:
+                        df = add_earnings_filter(df, ticker, PARAMS, live=True)
+                    except Exception as exc:
+                        # Calendar/storage failures must suppress this signal,
+                        # while leaving other strategies and exit reconciliation running.
+                        log.warning('%s: earnings policy unavailable (%s)', ticker, type(exc).__name__)
+                        df['near_earnings'] = True
+                        df['earnings_status'] = 'unknown'
+                frames[ticker] = df
+                idx = len(df) - 1
 
-                # Year-end wash-sale guard. Only active from December: an
-                # intra-year wash sale defers a loss into the replacement lot's
-                # basis and is recovered on the next sale, but one still open on
-                # 31 December pushes the deduction into the next tax year.
-                tax_block = _tax_entry_block(ticker)
-                if tax_block:
-                    log.info("  %s", tax_block)
-                    continue
-
-                # Also avoid stacking on top of any pre-existing position (e.g. one a
-                # human opened). Only a definitive 404 proves "no position"; any
-                # other failure (network, outage) is unknown state, so skip the
-                # entry rather than risk doubling exposure.
-                try:
-                    open_pos = tc.get_open_position(ticker)
-                except Exception as pos_exc:
-                    if _exception_status_code(pos_exc) == 404:
-                        open_pos = None
-                    else:
-                        log.warning(
-                            "  %s: position lookup failed (%s) — skipping entry",
-                            ticker,
-                            pos_exc,
-                        )
-                        continue
-                if open_pos is not None:
-                    log.info("  A %s position already exists (qty %s) not tracked by the bot — skipping",
-                             ticker, open_pos.qty)
-                    continue
-
-                # Persist ownership intent before any broker submission.
-                entry_db_id = None
-                entry_coid = None
-                entry_accepted = False
-
-                # Place order
-                try:
-                    if sizing_state is None:
-                        log.info("  %s: entry disabled — no valid account sizing snapshot", ticker)
-                        continue
-                    if sizing_state.remaining_slots < 1:
-                        log.info(
-                            "  %s: entry skipped — %d-position account limit reached",
-                            ticker,
-                            PARAMS.max_concurrent_positions,
-                        )
-                        continue
-
-                    snapshot = data_feed.fetch_snapshots([ticker]).get(ticker, {})
-                    market_ref = float(snapshot.get("price") or 0)
-                    if not math.isfinite(market_ref) or market_ref <= 0:
-                        log.warning("  %s: no valid live price — skipping protected entry", ticker)
-                        continue
-
-                    # The SL/TP geometry was computed off the signal bar close.
-                    # If the live price has already drifted away, that geometry
-                    # no longer matches the backtest — skip rather than chase.
-                    if strat_obj.has_take_profit and sig.entry_price > 0:
-                        slippage = abs(market_ref - sig.entry_price) / sig.entry_price
-                        if slippage > PARAMS.entry_max_slippage_pct:
-                            log.info(
-                                "  %s: live $%.2f is %.2f%% from signal $%.2f "
-                                "(max %.2f%%) — skipping entry",
-                                ticker,
-                                market_ref,
-                                slippage * 100,
-                                sig.entry_price,
-                                PARAMS.entry_max_slippage_pct * 100,
-                            )
-                            continue
-
-                    is_leveraged = ticker in set(LEVERAGED_TICKERS)
-                    headroom = (
-                        leveraged_headroom(
-                            sizing_state.equity,
-                            sizing_state.leveraged_notional,
-                            PARAMS.max_leveraged_exposure_pct,
-                        )
-                        if is_leveraged
-                        else None
-                    )
-                    size = whole_share_position_size(
-                        sizing_state.equity,
-                        sizing_state.remaining_cash,
-                        market_ref,
-                        PARAMS.position_size_pct,
-                        max_notional=headroom,
-                    )
-                    qty = size.quantity
-                    if qty < 1:
-                        if size.reason == "group_exposure_cap":
-                            log.info(
-                                "  %s: entry skipped — leveraged exposure cap "
-                                "(%.0f%% of equity) leaves $%.2f headroom, "
-                                "below one share @ $%.2f",
-                                ticker,
-                                PARAMS.max_leveraged_exposure_pct * 100,
-                                headroom,
-                                market_ref,
-                            )
-                            continue
-                        log.info(
-                            "  %.0f%% equity budget $%.2f buys <1 whole share of "
-                            "%s @ $%.2f — skipping (no order, no notify)",
-                            PARAMS.position_size_pct * 100,
-                            size.budget,
-                            ticker,
-                            market_ref,
-                        )
-                        continue
-
-                    log.info(
-                        "  Sizing %s: equity $%.2f, %.0f%% budget $%.2f, "
-                        "cash $%.2f, ref $%.2f -> %d shares ($%.2f)",
-                        ticker,
-                        sizing_state.equity,
-                        PARAMS.position_size_pct * 100,
-                        sizing_state.equity * PARAMS.position_size_pct,
-                        sizing_state.remaining_cash,
-                        market_ref,
-                        qty,
-                        size.notional,
-                    )
-
-                    if strat_obj.exit_mode == "signal_with_stop":
-                        sig.stop_loss = market_ref * (
-                            1.0 - PARAMS.sma_cross_stop_loss_pct
-                        )
-
-                    entry_coid = _make_client_order_id(
-                        strat_name, ticker, "entry"
-                    )
-                    entry_db_id = db_mod.save_trade(
-                        ticker,
-                        strat_name,
-                        str(sig.date),
-                        sig.entry_price,
-                        sig.stop_loss,
-                        sig.tp3,
-                        shares=qty,
-                        client_order_id=entry_coid,
-                        alpaca_order_id=None,
-                        entry_state="pending_submission",
-                    )
-
-                    def record_accepted_entry(accepted_info: dict) -> None:
-                        nonlocal entry_accepted
-                        entry_accepted = True
-                        sizing_state.remaining_cash = max(
-                            0.0, sizing_state.remaining_cash - size.notional
-                        )
-                        sizing_state.remaining_slots -= 1
-                        if is_leveraged:
-                            # Reserve within this cycle too: correlated ETFs
-                            # signal together, so later tickers in the same
-                            # pass must see this entry's exposure.
-                            sizing_state.leveraged_notional += size.notional
-                        if entry_db_id is not None:
-                            try:
-                                db_mod.set_entry_order_id(
-                                    entry_db_id, accepted_info["alpaca_id"]
-                                )
-                            except Exception as update_exc:
-                                # The durable client id is sufficient for
-                                # ownership/recovery even if this enrichment
-                                # fails; keep the protected entry tracked.
-                                log.warning(
-                                    "  %s entry id update failed; recovering by client id %s: %s",
-                                    ticker,
-                                    entry_coid,
-                                    update_exc,
-                                )
-
-                    if strat_obj.exit_mode == "signal_with_stop":
-                        info = _place_stop_only_entry(
-                            tc,
-                            ticker,
-                            qty,
-                            sig.stop_loss,
-                            strat_name,
-                            entry_coid=entry_coid,
-                        )
-                        record_accepted_entry(info)
-                        coid = info["entry_coid"]
-                        log.info("  Stop-only OTO: %s x%d (SL $%.2f) [coid=%s]",
-                                 ticker, qty, sig.stop_loss, coid)
-                    else:
-                        # One protected bracket (TP3 + SL) per entry, whatever the
-                        # quantity. Alpaca rejects extra concurrent sell legs
-                        # (403 40310000), and the single bracket also backtested
-                        # better than the 3-leg scale-out across 2024-2026.
-                        info = _place_single_bracket_entry(
-                            tc,
-                            ticker,
-                            qty,
-                            sig,
-                            strat_name,
-                            entry_coid=entry_coid,
-                        )
-                        record_accepted_entry(info)
-                        coid = info["entry_coid"]
-                        log.info("  Bracket entry: %s x%d @ ~$%.2f (SL $%.2f / TP $%.2f) [coid=%s]",
-                                 ticker, qty, market_ref, sig.stop_loss, sig.tp3, coid)
-
-                    orders_placed += 1
-                    _record_entry_fill(tc, entry_db_id, info.get("alpaca_id"))
+                # Check for entry signal
+                sig = strat_obj.check_entry(df, idx, PARAMS)
+                if sig is not None:
+                    trades_found += 1
                     if strat_obj.has_take_profit:
-                        body = (f"Entry ~${market_ref:.2f} (signal ${sig.entry_price:.2f})\n"
-                                f"SL ${sig.stop_loss:.2f}\nTP ${sig.tp3:.2f}\n"
-                                f"Qty {qty}\nRef {coid}")
+                        log.info("  SIGNAL: %s entry at $%.2f (SL $%.2f / TP $%.2f)",
+                                 ticker, sig.entry_price, sig.stop_loss, sig.take_profit)
                     else:
-                        body = (f"Daily SMA(50) cross entry ~${market_ref:.2f}\n"
-                                f"SL ${sig.stop_loss:.2f}\nQty {qty}\nRef {coid}")
-                    send_notification(f"Bot V2: {ticker} entry ({strat_name})", body)
+                        log.info("  SIGNAL: %s entry at $%.2f (cross exit / emergency stop)",
+                                 ticker, sig.entry_price)
+                    bot_hooks.log_signal(sig, ticker, strat_name)
 
-                except Exception as e:
-                    if entry_db_id is not None and not entry_accepted:
-                        resolution, recovered = _lookup_entry_by_client_id(
-                            tc, entry_coid
-                        )
-                        if resolution == "found":
-                            recovered_info = {
-                                "entry_coid": entry_coid,
-                                "alpaca_id": str(
-                                    getattr(recovered, "id", "") or ""
-                                ),
-                            }
-                            record_accepted_entry(recovered_info)
-                            orders_placed += 1
-                            log.error(
-                                "  %s submit response was ambiguous, but Alpaca accepted %s; durable entry adopted",
-                                ticker,
-                                recovered_info["alpaca_id"] or entry_coid,
-                            )
-                            send_notification(
-                                f"Bot V2: {ticker} entry recovered ({strat_name})",
-                                f"Alpaca accepted the protected entry despite a submit error.\n"
-                                f"Qty {qty}\nRef {entry_coid}\nError: {e}",
-                            )
-                            _reconcile_and_exit(strat_name, frames)
-                        elif _is_definite_submission_rejection(e):
-                            try:
-                                db_mod.close_trade(
-                                    entry_db_id,
-                                    datetime.now(timezone.utc).isoformat(),
-                                    sig.entry_price,
-                                    "entry_not_submitted",
-                                    0,
-                                    0.0,
-                                    0.0,
-                                    0.0,
-                                    exit_client_order_id=entry_coid,
-                                )
-                            except Exception as close_exc:
-                                log.error(
-                                    "  Failed to close rejected entry intent for %s: %s",
-                                    ticker,
-                                    close_exc,
-                                )
+                    # Only enter if the nearest target (TP1) is reachable within ~2 trading days
+                    if (strat_obj.has_take_profit and
+                            not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4)):
+                        log.info("  TP1 $%.2f not reachable (ATR=%.2f) — skipping",
+                                 sig.tp1, sig.atr)
+                        continue
+
+                    # Skip if THIS bot already has an open trade for the ticker.
+                    if db_mod.get_open_trade(ticker, strat_name):
+                        log.info("  Bot already holds an open %s trade — skipping", ticker)
+                        continue
+
+                    # Year-end wash-sale guard. Only active from December: an
+                    # intra-year wash sale defers a loss into the replacement lot's
+                    # basis and is recovered on the next sale, but one still open on
+                    # 31 December pushes the deduction into the next tax year.
+                    tax_block = _tax_entry_block(ticker)
+                    if tax_block:
+                        log.info("  %s", tax_block)
+                        continue
+
+                    # Also avoid stacking on top of any pre-existing position (e.g. one a
+                    # human opened). Only a definitive 404 proves "no position"; any
+                    # other failure (network, outage) is unknown state, so skip the
+                    # entry rather than risk doubling exposure.
+                    try:
+                        open_pos = tc.get_open_position(ticker)
+                    except Exception as pos_exc:
+                        if _exception_status_code(pos_exc) == 404:
+                            open_pos = None
                         else:
-                            sizing_state.remaining_cash = 0.0
-                            sizing_state.remaining_slots = 0
-                            log.error(
-                                "  %s submission remains ambiguous (%s); intent stays pending and later entries are disabled",
+                            log.warning(
+                                "  %s: position lookup failed (%s) — skipping entry",
                                 ticker,
-                                resolution,
+                                pos_exc,
                             )
-                            _reconcile_and_exit(strat_name, frames)
-                    log.error("  Order failed for %s: %s", ticker, e)
-            else:
-                log.info("  No signal for %s", ticker)
+                            continue
+                    if open_pos is not None:
+                        log.info("  A %s position already exists (qty %s) not tracked by the bot — skipping",
+                                 ticker, open_pos.qty)
+                        continue
 
-        # Reconcile + apply exits — only on positions THIS bot opened
+                    # Persist ownership intent before any broker submission.
+                    entry_db_id = None
+                    entry_coid = None
+                    entry_accepted = False
+
+                    # Place order
+                    try:
+                        if sizing_state is None:
+                            log.info("  %s: entry disabled — no valid account sizing snapshot", ticker)
+                            continue
+                        if sizing_state.remaining_slots < 1:
+                            log.info(
+                                "  %s: entry skipped — %d-position account limit reached",
+                                ticker,
+                                PARAMS.max_concurrent_positions,
+                            )
+                            continue
+
+                        snapshot = data_feed.fetch_snapshots([ticker]).get(ticker, {})
+                        market_ref = float(snapshot.get("price") or 0)
+                        if not math.isfinite(market_ref) or market_ref <= 0:
+                            log.warning("  %s: no valid live price — skipping protected entry", ticker)
+                            continue
+
+                        # The SL/TP geometry was computed off the signal bar close.
+                        # If the live price has already drifted away, that geometry
+                        # no longer matches the backtest — skip rather than chase.
+                        if strat_obj.has_take_profit and sig.entry_price > 0:
+                            slippage = abs(market_ref - sig.entry_price) / sig.entry_price
+                            if slippage > PARAMS.entry_max_slippage_pct:
+                                log.info(
+                                    "  %s: live $%.2f is %.2f%% from signal $%.2f "
+                                    "(max %.2f%%) — skipping entry",
+                                    ticker,
+                                    market_ref,
+                                    slippage * 100,
+                                    sig.entry_price,
+                                    PARAMS.entry_max_slippage_pct * 100,
+                                )
+                                continue
+
+                        is_leveraged = ticker in set(LEVERAGED_TICKERS)
+                        headroom = (
+                            leveraged_headroom(
+                                sizing_state.equity,
+                                sizing_state.leveraged_notional,
+                                PARAMS.max_leveraged_exposure_pct,
+                            )
+                            if is_leveraged
+                            else None
+                        )
+                        size = whole_share_position_size(
+                            sizing_state.equity,
+                            sizing_state.remaining_cash,
+                            market_ref,
+                            PARAMS.position_size_pct,
+                            max_notional=headroom,
+                        )
+                        qty = size.quantity
+                        if qty < 1:
+                            if size.reason == "group_exposure_cap":
+                                log.info(
+                                    "  %s: entry skipped — leveraged exposure cap "
+                                    "(%.0f%% of equity) leaves $%.2f headroom, "
+                                    "below one share @ $%.2f",
+                                    ticker,
+                                    PARAMS.max_leveraged_exposure_pct * 100,
+                                    headroom,
+                                    market_ref,
+                                )
+                                continue
+                            log.info(
+                                "  %.0f%% equity budget $%.2f buys <1 whole share of "
+                                "%s @ $%.2f — skipping (no order, no notify)",
+                                PARAMS.position_size_pct * 100,
+                                size.budget,
+                                ticker,
+                                market_ref,
+                            )
+                            continue
+
+                        log.info(
+                            "  Sizing %s: equity $%.2f, %.0f%% budget $%.2f, "
+                            "cash $%.2f, ref $%.2f -> %d shares ($%.2f)",
+                            ticker,
+                            sizing_state.equity,
+                            PARAMS.position_size_pct * 100,
+                            sizing_state.equity * PARAMS.position_size_pct,
+                            sizing_state.remaining_cash,
+                            market_ref,
+                            qty,
+                            size.notional,
+                        )
+
+                        if strat_obj.exit_mode == "signal_with_stop":
+                            sig.stop_loss = market_ref * (
+                                1.0 - PARAMS.sma_cross_stop_loss_pct
+                            )
+
+                        entry_coid = _make_client_order_id(
+                            strat_name, ticker, "entry"
+                        )
+                        entry_db_id = db_mod.save_trade(
+                            ticker,
+                            strat_name,
+                            str(sig.date),
+                            sig.entry_price,
+                            sig.stop_loss,
+                            sig.tp3,
+                            shares=qty,
+                            client_order_id=entry_coid,
+                            alpaca_order_id=None,
+                            entry_state="pending_submission",
+                        )
+
+                        def record_accepted_entry(accepted_info: dict) -> None:
+                            nonlocal entry_accepted
+                            entry_accepted = True
+                            sizing_state.remaining_cash = max(
+                                0.0, sizing_state.remaining_cash - size.notional
+                            )
+                            sizing_state.remaining_slots -= 1
+                            if is_leveraged:
+                                # Reserve within this cycle too: correlated ETFs
+                                # signal together, so later tickers in the same
+                                # pass must see this entry's exposure.
+                                sizing_state.leveraged_notional += size.notional
+                            if entry_db_id is not None:
+                                try:
+                                    db_mod.set_entry_order_id(
+                                        entry_db_id, accepted_info["alpaca_id"]
+                                    )
+                                except Exception as update_exc:
+                                    # The durable client id is sufficient for
+                                    # ownership/recovery even if this enrichment
+                                    # fails; keep the protected entry tracked.
+                                    log.warning(
+                                        "  %s entry id update failed; recovering by client id %s: %s",
+                                        ticker,
+                                        entry_coid,
+                                        update_exc,
+                                    )
+
+                        if strat_obj.exit_mode == "signal_with_stop":
+                            info = _place_stop_only_entry(
+                                tc,
+                                ticker,
+                                qty,
+                                sig.stop_loss,
+                                strat_name,
+                                entry_coid=entry_coid,
+                            )
+                            record_accepted_entry(info)
+                            coid = info["entry_coid"]
+                            log.info("  Stop-only OTO: %s x%d (SL $%.2f) [coid=%s]",
+                                     ticker, qty, sig.stop_loss, coid)
+                        else:
+                            # One protected bracket (TP3 + SL) per entry, whatever the
+                            # quantity. Alpaca rejects extra concurrent sell legs
+                            # (403 40310000), and the single bracket also backtested
+                            # better than the 3-leg scale-out across 2024-2026.
+                            info = _place_single_bracket_entry(
+                                tc,
+                                ticker,
+                                qty,
+                                sig,
+                                strat_name,
+                                entry_coid=entry_coid,
+                            )
+                            record_accepted_entry(info)
+                            coid = info["entry_coid"]
+                            log.info("  Bracket entry: %s x%d @ ~$%.2f (SL $%.2f / TP $%.2f) [coid=%s]",
+                                     ticker, qty, market_ref, sig.stop_loss, sig.tp3, coid)
+
+                        orders_placed += 1
+                        _record_entry_fill(tc, entry_db_id, info.get("alpaca_id"))
+                        if strat_obj.has_take_profit:
+                            body = (f"Entry ~${market_ref:.2f} (signal ${sig.entry_price:.2f})\n"
+                                    f"SL ${sig.stop_loss:.2f}\nTP ${sig.tp3:.2f}\n"
+                                    f"Qty {qty}\nRef {coid}")
+                        else:
+                            body = (f"Daily SMA(50) cross entry ~${market_ref:.2f}\n"
+                                    f"SL ${sig.stop_loss:.2f}\nQty {qty}\nRef {coid}")
+                        send_notification(f"Bot V2: {ticker} entry ({strat_name})", body)
+
+                    except Exception as e:
+                        if entry_db_id is not None and not entry_accepted:
+                            resolution, recovered = _lookup_entry_by_client_id(
+                                tc, entry_coid
+                            )
+                            if resolution == "found":
+                                recovered_info = {
+                                    "entry_coid": entry_coid,
+                                    "alpaca_id": str(
+                                        getattr(recovered, "id", "") or ""
+                                    ),
+                                }
+                                record_accepted_entry(recovered_info)
+                                orders_placed += 1
+                                log.error(
+                                    "  %s submit response was ambiguous, but Alpaca accepted %s; durable entry adopted",
+                                    ticker,
+                                    recovered_info["alpaca_id"] or entry_coid,
+                                )
+                                send_notification(
+                                    f"Bot V2: {ticker} entry recovered ({strat_name})",
+                                    f"Alpaca accepted the protected entry despite a submit error.\n"
+                                    f"Qty {qty}\nRef {entry_coid}\nError: {e}",
+                                )
+                                _reconcile_and_exit(strat_name, frames)
+                            elif _is_definite_submission_rejection(e):
+                                try:
+                                    db_mod.close_trade(
+                                        entry_db_id,
+                                        datetime.now(timezone.utc).isoformat(),
+                                        sig.entry_price,
+                                        "entry_not_submitted",
+                                        0,
+                                        0.0,
+                                        0.0,
+                                        0.0,
+                                        exit_client_order_id=entry_coid,
+                                    )
+                                except Exception as close_exc:
+                                    log.error(
+                                        "  Failed to close rejected entry intent for %s: %s",
+                                        ticker,
+                                        close_exc,
+                                    )
+                            else:
+                                sizing_state.remaining_cash = 0.0
+                                sizing_state.remaining_slots = 0
+                                log.error(
+                                    "  %s submission remains ambiguous (%s); intent stays pending and later entries are disabled",
+                                    ticker,
+                                    resolution,
+                                )
+                                _reconcile_and_exit(strat_name, frames)
+                        log.error("  Order failed for %s: %s", ticker, e)
+                else:
+                    log.info("  No signal for %s", ticker)
+            except Exception as exc:
+                # A failed/mutated frame is not evidence for a signal exit.
+                frames.pop(ticker, None)
+                if entry_db_id is not None:
+                    # An escaped submission/recovery failure may have consumed
+                    # cash or a slot. Reconciliation owns recovery; do not buy
+                    # again using this cycle's potentially stale capacity.
+                    sizing_state = None
+                record_error(f"{ticker} entry scan", exc)
+
+    except Exception as exc:
+        record_error("Entry setup/scan", exc)
+
+    # Entry data and submission errors must never starve existing holdings.
+    # This phase retains its own per-trade ownership and idempotency guards.
+    try:
         _reconcile_and_exit(strat_name, frames)
+    except Exception as exc:
+        record_error("Reconciliation", exc)
 
+    try:
         # Tax records are recomputed over the whole history because a new
         # purchase can retroactively wash an earlier loss.
         _refresh_tax_records()
 
         # Confirm our own positions with the broker and append a point to the
         # bot's local equity curve. Bookkeeping only — never places an order.
-        _record_balance_snapshot(strat_name, tc)
+        if tc is not None:
+            _record_balance_snapshot(strat_name, tc)
 
-    except Exception as e:
-        error = str(e)
-        log.error("Bot run failed: %s", e)
-        send_notification("Bot V2 Error", f"{e}\n\nRun: {datetime.now().isoformat()}")
+    except Exception as exc:
+        record_error("Bookkeeping", exc)
 
+    # Report only after risk management has had its opportunity to run.
+    if errors:
+        try:
+            send_notification("Bot V2 Error", "\n".join(errors) + f"\n\nRun: {datetime.now().isoformat()}")
+        except Exception as exc:
+            record_error("Error notification", exc)
+    error = "\n".join(errors) or None
     run_status = "error" if error else "done"
     db_mod.finish_bot_run(run_id, trades_found, orders_placed, error)
     log.info("Bot V2 run complete: %d signals, %d orders — status=%s", trades_found, orders_placed, run_status)

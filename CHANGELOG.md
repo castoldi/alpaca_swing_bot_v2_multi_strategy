@@ -311,6 +311,35 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.18] - 2026-09-16
+
+### Fixed
+
+- **F13 — entry failures no longer skip existing holdings:** isolate unexpected
+  entry-scan exceptions by ticker and attempt broker reconciliation independently
+  of entry setup or scan success. Preserve per-trade ownership, protection,
+  partial-fill and durable-exit safeguards.
+- Discard a failed ticker's cached frame before signal exits. An escaped failure
+  after durable entry intent disables later buys for that cycle, preventing use
+  of potentially stale cash/position capacity while reconciliation handles recovery.
+- Record phase/ticker errors and report them after reconciliation. Error-notification
+  failures cannot prevent run completion; affected runs retain error status.
+
+### Added
+
+- 26 offline F13 regressions covering failed data/indicators/signals, pending fills,
+  time exits, residual protection, missing signal data, repeated reconciliation,
+  setup/notification failures, later valid entries, uncertain submission recovery,
+  corrupted frames and successful-cycle behavior. Review and release evidence is
+  maintained in `docs/code-review-2026-09-05.md`.
+- Validation: **716 tests passed**, including **26 new F13 cases**; independent
+  review found no actionable issues. One existing dependency warning remains.
+- Backed up and integrity-checked the database, then restarted the bot via the
+  singleton manager. One healthy bot and dashboard, HTTP 200 and database integrity
+  OK; ensemble/30-minute/IEX settings and four open positions retained. The review
+  now records the resolution, evidence, limits and F14 as the next unresolved item.
+
 ## [0.24.17] - 2026-09-16
 
 Release commit `b495dba`; remote branch and build97 tag verified.
