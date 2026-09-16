@@ -456,12 +456,16 @@ def _record_entry_fill(
         except Exception:
             return
         avg = getattr(order, "filled_avg_price", None)
-        if _status_str(order) in ("filled", "closed") and avg is not None:
+        if _status_str(order) in ("filled", "closed", "canceled", "expired", "rejected"):
             try:
+                price = float(avg or 0)
+                qty = float(getattr(order, "filled_qty", 0) or 0)
+                if not (math.isfinite(price) and price > 0 and math.isfinite(qty) and qty > 0):
+                    return
                 db_mod.set_entry_fill(
                     trade_id,
-                    float(avg),
-                    float(getattr(order, "filled_qty", 0) or 0) or None,
+                    price,
+                    qty,
                     _entry_fill_timestamp(order),
                 )
             except Exception as exc:
@@ -481,30 +485,11 @@ def _entry_fill_timestamp(order) -> str | None:
 
 
 def _backfill_entry_fill(tc, trade: dict) -> None:
-    """Record the real entry fill during reconciliation if it is still missing."""
-    if trade.get("entry_filled_price") and trade.get("entry_filled_at"):
-        return
-    for order in _entry_order_candidates(tc, trade):
-        if _status_str(order) not in ("filled", "closed"):
-            continue
-        avg = getattr(order, "filled_avg_price", None)
-        qty = float(getattr(order, "filled_qty", 0) or 0)
-        if avg is None or qty <= 0:
-            continue
-        price = float(avg)
-        try:
-            filled_at = _entry_fill_timestamp(order)
-            db_mod.set_entry_fill(trade["id"], price, qty, filled_at)
-        except Exception as exc:
-            log.warning(
-                "  %s entry fill backfill failed: %s", trade["ticker"], exc
-            )
-            return
-        trade["entry_filled_price"] = price
-        trade["shares"] = qty
-        if filled_at is not None:
-            trade["entry_filled_at"] = filled_at
-        return
+    """Compatibility helper using the same verified terminal-entry refresh."""
+    try:
+        _reconcile_entry_fill(tc, trade)
+    except Exception as exc:
+        log.warning("  %s entry fill backfill failed: %s", trade["ticker"], exc)
 
 
 def _status_str(obj) -> str:
@@ -1180,6 +1165,11 @@ def _reconcile_and_exit(
         try:
             if not _resolve_pending_entry(tc, trade):
                 continue
+            # Every exit path needs actual terminal fills, including pending
+            # exits and signal-driven positions already absent at the broker.
+            # Unknown/unsettled ownership must not finalize or initiate a sell.
+            if _reconcile_entry_fill(tc, trade) is None:
+                continue
             try:
                 pos = tc.get_open_position(ticker)
             except Exception:
@@ -1731,6 +1721,49 @@ def _parse_timestamp(value):
         return None
 
 
+def _reconcile_entry_fill(tc, trade: dict):
+    """Refresh actual owned quantity/basis independently of protection children.
+
+    Return the verified terminal parent, or None after retiring a zero-fill
+    rejection. Unsettled/unverifiable entries raise and leave exit intent intact.
+    """
+    from alpaca.trading.requests import GetOrderByIdRequest
+
+    oid, coid = trade.get("alpaca_order_id"), trade.get("client_order_id")
+    if not oid or not coid or not str(coid).startswith(CLIENT_ORDER_PREFIX + "-"):
+        raise ValueError("missing owned entry references")
+    entry = tc.get_order_by_id(oid, filter=GetOrderByIdRequest(nested=True))
+    side = getattr(getattr(entry, "side", None), "value", getattr(entry, "side", None))
+    if (str(getattr(entry, "id", "")) != str(oid)
+            or getattr(entry, "client_order_id", None) != coid
+            or getattr(entry, "symbol", None) != trade["ticker"] or side != "buy"):
+        raise ValueError("broker entry does not match stored ownership")
+    if _status_str(entry) not in {"filled", "closed", "canceled", "expired", "rejected"}:
+        raise ValueError("entry quantity is still unsettled")
+    qty = float(entry.filled_qty)
+    price = float(entry.filled_avg_price or 0)
+    if qty == 0 and _status_str(entry) in {"canceled", "expired", "rejected"}:
+        if (trade.get("exit_alpaca_order_id") or trade.get("exit_client_order_id")
+                or trade.get("exit_intent_reason") or db_mod.get_exit_fill_totals(trade["id"])[0] > 0):
+            raise ValueError("zero-filled entry conflicts with exit evidence; reconciliation required")
+        db_mod.close_trade(
+            trade["id"], datetime.now(timezone.utc).isoformat(),
+            trade["entry_price"], "entry_not_filled", 0, 0.0, 0.0, 0.0,
+            exit_client_order_id=trade["client_order_id"],
+            exit_alpaca_order_id=trade["alpaca_order_id"],
+        )
+        return None
+    if not (math.isfinite(qty) and qty > 0 and math.isfinite(price) and price > 0):
+        raise ValueError("entry has no verified positive fill")
+    filled_at = _entry_fill_timestamp(entry)
+    db_mod.set_entry_fill(trade["id"], price, qty, filled_at)
+    trade.update(shares=qty, entry_filled_price=price)
+    if filled_at is not None:
+        trade["entry_filled_at"] = filled_at
+
+    return entry
+
+
 def _owned_bracket_orders(tc, trade: dict) -> list | None:
     """Read exact stored parents and their children; never infer from a symbol.
 
@@ -1761,26 +1794,9 @@ def _owned_bracket_orders(tc, trade: dict) -> list | None:
             trade[id_key] = str(oid)
         return result
 
-    entry = parent("alpaca_order_id", "client_order_id", "buy")
-    if _status_str(entry) not in {"filled", "closed", "canceled", "expired", "rejected"}:
-        raise ValueError("entry quantity is still unsettled")
-    qty = float(entry.filled_qty)
-    price = float(entry.filled_avg_price or 0)
-    if qty == 0 and _status_str(entry) in {"canceled", "expired", "rejected"}:
-        db_mod.close_trade(
-            trade["id"], datetime.now(timezone.utc).isoformat(),
-            trade["entry_price"], "entry_not_filled", 0, 0.0, 0.0, 0.0,
-            exit_client_order_id=trade["client_order_id"],
-            exit_alpaca_order_id=trade["alpaca_order_id"],
-        )
+    entry = _reconcile_entry_fill(tc, trade)
+    if entry is None:
         return None
-    if not (math.isfinite(qty) and qty > 0 and math.isfinite(price) and price > 0):
-        raise ValueError("entry has no verified positive fill")
-    filled_at = _entry_fill_timestamp(entry)
-    db_mod.set_entry_fill(trade["id"], price, qty, filled_at)
-    trade.update(shares=qty, entry_filled_price=price)
-    if filled_at is not None:
-        trade["entry_filled_at"] = filled_at
 
     linked = list(entry.legs or [])
     stop_only = REGISTRY[trade["strategy"]].exit_mode == "signal_with_stop"

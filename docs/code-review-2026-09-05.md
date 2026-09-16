@@ -6,8 +6,8 @@
 
 ## Current remediation status — updated 2026-09-16
 
-**F01–F11 are fixed; F12–F16 remain open. Next: F12, terminal partial-entry
-quantity and basis.** Original findings and baseline reproductions are retained below;
+**F01–F12 are fixed; F13–F16 remain open. Next: F13, exit reconciliation
+after entry-processing errors.** Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
@@ -17,6 +17,7 @@ each fixed finding has a resolution and validation record.
 | F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14, `6894074`, pushed 2026-09-15 | 617 tests passed, including 16 new regressions; independent review complete |
 | F10: shared feed policy and persisted source metadata | v0.24.15, `ed97c78`, pushed 2026-09-15 | 631 tests passed, including 14 new cases; independent review complete |
 | F11: shared session-based holding period from actual fill | v0.24.16, `3546e87`, pushed 2026-09-16 | 664 tests passed, including 33 new cases; independent review complete |
+| F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17; publication verification pending | 690 tests passed, including 26 new cases; independent review complete |
 
 The F07/F08/F09/F10/F11 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
@@ -53,7 +54,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F09 — **FIXED** | P2 | Adjusted cache can splice prices from different adjustment vintages | Fixed in v0.24.14; revision, rollback, concurrency and migration regressions |
 | F10 — **FIXED** | P2 | Historical SIP and live IEX inputs do not match | Fixed in v0.24.15; shared configuration, provenance, access and signal comparison |
 | F11 — **FIXED** | P2 | Holding-period rules disagree across config, backtest, and live | Fixed in v0.24.16; shared session deadline and broker fill clock |
-| F12 | P2 | Terminal partial entries retain the wrong quantity and basis | Fake broker reproduction |
+| F12 — **FIXED** | P2 | Terminal partial entries retain the wrong quantity and basis | Fixed in v0.24.17; verified entry refresh before all reconciliation exits |
 | F13 | P2 | An entry-processing exception can skip all exit reconciliation | Fake pipeline reproduction |
 | F14 | P2 | RSI treats an uninterrupted rise as neutral | Synthetic reproduction |
 | F15 | P2 | Optimizer tests a different timeframe/universe and ineffective parameters | Source trace |
@@ -65,7 +66,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F12 is the next unresolved finding following the F11 resolution below.
+F13 is the next unresolved finding following the F12 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -121,7 +122,7 @@ regular hours or at the stop price.
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
 was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F12 (terminal partial-entry quantity and basis).**
+finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -208,7 +209,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -273,7 +274,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -323,7 +324,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+**Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -369,7 +370,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+**Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -417,7 +418,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+**Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -469,7 +470,7 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+**Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -528,7 +529,7 @@ The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
 source and lacks attributes needed for automatic minute execution; it was not
 validated end to end. Feed alignment does not resolve the remaining findings.
 
-**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+**Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -582,12 +583,12 @@ on reconciliation. Dashboard: http://192.168.0.191:8004.
 
 **Limits:** equal eligibility does not eliminate the live 30-minute versus
 simulated one-minute observation cadence or market-order slippage. Partial-entry
-quantity/basis handling remains the separate F12 finding. Legacy coarse helpers
+quantity/basis handling was subsequently fixed under F12 below. Legacy coarse helpers
 remain research approximations. Existing backtest reports were not regenerated
 or retuned; their performance claims require re-evaluation after these fixes.
 Detailed policy: [holding-period policy](holding-period.md).
 
-**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+**Next unresolved finding: F13 (exit reconciliation after entry errors).**
 
 The description below records the original reviewed baseline.
 
@@ -602,6 +603,57 @@ The description below records the original reviewed baseline.
 **Regression:** Friday entries, holidays, short sessions, multiple 4h buckets, exact threshold boundaries, and underwater positions.
 
 ### F12 — Canceled partial entries retain requested shares
+
+**Status: FIXED** in v0.24.17 (2026-09-16). Publication verification pending.
+
+**Current-code reproduction:** earlier F01/F02 changes already corrected terminal
+partial entries on the ordinary bracket path. Two bypasses remained: pending
+exits were reconciled first, and signal-driven positions absent at the broker
+could skip the owned-parent refresh. Both reproduced a five-share request with
+only two shares bought at $101 and sold at $110 remaining open or using stale basis.
+
+**Resolution:** a shared exact-entry reconciliation step now precedes every
+exit branch in the normal reconciliation loop. It validates broker ID, client ID,
+symbol and buy side, requires a terminal entry status and finite positive fill
+quantity/basis, and persists actual shares, price and available fill time before
+any pending-exit finalization. Protection reconciliation reuses the same step.
+Immediate polling and compatibility backfill now support canceled/expired/rejected
+positive partial fills. Unsettled or unverifiable evidence leaves the trade and
+exit intent untouched. A zero-filled parent conflicting with exit evidence is
+not retired, preserving tracking for investigation.
+
+New trades retain original intent in nullable `requested_shares`; subsequent
+fills and closes do not overwrite it. Historical requested quantities remain
+unknown instead of being inferred from previously overwritten `shares`. Remaining
+inventory is actual cumulative entry fills minus recorded exits. Existing owned
+protection and shared-account safeguards continue to restrict any new order.
+
+**Validation:** all **690 tests passed**, including **26 new F12 regressions**,
+with one existing `websockets.legacy` deprecation warning. Independent review
+reran all 26 cases and found no outstanding issues. Coverage includes canceled,
+expired and rejected partial entries, pending/protective exits in bracket and
+signal-driven strategies, exact $18 gross P&L, repeated reconciliation, residual
+protection with unrelated account inventory, partial-exit replay, invalid entry
+identity/evidence and additive legacy migration. Broker/data clients and databases
+were isolated; full-suite subprocesses were windowless.
+
+**Activation:** saved and integrity-checked
+`run/backups/before-f12-20260916-173921.db`, then restarted both services through
+`scripts/manage.ps1`. Final status: one HEALTHY bot and one HEALTHY dashboard,
+HTTP 200, database integrity OK, additive `requested_shares` migration present,
+and four open tracked positions retained. The bot retains ensemble, a 30-minute
+interval and IEX. Dashboard: http://192.168.0.191:8004.
+
+**Limits:** the fix concerns terminal entries; actively filling entry orders
+still block new exit/protection actions until settlement is verified. Incomplete
+or conflicting broker evidence can defer reconciliation and requires investigation;
+this change does not relax protection-identity requirements. Missing broker fill
+timestamps remain unknown under F11's policy. Historical closed records are not
+rewritten and saved market backtests were not rerun. F13 remains separate work.
+
+**Next unresolved finding: F13 (exit reconciliation after entry errors).**
+
+The description below records the original reviewed baseline.
 
 **Locations:** [bot.py](../bot.py), lines 426–439 and 1441–1446.
 

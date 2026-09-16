@@ -200,6 +200,7 @@ def _migrate(c: sqlite3.Connection):
         "exit_intent_reason": "TEXT",     # durable intent before protection is canceled
         "entry_filled_price": "REAL",    # broker average fill price of the entry
         "entry_filled_at": "TEXT",       # broker fill timestamp; unknown legacy rows stay NULL
+        "requested_shares": "REAL",      # original intent; never inferred from legacy filled shares
         # Protection re-armed AFTER entry (the original bracket legs died without
         # filling — e.g. another process on the same Alpaca account canceled them).
         # Those replacement legs are not children of the entry order, so
@@ -296,10 +297,10 @@ def save_trade(ticker: str, strategy: str, entry_date: str, entry_price: float,
     with _con() as c:
         cur = c.execute(
             "INSERT INTO trades (ticker, strategy, entry_date, entry_price, stop_loss, "
-            "take_profit, shares, client_order_id, alpaca_order_id, entry_state, status) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,'open')",
+            "take_profit, shares, requested_shares, client_order_id, alpaca_order_id, entry_state, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,'open')",
             (ticker, strategy, entry_date, entry_price, stop_loss, take_profit,
-             shares, client_order_id, alpaca_order_id, entry_state),
+             shares, shares, client_order_id, alpaca_order_id, entry_state),
         )
         return cur.lastrowid
 

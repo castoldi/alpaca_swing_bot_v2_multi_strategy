@@ -207,6 +207,8 @@ def test_pending_sma_exit_closes_only_at_confirmed_broker_fill(monkeypatch):
             return SimpleNamespace(qty="1", current_price="99")
 
         def get_order_by_id(self, order_id, **_kwargs):
+            if order_id == "entry-1":
+                return _oto_entry(SimpleNamespace(id="stop-1", status="canceled"))
             assert order_id == "exit-1"
             return exit_order
 
@@ -241,6 +243,10 @@ def test_restart_adopts_owned_exit_submitted_before_pending_state_was_saved(monk
     class Client:
         def get_open_position(self, _ticker):
             return SimpleNamespace(qty="1", current_price="99")
+
+        def get_order_by_id(self, order_id, **_kwargs):
+            assert order_id == "entry-1"
+            return _oto_entry(SimpleNamespace(id="stop-1", status="canceled"))
 
     pending = []
     monkeypatch.setattr(bot, "_get_trading", lambda: Client())

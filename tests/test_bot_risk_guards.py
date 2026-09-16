@@ -94,7 +94,9 @@ def test_backfill_records_fill_and_updates_trade_in_place(monkeypatch):
     monkeypatch.setattr(
         bot.db_mod, "set_entry_fill", lambda *args: recorded.append(args)
     )
-    order = SimpleNamespace(status="filled", filled_avg_price="99.10", filled_qty="2")
+    order = SimpleNamespace(status="filled", filled_avg_price="99.10", filled_qty="2",
+                            id="entry-7", symbol="AMD", side="buy",
+                            client_order_id="swingv2-entry-ensemble-AMD-x")
 
     class _Client:
         def get_order_by_id(self, _order_id, **_kwargs):

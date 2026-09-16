@@ -310,6 +310,36 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.17] - 2026-09-16
+
+### Fixed
+
+- **F12 — terminal partial entries:** refresh exact verified entry fills before
+  pending-exit and missing-position reconciliation, including signal-driven
+  strategies. Canceled, expired or rejected entries with positive fills use the
+  actual quantity, average basis and available fill timestamp. Immediate entry
+  polling and legacy backfill accept these terminal partial fills too.
+- Keep requested shares separately in a new nullable `requested_shares` field;
+  capture new entry intent without rewriting unknown historical requests. Existing
+  ownership/protection checks use actual filled shares and subtract recorded exits.
+- Refuse exit processing on unverified, unsettled or malformed entry evidence.
+  A zero-filled parent conflicting with pending exit intent or recorded exits
+  remains unresolved instead of being retired and losing its exit tracking.
+
+### Added
+
+- Terminal partial-fill regressions covering bracket/signal-driven strategies,
+  pending/protective exits, exact $18 gross P&L for two shares bought at $101 and
+  sold at $110, repeat reconciliation, residual protection, one-share remainder
+  disposal, malformed ownership and additive schema migration.
+- Validation: all **690 tests passed**, including **26 new F12 cases**; independent
+  review found no outstanding issues. One existing dependency warning remains.
+- Backed up and integrity-checked the database, then restarted both services via
+  the singleton manager. One healthy bot and dashboard, HTTP 200 and database
+  integrity OK; ensemble/30-minute/IEX settings and four open positions retained.
+  Updated the review status, resolution, evidence and limits; F13 is next.
+
 ## [0.24.16] - 2026-09-16
 
 Release commit `3546e87`; remote branch and build95 tag verified.
