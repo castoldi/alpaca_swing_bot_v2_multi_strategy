@@ -314,6 +314,8 @@ _Changes landed but not yet released under a new version number go here._
 
 ## [0.24.18] - 2026-09-16
 
+Release commit `0cbe3e6`; remote branch and build99 tag verified.
+
 ### Fixed
 
 - **F13 — entry failures no longer skip existing holdings:** isolate unexpected

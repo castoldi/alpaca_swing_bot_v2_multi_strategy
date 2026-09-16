@@ -18,9 +18,9 @@ each fixed finding has a resolution and validation record.
 | F10: shared feed policy and persisted source metadata | v0.24.15, `ed97c78`, pushed 2026-09-15 | 631 tests passed, including 14 new cases; independent review complete |
 | F11: shared session-based holding period from actual fill | v0.24.16, `3546e87`, pushed 2026-09-16 | 664 tests passed, including 33 new cases; independent review complete |
 | F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17, `b495dba`, pushed 2026-09-16 | 690 tests passed, including 26 new cases; independent review complete |
-| F13: reconciliation independent of entry scan success | v0.24.18; release verification pending | 716 tests passed, including 26 new cases; independent review complete |
+| F13: reconciliation independent of entry scan success | v0.24.18, `0cbe3e6`, pushed 2026-09-16 | 716 tests passed, including 26 new cases; independent review complete |
 
-The F07/F08/F09/F10/F11/F12 release commits and their build tags were verified on the remote.
+The F07/F08/F09/F10/F11/F12/F13 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -670,7 +670,9 @@ The description below records the original reviewed baseline.
 
 ### F13 — Entry exceptions can bypass risk management
 
-**Status: FIXED** in v0.24.18 (2026-09-16). Release verification pending.
+**Status: FIXED** in v0.24.18 (2026-09-16), release commit `0cbe3e6`.
+Remote branch and tag `v0.24.18+build99-20260916-124942` were verified against
+the release commit.
 
 **Current-code reproduction:** 21 failing cases confirmed that exceptions escaping
 fetching, completed-bar preparation, indicators, entry signals or entry setup
