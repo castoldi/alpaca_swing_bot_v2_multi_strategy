@@ -16,7 +16,7 @@ class BreakoutStrategy(BaseStrategy):
         "Price above SMA(50). RSI above 50 and rising. "
         "Range filter rejects abnormally wide days."
     )
-    params_display = ["SL 8%", "TP 3×ATR [5%–15%]", "Time stop 7d if breakeven+", "Volume 1.5×"]
+    params_display = ["SL 8%", "TP 3×ATR [5%–15%]", "Time stop 7 sessions if breakeven+", "Volume 1.5×"]
 
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         if idx < max(p.sma_slow, p.rsi_period, p.atr_period, p.breakout_lookback) + 1:

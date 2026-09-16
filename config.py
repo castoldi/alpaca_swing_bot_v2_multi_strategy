@@ -183,7 +183,9 @@ class StrategyParams:
     atr_tp_multiple: float = 2.0
     take_profit_cap_pct: float = 0.08
     take_profit_floor_pct: float = 0.03
-    max_holding_days: int = 5  # time-stop: exit only if breakeven or better
+    # All *_max_holding_days values count XNYS closes strictly after the actual
+    # fill (partial entry session counts). Eligibility only: require breakeven+.
+    max_holding_days: int = 5
 
     # ── Breakout ─────────────────────────────────────────────────────────
     breakout_lookback: int = 20

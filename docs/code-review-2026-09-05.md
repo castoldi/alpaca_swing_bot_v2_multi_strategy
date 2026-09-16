@@ -4,10 +4,10 @@
 **Code baseline:** `0063eafe3978cb463154ae3a9c70928f3bced7c1`, version `0.24.1`  
 **Scope:** order execution, reconciliation, singleton management, market data, shared indicators, all eight registered strategies, portfolio backtests, and research evaluation. Dashboard and tax integration were inspected selectively; this is not a comprehensive security or tax audit.
 
-## Current remediation status — updated 2026-09-15
+## Current remediation status — updated 2026-09-16
 
-**F01–F10 are fixed; F11–F16 remain open. Next: F11, holding-period
-unit alignment.** Original findings and baseline reproductions are retained below;
+**F01–F11 are fixed; F12–F16 remain open. Next: F12, terminal partial-entry
+quantity and basis.** Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
@@ -16,6 +16,7 @@ each fixed finding has a resolution and validation record.
 | F08: corrected t-statistics, bootstrap tails and numerical consistency | v0.24.13, `32d1f46`, pushed 2026-09-15 | 601 tests passed, including 36 new regressions; independent review complete |
 | F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14, `6894074`, pushed 2026-09-15 | 617 tests passed, including 16 new regressions; independent review complete |
 | F10: shared feed policy and persisted source metadata | v0.24.15, `ed97c78`, pushed 2026-09-15 | 631 tests passed, including 14 new cases; independent review complete |
+| F11: shared session-based holding period from actual fill | v0.24.16; publication verification pending | 664 tests passed, including 33 new cases; independent review complete |
 
 The F07/F08/F09/F10 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
@@ -51,7 +52,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F08 — **FIXED** | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Fixed in v0.24.13; SciPy comparisons and bootstrap-tail regressions |
 | F09 — **FIXED** | P2 | Adjusted cache can splice prices from different adjustment vintages | Fixed in v0.24.14; revision, rollback, concurrency and migration regressions |
 | F10 — **FIXED** | P2 | Historical SIP and live IEX inputs do not match | Fixed in v0.24.15; shared configuration, provenance, access and signal comparison |
-| F11 | P2 | Holding-period rules disagree across config, backtest, and live | Source + synthetic reproduction |
+| F11 — **FIXED** | P2 | Holding-period rules disagree across config, backtest, and live | Fixed in v0.24.16; shared session deadline and broker fill clock |
 | F12 | P2 | Terminal partial entries retain the wrong quantity and basis | Fake broker reproduction |
 | F13 | P2 | An entry-processing exception can skip all exit reconciliation | Fake pipeline reproduction |
 | F14 | P2 | RSI treats an uninterrupted rise as neutral | Synthetic reproduction |
@@ -64,7 +65,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F11 is the next unresolved finding following the F10 resolution below.
+F12 is the next unresolved finding following the F11 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -120,7 +121,7 @@ regular hours or at the stop price.
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
 was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F11 (holding-period unit alignment).**
+finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -207,7 +208,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F11 (holding-period unit alignment).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -272,7 +273,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F11 (holding-period unit alignment).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -322,7 +323,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F11 (holding-period unit alignment).**
+**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -368,7 +369,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F11 (holding-period unit alignment).**
+**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -416,7 +417,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F11 (holding-period unit alignment).**
+**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -468,7 +469,7 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Next unresolved finding: F11 (holding-period unit alignment).**
+**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -527,7 +528,7 @@ The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
 source and lacks attributes needed for automatic minute execution; it was not
 validated end to end. Feed alignment does not resolve the remaining findings.
 
-**Next unresolved finding: F11 (holding-period unit alignment).**
+**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
 
 The description below records the original reviewed baseline.
 
@@ -540,6 +541,53 @@ Annual backtests request SIP; live recent bars default to IEX and snapshots expl
 **Regression:** assert the same configured feed reaches both data paths; compare signal disagreements on aligned IEX/SIP snapshots before treating an old result as a live forecast.
 
 ### F11 — “Days” are bars in backtests and rounded calendar days live
+
+**Status: FIXED** in v0.24.16 (2026-09-16). Publication verification pending.
+
+The user selected exchange trading sessions. `holding_period.py` now defines
+one deadline for live and both backtest engines: the Nth XNYS close strictly
+after the actual fill, with the partial entry session counted. A fill exactly
+at the close starts counting next session. Weekends/holidays are excluded;
+DST and early closes use the exchange calendar. Existing numeric thresholds
+are unchanged, and the `*_max_holding_days` names remain compatible.
+
+Time exits still require current price at or above actual fill basis. Minute
+execution checks its current open, not a prior profitable signal close; stops
+and targets retain precedence. Signal-with-stop strategies have no time exits.
+The explicit legacy coarse simulator shares the threshold but evaluates at
+observed candle closes; its time-exit timestamps now reflect that observation.
+
+Live entries persist broker `filled_at` in nullable `entry_filled_at`; older
+positions backfill through exact owned-entry reconciliation. Missing, invalid
+or future fill times suppress only the time exit, preserving protection and
+other reconciliation. Creation/signal timestamps are no longer exit clocks.
+A read-only check found verified broker fill timestamps for all four currently
+tracked ensemble positions; none was time-eligible under the new rule.
+
+**Validation:** 664 tests passed, including 33 new cases; one existing dependency
+deprecation warning. Independent review passed 94 focused tests with no blocking
+findings. Additional precedence cases verify targets and a raised breakeven stop
+win over an otherwise eligible time exit. Tests cover both minute timeframes,
+legacy simulators, session boundaries, fill timestamp persistence and live owned
+protection. Full-suite subprocesses were windowless and databases isolated.
+
+**Activation:** backed up the trading database and verified backup integrity.
+Both services were stopped at the pre-activation status check; restarted through
+`scripts/manage.ps1` successfully. Final status: one HEALTHY bot and one HEALTHY
+dashboard, HTTP 200, database integrity OK, four open tracked positions retained.
+The bot retains ensemble, a 30-minute interval and IEX. Existing fill times backfill
+on reconciliation. Dashboard: http://192.168.0.191:8004.
+
+**Limits:** equal eligibility does not eliminate the live 30-minute versus
+simulated one-minute observation cadence or market-order slippage. Partial-entry
+quantity/basis handling remains the separate F12 finding. Legacy coarse helpers
+remain research approximations. Existing backtest reports were not regenerated
+or retuned; their performance claims require re-evaluation after these fixes.
+Detailed policy: [holding-period policy](holding-period.md).
+
+**Next unresolved finding: F12 (terminal partial-entry quantity and basis).**
+
+The description below records the original reviewed baseline.
 
 **Locations:** [config.py](../config.py), holding-period fields; [strategies/base.py](../strategies/base.py), lines 305–366; [bot.py](../bot.py), lines 1010–1014 and 1140–1146.
 

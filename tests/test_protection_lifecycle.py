@@ -6,6 +6,7 @@ import pytest
 
 import bot
 from dashboard import db
+from bot import _time_stop_due as real_time_stop_due
 
 
 class NotFound(Exception):
@@ -85,7 +86,7 @@ class Broker:
 @pytest.fixture
 def lifecycle(monkeypatch):
     monkeypatch.setattr(bot, "send_notification", lambda *a, **k: None)
-    monkeypatch.setattr(bot, "_hold_days_since_entry", lambda _: 0)
+    monkeypatch.setattr(bot, "_time_stop_due", lambda _: False)
     monkeypatch.setattr(bot.time, "sleep", lambda _: None)
     monkeypatch.setattr(bot, "_signal_exit_frame", lambda *a: pd.DataFrame())
 
@@ -277,7 +278,7 @@ def test_unknown_submit_blocks_new_repairs_and_manual_exit(lifecycle, monkeypatc
     trade = run()
     assert trade["protect_client_order_id"]
     broker.lookup_unknown = True
-    monkeypatch.setattr(bot, "_hold_days_since_entry", lambda _: 10)
+    monkeypatch.setattr(bot, "_time_stop_due", lambda _: True)
     run()
     assert len(broker.submitted) == 1
 
@@ -341,3 +342,30 @@ def test_unverified_or_unavailable_inventory_blocks_repair(lifecycle, problem):
         broker.stop.status = "pending_replace"
     run()
     assert broker.submitted == []
+
+
+@pytest.mark.parametrize('filled_at,as_of,price,should_exit', [
+    ('2025-11-26 20:00Z', '2025-11-28 17:59:59Z', 101, False),
+    ('2025-11-26 20:00Z', '2025-12-01 14:30Z', 100, True),
+    ('2025-11-26 20:00Z', '2025-12-01 14:30Z', 99, False),
+    (None, '2025-12-01 14:30Z', 101, False),
+    ('2025-12-01 14:30Z', '2025-12-01 14:31Z', 101, False),
+])
+def test_verified_fill_controls_live_time_exit_without_losing_protection(
+        lifecycle, monkeypatch, filled_at, as_of, price, should_exit):
+    from dataclasses import replace
+    broker, trade_id, run = lifecycle(status='new')
+    broker.entry.filled_at = filled_at
+    broker.price = price
+    monkeypatch.setattr(bot, 'PARAMS', replace(bot.PARAMS, ensemble_max_holding_days=2))
+    monkeypatch.setattr(bot, '_time_stop_due', lambda trade: real_time_stop_due(trade, as_of=as_of))
+    trade = run()
+    assert [req.type for req in broker.submitted] == (['market'] if should_exit else [])
+    assert broker.canceled == (['tp', 'sl'] if should_exit else [])
+    if filled_at:
+        assert pd.Timestamp(trade['entry_filled_at']) == pd.Timestamp(filled_at)
+    else:
+        assert trade['entry_filled_at'] is None
+    if not should_exit:
+        assert trade['status'] == 'open'
+        assert broker.tp.status == broker.stop.status == 'new'

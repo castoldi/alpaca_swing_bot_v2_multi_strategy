@@ -399,10 +399,11 @@ def test_bracket_can_exit_on_fill_bar_without_counting_signal_bar(barrier, value
     assert all(leg.bars_held == 0 for leg in candidate.scaled_legs)
 
 
-def test_bracket_time_stop_uses_fill_basis_and_elapsed_bars():
+def test_bracket_time_stop_uses_fill_basis_after_session_threshold():
     from dataclasses import replace
 
     frame = _bars_with_gap(2, 101.0)
+    frame.index = pd.bdate_range("2026-01-02", periods=len(frame))
     # At the holding threshold the close exceeds the signal but loses on the fill.
     frame.loc[frame.index[4], "close"] = 100.5
     frame.loc[frame.index[5], "close"] = 102.0
@@ -412,7 +413,7 @@ def test_bracket_time_stop_uses_fill_basis_and_elapsed_bars():
     )[0]
     for leg in (candidate.single_legs[-1], candidate.scaled_legs[-1]):
         assert leg.reason == "time_stop"
-        assert leg.exit_date == frame.index[5]
+        assert leg.exit_date == frame.index[5] + pd.Timedelta(hours=4)
         assert leg.bars_held == 3
 
 

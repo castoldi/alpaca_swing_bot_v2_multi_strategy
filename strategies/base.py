@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from config import BAR_TIMEFRAME, PARAMS, StrategyParams, TP_SPLITS
+from holding_period import holding_deadline, holding_sessions_limit, utc
 
 
 # ── TP reachability filter ─────────────────────────────────────────────────────
@@ -258,16 +259,16 @@ def strategy_universe(strategy, default: list[str] | None = None) -> list[str]:
 # ── Shared exit engine ────────────────────────────────────────────────────────
 
 def _max_holding_days(signal: EntrySignal, p: StrategyParams) -> int:
-    s = signal.strategy
-    if s.startswith("breakout"):
-        return p.breakout_max_holding_days
-    if s.startswith("mean_reversion"):
-        return p.mr_max_holding_days
-    if s.startswith("momentum_macd"):
-        return p.macd_max_holding_days
-    if s.startswith("ensemble"):
-        return p.ensemble_max_holding_days
-    return p.max_holding_days  # trend_pullback, regime
+    """Compatibility name; configuration values count exchange sessions."""
+    return holding_sessions_limit(signal.strategy, p)
+
+
+def _holding_clock(df, entry_idx, signal, p, entry_at_open):
+    """Legacy candle simulation uses the same deadline, at observed closes."""
+    from backtest_execution import signal_availability
+    closes = signal_availability(df.index, df.attrs.get('timeframe', BAR_TIMEFRAME))
+    fill_at = utc(df.index[entry_idx]) if entry_at_open else closes[entry_idx]
+    return holding_deadline(fill_at, _max_holding_days(signal, p)), closes
 
 
 def simulate_exit(
@@ -283,7 +284,7 @@ def simulate_exit(
     sl = signal.stop_loss
     tp = signal.take_profit
     entry_price = signal.entry_price
-    max_days = _max_holding_days(signal, p)
+    deadline, closes = _holding_clock(df, entry_idx, signal, p, entry_at_open)
 
     for i in range(entry_idx if entry_at_open else entry_idx + 1, len(df)):
         bar = df.iloc[i]
@@ -294,8 +295,8 @@ def simulate_exit(
             return bar.name, sl, "stop_loss", bars_held
         if bar["high"] >= tp:
             return bar.name, tp, "take_profit", bars_held
-        if bars_held >= max_days and float(bar["close"]) >= entry_price:
-            return bar.name, float(bar["close"]), "time_stop", bars_held
+        if closes[i] >= deadline and float(bar["close"]) >= entry_price:
+            return closes[i], float(bar["close"]), "time_stop", bars_held
 
     last = df.iloc[len(df) - 1]
     return last.name, float(last["close"]), "end_of_data", len(df) - 1 - entry_idx
@@ -310,7 +311,7 @@ def simulate_exit_scaleout(
     tps = [signal.tp1, signal.tp2, signal.tp3]
     fracs = list(TP_SPLITS)
     stop = signal.stop_loss
-    max_days = _max_holding_days(signal, p)
+    deadline, closes = _holding_clock(df, entry_idx, signal, p, entry_at_open)
 
     legs: list[ExitLeg] = []
     tp_hit = [False, False, False]
@@ -341,8 +342,8 @@ def simulate_exit_scaleout(
         elif tp_hit[0]:
             stop = max(stop, entry)
 
-        if bars_held >= max_days and float(bar["close"]) >= entry and remaining > 1e-9:
-            legs.append(ExitLeg(bar.name, float(bar["close"]), "time_stop", bars_held, remaining))
+        if closes[i] >= deadline and float(bar["close"]) >= entry and remaining > 1e-9:
+            legs.append(ExitLeg(closes[i], float(bar["close"]), "time_stop", bars_held, remaining))
             return legs
 
     if remaining > 1e-9:

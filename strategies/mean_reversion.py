@@ -16,7 +16,7 @@ class MeanReversionStrategy(BaseStrategy):
         "Price near or below Bollinger lower band (2.2σ). "
         "Bounce confirmed by close > prev close."
     )
-    params_display = ["SL 7%", "TP 1.5×ATR [1.5%–5%]", "Time stop 3d if breakeven+", "Bollinger 2.2σ"]
+    params_display = ["SL 7%", "TP 1.5×ATR [1.5%–5%]", "Time stop 3 sessions if breakeven+", "Bollinger 2.2σ"]
 
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         if idx < max(p.sma_slow, p.rsi_period, p.atr_period, p.mr_sma_fast) + 1:

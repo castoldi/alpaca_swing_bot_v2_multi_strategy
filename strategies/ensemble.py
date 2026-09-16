@@ -32,7 +32,7 @@ class EnsembleStrategy(BaseStrategy):
         "Weights: Regime 35%, MACD 25%, Trend 20%, Breakout 15%, Mean Rev 5%. "
         "Enters only when multiple strategies agree."
     )
-    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6d if breakeven+", "Score ≥ 0.30"]
+    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6 sessions if breakeven+", "Score ≥ 0.30"]
 
     def __init__(self):
         super().__init__()

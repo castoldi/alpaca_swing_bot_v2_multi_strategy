@@ -16,7 +16,7 @@ class TrendPullbackStrategy(BaseStrategy):
         "(close > open, close > prev close, rising RSI). Skips entries 3 days before "
         "earnings to avoid gap risk."
     )
-    params_display = ["SL 10%", "TP 2×ATR [3%–8%]", "Time stop 5d if breakeven+", "Earnings filter"]
+    params_display = ["SL 10%", "TP 2×ATR [3%–8%]", "Time stop 5 sessions if breakeven+", "Earnings filter"]
 
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         if idx < max(p.sma_slow, p.rsi_period, p.atr_period) + 1:

@@ -309,6 +309,38 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.16] - 2026-09-16
+
+### Fixed
+
+- **F11 — holding-period consistency:** live and simulated bracket exits now
+  share a trading-session deadline: the Nth XNYS close strictly after the actual
+  entry fill. Count the partial entry session, skip weekends/holidays and honor
+  DST/early closes. Preserve numeric strategy settings and breakeven eligibility;
+  signal-driven strategies retain their own exits.
+- Persist broker entry `filled_at` in an additive nullable column and backfill it
+  from the verified owned entry order. Missing/invalid/future timestamps cannot
+  authorize a time exit; continue protective-order management. Creation/signal
+  time remains a legacy reporting fallback only, never an exit clock.
+- Minute backtests check the currently executable opening price against actual
+  fill basis, avoiding stale profitable signal closes that queue losing exits.
+  Legacy coarse simulations use the same session threshold and timestamp time
+  exits when their candle close becomes observable.
+
+### Changed
+
+- Clarify session units in strategy labels, reports and README; document exact
+  boundaries, migration and simulation limits in `docs/holding-period.md`.
+  Historical results were not rerun or retuned.
+- Validation: 664 tests passed, including 33 added cases, with one existing
+  dependency deprecation warning. Independent review passed 94 focused tests;
+  no blocking issues. A read-only broker check verified fill timestamps for all
+  four tracked positions; none was time-eligible under the corrected rule.
+- Backed up the live database, verified the additive migration and integrity,
+  and restarted through the singleton manager. Both services are HEALTHY;
+  ensemble, 30-minute polling and IEX are preserved.
+
 ## [0.24.15] - 2026-09-15
 
 Release commit `ed97c78`; remote branch and build93 tag verified.

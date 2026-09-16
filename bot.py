@@ -462,6 +462,7 @@ def _record_entry_fill(
                     trade_id,
                     float(avg),
                     float(getattr(order, "filled_qty", 0) or 0) or None,
+                    _entry_fill_timestamp(order),
                 )
             except Exception as exc:
                 log.warning(
@@ -474,9 +475,14 @@ def _record_entry_fill(
             time.sleep(delay)
 
 
+def _entry_fill_timestamp(order) -> str | None:
+    stamp = _parse_timestamp(getattr(order, "filled_at", None))
+    return stamp.isoformat() if stamp is not None and not pd.isna(stamp) else None
+
+
 def _backfill_entry_fill(tc, trade: dict) -> None:
     """Record the real entry fill during reconciliation if it is still missing."""
-    if trade.get("entry_filled_price"):
+    if trade.get("entry_filled_price") and trade.get("entry_filled_at"):
         return
     for order in _entry_order_candidates(tc, trade):
         if _status_str(order) not in ("filled", "closed"):
@@ -487,7 +493,8 @@ def _backfill_entry_fill(tc, trade: dict) -> None:
             continue
         price = float(avg)
         try:
-            db_mod.set_entry_fill(trade["id"], price, qty)
+            filled_at = _entry_fill_timestamp(order)
+            db_mod.set_entry_fill(trade["id"], price, qty, filled_at)
         except Exception as exc:
             log.warning(
                 "  %s entry fill backfill failed: %s", trade["ticker"], exc
@@ -495,6 +502,8 @@ def _backfill_entry_fill(tc, trade: dict) -> None:
             return
         trade["entry_filled_price"] = price
         trade["shares"] = qty
+        if filled_at is not None:
+            trade["entry_filled_at"] = filled_at
         return
 
 
@@ -1056,15 +1065,22 @@ def run_once(strategy: StrategyType) -> int:
 
 
 def _max_hold_days(strategy: str) -> int:
-    """Per-strategy time-stop horizon (calendar days)."""
-    return {
-        "trend_pullback": PARAMS.max_holding_days,
-        "breakout": PARAMS.breakout_max_holding_days,
-        "mean_reversion": PARAMS.mr_max_holding_days,
-        "momentum_macd": PARAMS.macd_max_holding_days,
-        "ensemble": PARAMS.ensemble_max_holding_days,
-        "regime": PARAMS.max_holding_days,
-    }.get(strategy, PARAMS.max_holding_days)
+    """Per-strategy time-stop horizon in exchange session closes."""
+    from holding_period import holding_sessions_limit
+    return holding_sessions_limit(strategy, PARAMS)
+
+
+def _time_stop_due(trade: dict, *, as_of=None) -> bool:
+    """Unknown broker fill time cannot authorize a time-based sell."""
+    from holding_period import holding_deadline, utc
+    try:
+        fill = utc(trade.get("entry_filled_at"))
+        now = utc(datetime.now(timezone.utc) if as_of is None else as_of)
+        if fill > now:
+            return False
+        return now >= holding_deadline(fill, _max_hold_days(str(trade.get("strategy") or "")))
+    except (ValueError, TypeError, OverflowError):
+        return False
 
 
 def _days_held(entry_date: str) -> int:
@@ -1075,16 +1091,14 @@ def _days_held(entry_date: str) -> int:
 
 
 def _hold_days_since_entry(trade: dict) -> float:
-    """Real elapsed days since this bot actually entered — never the signal bar.
+    """Elapsed-day reporting only; time-stop eligibility uses exchange sessions.
 
-    ``entry_date`` is the strategy signal's bar timestamp, which can be hours to
-    days old by the time the order actually fills (e.g. after a bot outage or a
-    stale bar). Time-stop decisions must count from the fill (``created_at``,
-    written the moment the entry order is accepted) or a stale signal gets
-    time-stopped the instant the position opens. Falls back to ``entry_date``
-    only if ``created_at`` is unreadable.
+    Legacy records may fall back to creation/signal time for this diagnostic,
+    never for an exit decision.
     """
-    entry_ts = _parse_timestamp(trade.get("created_at")) or _parse_timestamp(trade.get("entry_date"))
+    entry_ts = (_parse_timestamp(trade.get("entry_filled_at"))
+                or _parse_timestamp(trade.get("created_at"))
+                or _parse_timestamp(trade.get("entry_date")))
     if entry_ts is None:
         return 0.0
     return (datetime.now(timezone.utc) - entry_ts).total_seconds() / 86400.0
@@ -1227,13 +1241,9 @@ def _reconcile_and_exit(
                     _ensure_owned_protection(tc, trade)
                 continue
 
-            held = _hold_days_since_entry(trade)
-            # max-hold is expressed in 4h bars (~2 per trading day); convert to a
-            # calendar-day backstop for the live time-stop so it tracks the backtest.
-            max_hold = max(1, round(_max_hold_days(trade_strat) / 2))
             current = float(pos.current_price)
             entry = _effective_entry_price(trade)
-            if held >= max_hold and current >= entry:
+            if _time_stop_due(trade) and current >= entry:
                 if not _verify_owned(tc, trade):
                     log.warning("  %s past max-hold but ownership unverified (coid=%s) — leaving it alone",
                                 ticker, trade.get("client_order_id"))
@@ -1766,8 +1776,11 @@ def _owned_bracket_orders(tc, trade: dict) -> list | None:
         return None
     if not (math.isfinite(qty) and qty > 0 and math.isfinite(price) and price > 0):
         raise ValueError("entry has no verified positive fill")
-    db_mod.set_entry_fill(trade["id"], price, qty)
+    filled_at = _entry_fill_timestamp(entry)
+    db_mod.set_entry_fill(trade["id"], price, qty, filled_at)
     trade.update(shares=qty, entry_filled_price=price)
+    if filled_at is not None:
+        trade["entry_filled_at"] = filled_at
 
     linked = list(entry.legs or [])
     stop_only = REGISTRY[trade["strategy"]].exit_mode == "signal_with_stop"

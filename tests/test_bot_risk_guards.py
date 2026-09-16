@@ -73,7 +73,7 @@ def test_record_entry_fill_persists_broker_average_price(monkeypatch):
 
     bot._record_entry_fill(tc, 42, "alpaca-1")
 
-    assert recorded == [(42, 101.37, 3.0)]
+    assert recorded == [(42, 101.37, 3.0, None)]
 
 
 def test_record_entry_fill_gives_up_quietly_when_unfilled(monkeypatch):
@@ -112,7 +112,7 @@ def test_backfill_records_fill_and_updates_trade_in_place(monkeypatch):
     }
     bot._backfill_entry_fill(_Client(), trade)
 
-    assert recorded == [(7, 99.10, 2.0)]
+    assert recorded == [(7, 99.10, 2.0, None)]
     assert trade["entry_filled_price"] == 99.10
     assert bot._effective_entry_price(trade) == 99.10
 
@@ -150,7 +150,7 @@ def test_reconcile_covers_trades_from_other_strategies(monkeypatch):
             return SimpleNamespace(
                 id="entry-3", client_order_id=trade["client_order_id"],
                 symbol="AMD", side="buy", status="filled",
-                filled_qty="2", filled_avg_price="100",
+                filled_qty="2", filled_avg_price="100", filled_at="2026-06-01T14:30:00Z",
                 legs=[SimpleNamespace(
                     id=oid, symbol="AMD", side="sell", status="new",
                     filled_qty="0", filled_avg_price=None,

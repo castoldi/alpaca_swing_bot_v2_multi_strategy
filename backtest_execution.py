@@ -8,25 +8,12 @@ not queue position, fees, spread, or broker latency.
 from __future__ import annotations
 
 from dataclasses import replace
-from functools import lru_cache
-
-import exchange_calendars as xcals
 import numpy as np
 import pandas as pd
+from holding_period import calendar as _calendar, utc, holding_deadline
 
 from strategies.base import (ExitLeg, TP_SPLITS, _max_holding_days, is_tp_reachable_in_days,
                              add_earnings_filter, SKIP_EARNINGS_STRATEGIES)
-
-
-def utc(value):
-    ts = pd.Timestamp(value)
-    return ts.tz_convert('UTC').tz_localize(None) if ts.tzinfo else ts
-
-
-@lru_cache(maxsize=16)
-def _calendar(first_year, last_year):
-    return xcals.get_calendar('XNYS', start=f'{first_year}-01-01',
-                              end=f'{last_year}-12-31')
 
 
 def regular_minutes(frame):
@@ -124,7 +111,8 @@ def _exits(rows, entry_idx, signal, known, signal_closes, exit_reasons,
     # from the fill rather than counting the time spent waiting to enter.
     cursor = source_signal_idx if strategy.exit_mode == 'signal_with_stop' else baseline
     pending = None
-    max_bars = _max_holding_days(signal, params)
+    deadline = (holding_deadline(rows[entry_idx][0], _max_holding_days(signal, params))
+                if strategy.exit_mode != 'signal_with_stop' else None)
 
     for j in range(entry_idx, len(rows)):
         bar = rows[j]
@@ -133,8 +121,6 @@ def _exits(rows, entry_idx, signal, known, signal_closes, exit_reasons,
         for k in range(cursor + 1, known[j] + 1):
             if strategy.exit_mode == 'signal_with_stop':
                 pending = pending or exit_reasons[k]
-            elif k - baseline >= max_bars and signal_closes[k] >= signal.entry_price:
-                pending = pending or 'time_stop'
         cursor = known[j]
 
         # An opening event has known precedence over the rest of the minute.
@@ -150,8 +136,11 @@ def _exits(rows, entry_idx, signal, known, signal_closes, exit_reasons,
                 remaining -= fractions[k]
         if remaining < 1e-9:
             return legs
-        if pending:
-            legs.append(ExitLeg(timestamp, opening, pending, held, remaining))
+        # Use the currently executable price, never a stale profitable signal
+        # close that could queue a losing time exit across an overnight gap.
+        time_due = deadline is not None and timestamp >= deadline and opening >= signal.entry_price
+        if pending or time_due:
+            legs.append(ExitLeg(timestamp, opening, pending or 'time_stop', held, remaining))
             return legs
 
         event_time = timestamp + pd.Timedelta(minutes=1)

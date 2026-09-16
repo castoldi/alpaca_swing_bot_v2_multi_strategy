@@ -86,7 +86,7 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 **In plain terms:** Wait for a strong stock to take a breather, then buy the moment it starts recovering — don't fight the trend, ride it.
 
-**Exit:** 10% stop loss · 3–8% take profit (2× ATR) · 5-day time stop
+**Exit:** 10% stop loss · 3–8% take profit (2× ATR) · 5-session time stop
 
 ---
 
@@ -102,7 +102,7 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 **In plain terms:** Stocks often consolidate below a price ceiling for weeks, then burst through when demand surges. This strategy catches that burst early with volume as evidence that the move is real.
 
-**Exit:** 8% stop loss · 5–15% take profit (3× ATR) · 7-day time stop
+**Exit:** 8% stop loss · 5–15% take profit (3× ATR) · 7-session time stop
 
 ---
 
@@ -118,7 +118,7 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 **In plain terms:** Even strong stocks occasionally get hit by bad news, profit-taking, or market-wide sell-offs. If the underlying trend is intact, these dips often recover quickly. This strategy fades the fear.
 
-**Exit:** 7% stop loss · 1.5–5% take profit (1.5× ATR) · 3-day time stop
+**Exit:** 7% stop loss · 1.5–5% take profit (1.5× ATR) · 3-session time stop
 
 ---
 
@@ -134,7 +134,7 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 **In plain terms:** MACD is a momentum speedometer. When short-term speed exceeds long-term speed for the first time, it often marks the beginning of a sustained move. This strategy catches that ignition point.
 
-**Exit:** 9% stop loss · 4–12% take profit (2.5× ATR) · 6-day time stop
+**Exit:** 9% stop loss · 4–12% take profit (2.5× ATR) · 6-session time stop
 
 ---
 
@@ -151,7 +151,7 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 **In plain terms:** Markets go through phases. In a bull phase, you lean in aggressively. In a bear phase, you wait for extreme oversold conditions and use tighter risk. In between, you trade normally. Most strategies ignore this context entirely — this one doesn't.
 
-**Exit:** 10% stop loss (risk-on: 12%, risk-off: 10%) · 3–8% take profit · 5-day time stop
+**Exit:** 10% stop loss (risk-on: 12%, risk-off: 10%) · 3–8% take profit · 5-session time stop
 
 ---
 
@@ -191,7 +191,7 @@ A trade only opens when the weighted agreement score reaches **≥ 0.30** (30%).
 
 **In plain terms:** No single strategy wins all the time. The ensemble acts like a committee — a trade only happens when enough of the committee agrees. The committee members are weighted by how well they've actually performed historically. Result: fewer trades, higher quality.
 
-**Exit:** 9% stop loss · 4–12% take profit (2.5× ATR) · 6-day time stop
+**Exit:** 9% stop loss · 4–12% take profit (2.5× ATR) · 6-session time stop
 
 ---
 
@@ -201,7 +201,7 @@ The six bracket strategies share this exit logic, checked in priority order each
 
 1. **Stop Loss** — If the bar's *low* touches the stop level, exit at the stop price (loss capped)
 2. **Take Profit** — If the bar's *high* reaches the target, exit at the take-profit price (gain locked)
-3. **Time Stop** — After the max holding period, exit at close *only if the position is breakeven or better* (avoids locking in losses; the trade keeps running until SL or TP is hit if still underwater)
+3. **Time Stop** — Count exchange session closes strictly after the actual entry fill. After the configured threshold, exit at the next eligible observation *only if the current price is breakeven or better*. The partial entry session counts; weekends and exchange holidays do not. Underwater positions continue under their protective orders. See [holding-period policy](docs/holding-period.md) for exact boundaries and migration behavior.
 4. **End of Data** — Exit at the final bar's close (backtest only)
 
 SMA 50 Cross uses a separate daily lifecycle: a 10% emergency stop has priority, then a confirmed daily cross below exits at the next session. It has no take-profit or time-stop exit.

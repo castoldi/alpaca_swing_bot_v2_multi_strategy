@@ -16,7 +16,7 @@ class MomentumMACDStrategy(BaseStrategy):
         "RSI above 50 and rising. Price above both SMA(20) and SMA(50). "
         "Not on very low volume (<0.7× avg)."
     )
-    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6d if breakeven+", "MACD(12,26,9)"]
+    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6 sessions if breakeven+", "MACD(12,26,9)"]
 
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         if idx < max(p.sma_slow, p.rsi_period, p.atr_period, p.macd_slow) + 3:

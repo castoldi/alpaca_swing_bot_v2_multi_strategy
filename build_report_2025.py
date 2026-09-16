@@ -294,19 +294,19 @@ def params_html_for_strategy(strat: StrategyType) -> str:
     if strat == StrategyType.TREND_PULLBACK:
         return (f"<strong>Trend Pullback:</strong> {sizing} · SL {p.stop_loss_pct*100:.0f}% · "
                 f"TP {p.atr_tp_multiple}×ATR [{p.take_profit_floor_pct*100:.0f}%, {p.take_profit_cap_pct*100:.0f}%] · "
-                f"time stop if breakeven+")
+                f"session-based time stop if breakeven+")
     elif strat == StrategyType.BREAKOUT:
         return (f"<strong>Breakout:</strong> {sizing} · SL {p.breakout_stop_loss_pct*100:.0f}% · "
                 f"TP {p.breakout_atr_multiple}×ATR [{p.breakout_tp_floor_pct*100:.0f}%, {p.breakout_tp_cap_pct*100:.0f}%] · "
-                f"time stop if breakeven+")
+                f"session-based time stop if breakeven+")
     elif strat == StrategyType.MOMENTUM_MACD:
         return (f"<strong>MACD Momentum:</strong> {sizing} · SL {p.macd_stop_loss_pct*100:.0f}% · "
                 f"TP {p.macd_tp_multiple}×ATR [{p.macd_tp_floor_pct*100:.0f}%, {p.macd_tp_cap_pct*100:.0f}%] · "
-                f"MACD cross + RSI momentum · time stop if breakeven+")
+                f"MACD cross + RSI momentum · session-based time stop if breakeven+")
     elif strat == StrategyType.ENSEMBLE:
         return (f"<strong>Ensemble:</strong> {sizing} · SL {p.ensemble_stop_loss_pct*100:.0f}% · "
                 f"TP {p.ensemble_tp_multiple}×ATR [{p.ensemble_tp_floor_pct*100:.0f}%, {p.ensemble_tp_cap_pct*100:.0f}%] · "
-                f"Weighted vote of all 5 strategies · time stop if breakeven+")
+                f"Weighted vote of all 5 strategies · session-based time stop if breakeven+")
     elif strat == StrategyType.REGIME_ADAPTIVE:
         return (f"<strong>Regime Adaptive:</strong> {sizing} · "
                 f"SL {p.stop_loss_pct*100:.0f}% · TP {p.atr_tp_multiple}×ATR · "
@@ -318,7 +318,7 @@ def params_html_for_strategy(strat: StrategyType) -> str:
     else:
         return (f"<strong>Mean Reversion:</strong> {sizing} · "
                 f"SL {p.mr_stop_loss_pct*100:.0f}% · TP {p.mr_atr_multiple}×ATR "
-                f"[{p.mr_tp_floor_pct*100:.0f}%, {p.mr_tp_cap_pct*100:.0f}%] · time stop if breakeven+")
+                f"[{p.mr_tp_floor_pct*100:.0f}%, {p.mr_tp_cap_pct*100:.0f}%] · session-based time stop if breakeven+")
 
 
 def build_report_2025(

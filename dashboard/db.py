@@ -199,6 +199,7 @@ def _migrate(c: sqlite3.Connection):
         "exit_alpaca_order_id": "TEXT",  # Alpaca's order UUID for the exit
         "exit_intent_reason": "TEXT",     # durable intent before protection is canceled
         "entry_filled_price": "REAL",    # broker average fill price of the entry
+        "entry_filled_at": "TEXT",       # broker fill timestamp; unknown legacy rows stay NULL
         # Protection re-armed AFTER entry (the original bracket legs died without
         # filling — e.g. another process on the same Alpaca account canceled them).
         # Those replacement legs are not children of the entry order, so
@@ -331,7 +332,8 @@ def set_protect_order_ids(
         )
 
 
-def set_entry_fill(db_id: int, filled_price: float, filled_qty: Optional[float] = None):
+def set_entry_fill(db_id: int, filled_price: float, filled_qty: Optional[float] = None,
+                   filled_at: Optional[str] = None):
     """Record the broker's real average entry fill (and quantity when known).
 
     The signal-close ``entry_price`` stays untouched for reference; live P&L,
@@ -340,14 +342,14 @@ def set_entry_fill(db_id: int, filled_price: float, filled_qty: Optional[float] 
     with _con() as c:
         if filled_qty and filled_qty > 0:
             c.execute(
-                "UPDATE trades SET entry_filled_price=?, shares=? "
+                "UPDATE trades SET entry_filled_price=?, shares=?, entry_filled_at=COALESCE(?, entry_filled_at) "
                 "WHERE id=? AND status='open'",
-                (filled_price, filled_qty, db_id),
+                (filled_price, filled_qty, filled_at, db_id),
             )
         else:
             c.execute(
-                "UPDATE trades SET entry_filled_price=? WHERE id=? AND status='open'",
-                (filled_price, db_id),
+                "UPDATE trades SET entry_filled_price=?, entry_filled_at=COALESCE(?, entry_filled_at) WHERE id=? AND status='open'",
+                (filled_price, filled_at, db_id),
             )
 
 

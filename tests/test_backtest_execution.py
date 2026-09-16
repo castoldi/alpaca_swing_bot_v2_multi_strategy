@@ -199,7 +199,7 @@ def test_scaled_remainder_gaps_below_its_raised_stop():
     assert legs[-1].fraction == pytest.approx(0.67)
 
 
-def test_time_stop_counts_signal_bars_and_queues_until_session_open():
+def test_multiple_signal_bars_do_not_complete_two_holding_sessions():
     signals = bars(['2026-03-09 12:00', '2026-03-09 16:00', '2026-03-09 20:00'],
                    [(100, 102, 99, 101)] * 3)
     minutes = bars(['2026-03-09 16:00', '2026-03-09 16:01', '2026-03-09 16:02',
@@ -209,8 +209,55 @@ def test_time_stop_counts_signal_bars_and_queues_until_session_open():
         replace(PARAMS, max_holding_days=2), Signal(), execution_bars=minutes,
     )[0]
     for leg in (candidate.single_legs[-1], candidate.scaled_legs[-1]):
-        assert (leg.reason, leg.bars_held) == ('time_stop', 2)
-        assert leg.exit_date == pd.Timestamp('2026-03-10 13:30')
+        assert (leg.reason, leg.bars_held) == ('end_of_data', 2)
+        assert leg.exit_date == pd.Timestamp('2026-03-10 13:31')
+
+
+@pytest.mark.parametrize('timeframe', ['4h', '1d'])
+def test_time_stop_counts_sessions_from_fill_and_waits_for_current_breakeven(timeframe):
+    # Only one signal candle: time eligibility cannot depend on more candles.
+    signals = bars(['2026-03-06 12:00' if timeframe == '4h' else '2026-03-06 00:00'])
+    strategy = Signal()
+    strategy.timeframe = timeframe
+    minutes = bars(['2026-03-06 16:00', '2026-03-06 16:01',
+                    '2026-03-09 13:30', '2026-03-09 19:59',
+                    '2026-03-10 13:30', '2026-03-10 13:31'],
+                   [(101, 102, 100, 101)] * 4 + [(100, 100, 99, 100), (101, 102, 100, 101)])
+    candidate = collect_backtest_candidates(
+        signals, 'TEST', signals.index[0], pd.Timestamp('2026-03-11'),
+        replace(PARAMS, max_holding_days=2), strategy, execution_bars=minutes,
+    )[0]
+    for leg in (candidate.single_legs[-1], candidate.scaled_legs[-1]):
+        assert leg.reason == 'time_stop'
+        assert leg.exit_date == pd.Timestamp('2026-03-10 13:31')
+        assert leg.exit_price == candidate.entry_price == 101
+
+
+def test_signal_exit_strategies_do_not_acquire_time_stops():
+    strategy = Signal()
+    strategy.exit_mode = 'signal_with_stop'
+    signals = bars(['2026-03-06 12:00'])
+    minutes = bars(['2026-03-06 16:00', '2026-03-16 13:30'])
+    candidate = collect_backtest_candidates(
+        signals, 'TEST', signals.index[0], pd.Timestamp('2026-03-17'),
+        replace(PARAMS, max_holding_days=1), strategy, execution_bars=minutes,
+    )[0]
+    assert candidate.single_legs[-1].reason == 'end_of_data'
+
+
+@pytest.mark.parametrize('opening,expected', [(111, 'take_profit'), (100, 'time_stop')])
+def test_protection_precedes_eligible_time_exit(opening, expected):
+    signals = bars(['2026-03-06 12:00'])
+    minutes = bars(['2026-03-06 16:00', '2026-03-10 13:30'],
+                   [(100, 104, 99, 103), (opening, opening + 1, opening - 1, opening)])
+    candidate = collect_backtest_candidates(
+        signals, 'TEST', signals.index[0], pd.Timestamp('2026-03-11'),
+        replace(PARAMS, max_holding_days=2), Signal(), execution_bars=minutes,
+    )[0]
+    assert candidate.single_legs[-1].reason == expected
+    # The research remainder's raised breakeven stop wins at the same open
+    # where the unscaled position is otherwise eligible for a time exit.
+    assert candidate.scaled_legs[-1].reason == ('tp3' if opening == 111 else 'stop_loss')
 
 
 def test_execution_bars_after_boundary_cannot_supply_a_terminal_close():
