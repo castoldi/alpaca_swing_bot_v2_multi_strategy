@@ -15,9 +15,9 @@ each fixed finding has a resolution and validation record.
 | F07: session-based daily-loss accounting and observable valuation | v0.24.12, `6aa0daa`, pushed 2026-09-14 | 565 tests passed, including 21 new regressions; independent review complete |
 | F08: corrected t-statistics, bootstrap tails and numerical consistency | v0.24.13, `32d1f46`, pushed 2026-09-15 | 601 tests passed, including 36 new regressions; independent review complete |
 | F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14, `6894074`, pushed 2026-09-15 | 617 tests passed, including 16 new regressions; independent review complete |
-| F10: shared feed policy and persisted source metadata | v0.24.15; publication verification pending | 631 tests passed, including 14 new cases; independent review complete |
+| F10: shared feed policy and persisted source metadata | v0.24.15, `ed97c78`, pushed 2026-09-15 | 631 tests passed, including 14 new cases; independent review complete |
 
-The F07/F08/F09 release commits and their build tags were verified on the remote.
+The F07/F08/F09/F10 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -484,7 +484,9 @@ The cache stores `adjustment="all"` but downloads only missing edges of an alrea
 
 ### F10 — Historical and live strategies consume different feeds
 
-**Status: FIXED** in v0.24.15 (2026-09-15). Publication verification pending.
+**Status: FIXED** in v0.24.15 (2026-09-15).
+Release commit: `ed97c789eafb3cd2c17f48abe92519d0ef6fa156`;
+push and tag `v0.24.15+build93-20260915-215704` verified on the remote.
 
 Shared `MARKET_DATA_FEED` defaults to IEX across live bars/snapshots, annual and
 cumulative historical loaders, cache defaults and Alpaca research inputs.

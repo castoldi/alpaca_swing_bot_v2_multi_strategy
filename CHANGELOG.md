@@ -311,6 +311,8 @@ _Changes landed but not yet released under a new version number go here._
 
 ## [0.24.15] - 2026-09-15
 
+Release commit `ed97c78`; remote branch and build93 tag verified.
+
 ### Fixed
 
 - **F10 — align historical and live feeds:** share an explicit, validated
