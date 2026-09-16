@@ -1,4 +1,4 @@
-"""Cumulative Alpaca SIP backtest from 2016 through completed market data."""
+"""Cumulative Alpaca backtest from 2016 through completed market data."""
 from __future__ import annotations
 
 import argparse
@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import data_feed
 
 from backtest_2025 import (
     _MARKET_CACHE,
@@ -169,7 +170,7 @@ def run_history_backtest(
     })
     for timeframe in timeframes:
         for ticker in needed:
-            log.info("Loading %s (%s) from persistent SIP cache...", ticker, timeframe)
+            log.info("Loading %s (%s) from persistent %s cache...", ticker, timeframe, data_feed.resolve_feed())
             frame = download_history(ticker, start, requested_end, timeframe)
             if frame.empty or len(frame) < PARAMS.sma_slow + 5:
                 log.warning(
@@ -294,7 +295,8 @@ def run_history_backtest(
         "actual_start": min(first_bars).isoformat() if first_bars else None,
         "actual_end": max(last_bars).isoformat() if last_bars else None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "data_source": "Alpaca SIP historical data (adjustment=all)",
+        "data_source": data_feed.historical_data_label(),
+        "market_data": data_feed.market_data_policy(),
         "annual_reset": True,
         "initial_equity": PARAMS.initial_backtest_equity,
         "position_size_pct": PARAMS.position_size_pct,
@@ -311,7 +313,7 @@ def run_history_backtest(
         per_strategy_details,
         overall_best,
         report_label=_report_label(start, requested_end),
-        data_source="Alpaca SIP historical data",
+        data_source=data_feed.historical_data_label(),
         annual_reset_aggregate=True,
     )
     OUTPUT_HTML.write_text(report, encoding="utf-8")
@@ -336,7 +338,7 @@ def _parse_date(value: str) -> date:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run all strategies over cached Alpaca SIP history"
+        description="Run all strategies over cached Alpaca history on the configured feed"
     )
     parser.add_argument("--start", type=_parse_date, default=EARLIEST_HISTORY)
     parser.add_argument("--end", type=_parse_date, default=date.today())

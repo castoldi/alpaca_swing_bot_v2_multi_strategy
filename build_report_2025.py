@@ -327,10 +327,17 @@ def build_report_2025(
     overall_best: str | None,
     *,
     report_label: str = "2025 Backtest",
-    data_source: str = "Alpaca SIP historical data",
+    data_source: str | None = None,
     annual_reset_aggregate: bool = False,
 ) -> str:
     """Build a full HTML report with a caller-supplied range label."""
+    if data_source is None:
+        from data_feed import historical_data_label
+        # Preserve the dataset's feed even when rendering after a config change.
+        feeds = {frame.attrs['feed'] for details in per_strategy_details.values()
+                 for frame, _trades in details.values() if frame.attrs.get('feed')}
+        data_source = ('; '.join(historical_data_label(feed) for feed in sorted(feeds))
+                       if feeds else historical_data_label())
     strat_sections = []
     for sname, sdata in sorted(strategy_results.items(), key=lambda x: x[1]["total_pnl"], reverse=True):
         sdata.setdefault(

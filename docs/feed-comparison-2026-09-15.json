@@ -1,0 +1,180 @@
+{
+  "fetched_at": "2026-09-16T02:51:01.104405+00:00",
+  "warmup_start": "2026-04-01",
+  "evaluation_start": "2026-08-01",
+  "evaluation_end_exclusive": "2026-09-01",
+  "adjustment": "all",
+  "method": "Native histories independently enriched with add_indicators; check_entry compared at common UTC bar starts. Raw entry predicates before execution, TP reachability and portfolio filters. Nonmatching buckets counted separately. No order submission, database changes or performance reranking.",
+  "results": [
+    {
+      "ticker": "NVDA",
+      "timeframe": "4h",
+      "strategy": "breakout",
+      "aligned_bars": 48,
+      "iex_only_bars": 0,
+      "sip_only_bars": 36,
+      "differing_ohlc_bars": 48,
+      "median_iex_to_sip_volume": 0.03681707263619506,
+      "iex_entries": 1,
+      "sip_entries": 7,
+      "entry_disagreements": 6,
+      "source_csv_sha256": {
+        "iex": "845a71be1e93111f4ef540d991d2ee30dda4c3e0e57a66d09e41788778789039",
+        "sip": "ee11a0b1d556fbc603da6559b5f82431dbb4a3ea6b125244520262053490d61c"
+      }
+    },
+    {
+      "ticker": "AMZN",
+      "timeframe": "4h",
+      "strategy": "breakout",
+      "aligned_bars": 43,
+      "iex_only_bars": 0,
+      "sip_only_bars": 41,
+      "differing_ohlc_bars": 43,
+      "median_iex_to_sip_volume": 0.04704256553933917,
+      "iex_entries": 2,
+      "sip_entries": 2,
+      "entry_disagreements": 0,
+      "source_csv_sha256": {
+        "iex": "66ccc594661db20ef67c0de15910df8f7a9f59e6a3c735f340147bd6e315c2e5",
+        "sip": "a855fa5f4b93cf3990cbd9b62af310c6fcdde2d83424851d4a5feceb68b69bd7"
+      }
+    },
+    {
+      "ticker": "META",
+      "timeframe": "4h",
+      "strategy": "breakout",
+      "aligned_bars": 48,
+      "iex_only_bars": 0,
+      "sip_only_bars": 36,
+      "differing_ohlc_bars": 48,
+      "median_iex_to_sip_volume": 0.04035471338343358,
+      "iex_entries": 0,
+      "sip_entries": 1,
+      "entry_disagreements": 1,
+      "source_csv_sha256": {
+        "iex": "a377e97742614185bd17428a2a6ee3c7f23851e8b05e032e5ef1b7a80455de76",
+        "sip": "ec7088c8b172e9ef565f558ad102469f07715f675be1c6a6974f2072162460c1"
+      }
+    },
+    {
+      "ticker": "AMD",
+      "timeframe": "4h",
+      "strategy": "breakout",
+      "aligned_bars": 45,
+      "iex_only_bars": 0,
+      "sip_only_bars": 39,
+      "differing_ohlc_bars": 45,
+      "median_iex_to_sip_volume": 0.027449138259915313,
+      "iex_entries": 0,
+      "sip_entries": 5,
+      "entry_disagreements": 5,
+      "source_csv_sha256": {
+        "iex": "59b7bf6dca11160a8dcd8ae035e8d15d35a53f3da55216bff3c9f8b65382e2b8",
+        "sip": "1d93c6d4b606e4648b308253602fc6a8e5dc25dc85d93767e6de1ff4647250d5"
+      }
+    },
+    {
+      "ticker": "ARM",
+      "timeframe": "4h",
+      "strategy": "breakout",
+      "aligned_bars": 43,
+      "iex_only_bars": 0,
+      "sip_only_bars": 41,
+      "differing_ohlc_bars": 43,
+      "median_iex_to_sip_volume": 0.040234369843750846,
+      "iex_entries": 0,
+      "sip_entries": 2,
+      "entry_disagreements": 2,
+      "source_csv_sha256": {
+        "iex": "76531c01ff3502131ef58bfe1e594141fd656fbc97b6f9536b2394d979c79646",
+        "sip": "fa74be888dbd798f7d1b56bfa5dac59fb2fcf7d41869c82ebda6a4446c1f5f6c"
+      }
+    },
+    {
+      "ticker": "NVDA",
+      "timeframe": "1d",
+      "strategy": "sma_50_cross",
+      "aligned_bars": 21,
+      "iex_only_bars": 0,
+      "sip_only_bars": 0,
+      "differing_ohlc_bars": 21,
+      "median_iex_to_sip_volume": 0.029645958688278937,
+      "iex_entries": 1,
+      "sip_entries": 1,
+      "entry_disagreements": 0,
+      "source_csv_sha256": {
+        "iex": "d7a82fe794c2a49a4a3b2f98e5f78839351649087a475f7fd493c23b10e58c44",
+        "sip": "ba4478a1026bbfddb46a49bbd3335ca5ac7623fa10cd16c1eec03bf8e2339132"
+      }
+    },
+    {
+      "ticker": "AMZN",
+      "timeframe": "1d",
+      "strategy": "sma_50_cross",
+      "aligned_bars": 21,
+      "iex_only_bars": 0,
+      "sip_only_bars": 0,
+      "differing_ohlc_bars": 21,
+      "median_iex_to_sip_volume": 0.037971490223496156,
+      "iex_entries": 0,
+      "sip_entries": 0,
+      "entry_disagreements": 0,
+      "source_csv_sha256": {
+        "iex": "d1e4dcc45d314ed66302894e5cd7967506407166f0db85058665048ca99453ae",
+        "sip": "b562d8f7162e06c6d06058d2eb781cf07791c758d0ddb492babd9f868afdaf90"
+      }
+    },
+    {
+      "ticker": "META",
+      "timeframe": "1d",
+      "strategy": "sma_50_cross",
+      "aligned_bars": 21,
+      "iex_only_bars": 0,
+      "sip_only_bars": 0,
+      "differing_ohlc_bars": 21,
+      "median_iex_to_sip_volume": 0.03373634551116488,
+      "iex_entries": 1,
+      "sip_entries": 1,
+      "entry_disagreements": 0,
+      "source_csv_sha256": {
+        "iex": "28c4aa40ce584044a2292aed4fb85940c92b7a2978b323b4b9d30b03119dd6bf",
+        "sip": "083b095586607093b5a8cf7d9d24e99aa8b58aefa5e6084ccc3f985b0d92b70c"
+      }
+    },
+    {
+      "ticker": "AMD",
+      "timeframe": "1d",
+      "strategy": "sma_50_cross",
+      "aligned_bars": 21,
+      "iex_only_bars": 0,
+      "sip_only_bars": 0,
+      "differing_ohlc_bars": 21,
+      "median_iex_to_sip_volume": 0.024501561239459773,
+      "iex_entries": 2,
+      "sip_entries": 2,
+      "entry_disagreements": 0,
+      "source_csv_sha256": {
+        "iex": "5feb6c854c519c5265299580631b53d53ca3ef740601fffdcdcbff5c15ff9d33",
+        "sip": "82a7c76ecaa004b1c51e28837c92c11458b3a16dc26c63f68063c7a29c03c63a"
+      }
+    },
+    {
+      "ticker": "ARM",
+      "timeframe": "1d",
+      "strategy": "sma_50_cross",
+      "aligned_bars": 21,
+      "iex_only_bars": 0,
+      "sip_only_bars": 0,
+      "differing_ohlc_bars": 21,
+      "median_iex_to_sip_volume": 0.03919389287171295,
+      "iex_entries": 0,
+      "sip_entries": 0,
+      "entry_disagreements": 0,
+      "source_csv_sha256": {
+        "iex": "db1751e99777ae979721105d16145f44825c452cfcafe574f12505c018a9fa2a",
+        "sip": "23e393cf376fd5fa941514c148ee3f9fcfe58f57fde045efadb83324b97b6061"
+      }
+    }
+  ]
+}

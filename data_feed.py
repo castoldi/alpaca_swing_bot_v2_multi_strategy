@@ -16,6 +16,7 @@ from typing import Union
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import config
 
 from config import ALPACA_KEY, ALPACA_SECRET, BAR_TIMEFRAME
 from logger_setup import get_logger
@@ -75,15 +76,29 @@ def _timeframe_parts(timeframe: str) -> tuple[int, str]:
     raise ValueError(f"Unsupported timeframe: {timeframe}")
 
 
-def _feed_options(feed: str = "iex") -> dict:
-    try:
-        from alpaca.data.enums import Adjustment, DataFeed
-    except Exception:
-        return {}
+def resolve_feed(feed: str | None = None) -> str:
+    normalized = (config.MARKET_DATA_FEED if feed is None else feed).strip().lower()
+    if normalized not in {"iex", "sip"}:
+        raise ValueError(f"Unsupported stock feed: {normalized}")
+    return normalized
+
+
+def market_data_policy(feed: str | None = None) -> dict:
+    """Serializable provenance for signal bars; snapshots are unadjusted live prices."""
+    return dict(feed=resolve_feed(feed), adjustment="all",
+                session_policy=config.MARKET_DATA_SESSION_POLICY)
+
+
+def historical_data_label(feed: str | None = None) -> str:
+    policy = market_data_policy(feed)
+    return (f"Alpaca {policy['feed'].upper()} historical data "
+            f"(adjustment=all; {policy['session_policy']})")
+
+
+def _feed_options(feed: str | None = None) -> dict:
+    from alpaca.data.enums import Adjustment, DataFeed
     feeds = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
-    normalized = feed.lower()
-    if normalized not in feeds:
-        raise ValueError(f"Unsupported stock feed: {feed}")
+    normalized = resolve_feed(feed)
     return {"feed": feeds[normalized], "adjustment": Adjustment.ALL}
 
 
@@ -93,10 +108,11 @@ def fetch_bars(
     end: Union[date, datetime],
     timeframe: str = BAR_TIMEFRAME,
     *,
-    feed: str = "iex",
+    feed: str | None = None,
     strict: bool = False,
 ) -> pd.DataFrame:
     """Bars for ``ticker`` in [start, end]. Empty DataFrame on failure."""
+    feed = resolve_feed(feed)
     try:
         amount, unit_name = _timeframe_parts(timeframe)
         from alpaca.data.requests import StockBarsRequest
@@ -111,7 +127,7 @@ def fetch_bars(
         )
         bars = _get_client().get_stock_bars(req)
         frame = _normalize(bars.df, ticker)
-        frame.attrs.update(timeframe=timeframe, feed=feed.lower(), adjustment='all')
+        frame.attrs.update(timeframe=timeframe, **market_data_policy(feed))
         return frame
     except Exception as e:
         if strict:
@@ -168,7 +184,7 @@ def fetch_recent_4h(ticker: str, days: int = 120) -> pd.DataFrame:
     return fetch_recent(ticker, days, "4h")
 
 
-def fetch_snapshots(tickers: list[str]) -> dict:
+def fetch_snapshots(tickers: list[str], *, feed: str | None = None) -> dict:
     """Live per-ticker market snapshot for the dashboard.
 
     Uses Alpaca's snapshot endpoint (one request for the whole universe): latest
@@ -177,16 +193,13 @@ def fetch_snapshots(tickers: list[str]) -> dict:
     Returns ``{symbol: {price, prev_close, change, change_pct, day_high, day_low,
     day_open, volume, ts}}``. Missing/failed symbols are simply absent.
     """
+    feed = resolve_feed(feed)
     if not tickers:
         return {}
     try:
         from alpaca.data.requests import StockSnapshotRequest
-        try:
-            from alpaca.data.enums import DataFeed
-            extra = {"feed": DataFeed.IEX}
-        except Exception:
-            extra = {}
-        req = StockSnapshotRequest(symbol_or_symbols=list(tickers), **extra)
+        from alpaca.data.enums import DataFeed
+        req = StockSnapshotRequest(symbol_or_symbols=list(tickers), feed=DataFeed(feed))
         snaps = _get_client().get_stock_snapshot(req)
     except Exception as e:
         log.warning("fetch_snapshots failed: %s", e)
@@ -217,6 +230,7 @@ def fetch_snapshots(tickers: list[str]) -> dict:
 
             ts = getattr(trade, "timestamp", None) or getattr(daily, "timestamp", None)
             out[sym] = {
+                "feed": feed,
                 "price": round(price, 2),
                 "prev_close": round(prev_close, 2) if prev_close else None,
                 "change": round(change, 2) if change is not None else None,

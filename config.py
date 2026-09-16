@@ -53,6 +53,14 @@ ALL_TICKERS: list[str] = TICKERS + LEVERAGED_TICKERS
 # has no native 4h interval and caps intraday history at ~730 days (so 2024 is
 # unavailable there). Change here to switch the whole system's timeframe.
 BAR_TIMEFRAME = "4h"
+# One feed for live signals, reference snapshots and Alpaca research history.
+# SIP requires verified real-time entitlement before selecting it. Never fall
+# back automatically: doing so changes strategy inputs. See docs/market-data.md.
+MARKET_DATA_FEED = os.getenv("MARKET_DATA_FEED", "iex").strip().lower()
+if MARKET_DATA_FEED not in {"iex", "sip"}:
+    raise ValueError(f"Unsupported stock feed: {MARKET_DATA_FEED}")
+# Provider-native buckets, including its extended-hours trades; no RTH slicing.
+MARKET_DATA_SESSION_POLICY = "provider-native sessions; completed candles only"
 # Warmup history fetched before a backtest window so indicators are primed.
 HISTORY_WARMUP_DAYS = 90
 # Position fraction sold at TP1 / TP2 / TP3 (must sum to 1.0).

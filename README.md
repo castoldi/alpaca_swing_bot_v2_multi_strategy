@@ -16,6 +16,10 @@
 
 An automated swing trading bot that trades a focused universe of high-momentum US equities using seven strategies. Six strategies use 4-hour candles; SMA 50 Cross uses completed daily candles. All execution is through the Alpaca brokerage API (paper trading by default) with a live FastAPI dashboard.
 
+Live inputs and new Alpaca backtests share `MARKET_DATA_FEED` (default `iex`).
+See the [market-data policy](docs/market-data.md) for configuration, access checks,
+session handling and the limits of older SIP backtest results.
+
 ---
 
 ## What Is Swing Trading?

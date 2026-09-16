@@ -65,7 +65,8 @@ def test_cache_populates_once_then_serves_without_fetch(tmp_path):
 
     assert first.equals(second)
     assert len(calls) == 1
-    assert calls[0][4] == {"feed": "sip", "strict": True}
+    import data_feed
+    assert calls[0][4] == {"feed": data_feed.resolve_feed(), "strict": True}
 
 
 def test_wider_request_refetches_the_full_union(tmp_path):

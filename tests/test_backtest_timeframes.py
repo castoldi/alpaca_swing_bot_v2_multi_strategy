@@ -63,7 +63,7 @@ def test_strategy_report_shows_start_end_equity_and_return():
     assert "+12.50%" in html
 
 
-def test_backtest_history_uses_sip_cache_and_drops_current_daily(monkeypatch):
+def test_backtest_history_uses_configured_cache_and_drops_current_daily(monkeypatch):
     import backtest_2025
 
     today = pd.Timestamp.now(tz="America/New_York").date()
@@ -92,5 +92,5 @@ def test_backtest_history_uses_sip_cache_and_drops_current_daily(monkeypatch):
         "AMD", date(2026, 1, 1), date(2026, 12, 31), timeframe="1d"
     )
 
-    assert calls[0][1]["feed"] == "sip"
+    assert calls[0][1]["feed"] == backtest_2025.data_feed.resolve_feed()
     assert list(result.index.date) == [today - pd.Timedelta(days=1)]

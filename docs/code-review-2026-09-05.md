@@ -6,8 +6,8 @@
 
 ## Current remediation status — updated 2026-09-15
 
-**F01–F09 are fixed; F10–F16 remain open. Next: F10, historical/live feed
-alignment.** Original findings and baseline reproductions are retained below;
+**F01–F10 are fixed; F11–F16 remain open. Next: F11, holding-period
+unit alignment.** Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
@@ -15,9 +15,10 @@ each fixed finding has a resolution and validation record.
 | F07: session-based daily-loss accounting and observable valuation | v0.24.12, `6aa0daa`, pushed 2026-09-14 | 565 tests passed, including 21 new regressions; independent review complete |
 | F08: corrected t-statistics, bootstrap tails and numerical consistency | v0.24.13, `32d1f46`, pushed 2026-09-15 | 601 tests passed, including 36 new regressions; independent review complete |
 | F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14, `6894074`, pushed 2026-09-15 | 617 tests passed, including 16 new regressions; independent review complete |
+| F10: shared feed policy and persisted source metadata | v0.24.15; publication verification pending | 631 tests passed, including 14 new cases; independent review complete |
 
 The F07/F08/F09 release commits and their build tags were verified on the remote.
-One existing dependency deprecation warning remains. These fixes did not rerun
+One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
 optimizer search panels were unavailable.
@@ -49,7 +50,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F07 — **FIXED** | P1 | Daily-loss backtest accounting can miss losses and use future closes | Fixed in v0.24.12; session-baseline and observable-price regressions |
 | F08 — **FIXED** | P1 | A mathematically invalid t-statistic guard corrupts research evidence | Fixed in v0.24.13; SciPy comparisons and bootstrap-tail regressions |
 | F09 — **FIXED** | P2 | Adjusted cache can splice prices from different adjustment vintages | Fixed in v0.24.14; revision, rollback, concurrency and migration regressions |
-| F10 | P2 | Historical SIP and live IEX inputs do not match | Source + broker documentation |
+| F10 — **FIXED** | P2 | Historical SIP and live IEX inputs do not match | Fixed in v0.24.15; shared configuration, provenance, access and signal comparison |
 | F11 | P2 | Holding-period rules disagree across config, backtest, and live | Source + synthetic reproduction |
 | F12 | P2 | Terminal partial entries retain the wrong quantity and basis | Fake broker reproduction |
 | F13 | P2 | An entry-processing exception can skip all exit reconciliation | Fake pipeline reproduction |
@@ -63,7 +64,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F10 is the next unresolved finding following the F09 resolution below.
+F11 is the next unresolved finding following the F10 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -119,7 +120,7 @@ regular hours or at the stop price.
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
 was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F10 (historical/live feed alignment).**
+finding: F11 (holding-period unit alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -206,7 +207,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F10 (historical/live feed alignment).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F11 (holding-period unit alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -271,7 +272,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F10 (historical/live feed alignment).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F11 (holding-period unit alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -321,7 +322,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F10 (historical/live feed alignment).**
+**Next unresolved finding: F11 (holding-period unit alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -367,7 +368,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F10 (historical/live feed alignment).**
+**Next unresolved finding: F11 (holding-period unit alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -415,7 +416,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F10 (historical/live feed alignment).**
+**Next unresolved finding: F11 (holding-period unit alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -467,7 +468,7 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Next unresolved finding: F10 (historical/live feed alignment).**
+**Next unresolved finding: F11 (holding-period unit alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -482,6 +483,51 @@ The cache stores `adjustment="all"` but downloads only missing edges of an alrea
 **Regression:** cache before a split, append afterward, compare with a fresh full-range fetch. Include historical provider corrections, dividends, and repeated refreshes.
 
 ### F10 — Historical and live strategies consume different feeds
+
+**Status: FIXED** in v0.24.15 (2026-09-15). Publication verification pending.
+
+Shared `MARKET_DATA_FEED` defaults to IEX across live bars/snapshots, annual and
+cumulative historical loaders, cache defaults and Alpaca research inputs.
+Execution/valuation minutes inherit the signal feed. Unsupported configuration
+raises; provider errors never trigger a feed fallback. The existing provider-native
+session buckets, completed-candle guards, adjustment=all bars and IEX live behavior
+are preserved. Runtime metadata, HTML/JSON reports and new database backtest/curve
+records identify their source. Additive database columns leave legacy records
+unknown; source fields are available through APIs but not yet shown on existing
+cards. Reports use input feed metadata when rendering after a configuration change.
+
+**Access and data evidence:** this account denied recent SIP bars and snapshots
+at 18:44 UTC on September 15; IEX succeeded. A bounded August comparison across
+five tickers found 14 Breakout entry disagreements on 227 common 4h bars and no
+SMA 50 Cross entry disagreements on 105 common daily bars. These are raw entry
+predicates, not profit or execution comparisons. See [policy, access probe and
+comparison methodology](market-data.md) and the [comparison artifact](feed-comparison-2026-09-15.json).
+
+**Validation:** 631 tests passed, including 14 new cases for both feed selections,
+4h/daily paths, snapshots, cache/minute inheritance, errors, report provenance,
+legacy migration and stored labels. One existing dependency deprecation warning.
+Independent review passed 43 focused tests and found no blocking issues.
+Full-suite subprocesses were windowless and test databases isolated.
+
+**Activation:** backed up the trading database with SQLite backup and verified
+its integrity. Restarted both services through the singleton manager; final
+status showed exactly one healthy bot and dashboard, HTTP 200 and database
+integrity OK. Runtime metadata confirms ensemble, 30-minute interval, IEX.
+Both restart calls returned a PID-only manager error after the old worker exited;
+verified STOPPED, then manager start recovered each service. This stop-path
+behavior was not changed by F10 and remains an operational follow-up.
+Dashboard: http://192.168.0.191:8004.
+
+**Limits:** saved reports and existing performance records were not regenerated
+or relabeled. SIP results require an IEX rerun before evaluating current live
+inputs. Freshness was sampled once; bid/ask execution costs were not validated.
+The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
+source and lacks attributes needed for automatic minute execution; it was not
+validated end to end. Feed alignment does not resolve the remaining findings.
+
+**Next unresolved finding: F11 (holding-period unit alignment).**
+
+The description below records the original reviewed baseline.
 
 **Locations:** [backtest_2025.py](../backtest_2025.py), `download_history`; [data_feed.py](../data_feed.py), `fetch_bars`, `fetch_recent`, `fetch_snapshots`; [bot.py](../bot.py), `fetch_bars`.
 

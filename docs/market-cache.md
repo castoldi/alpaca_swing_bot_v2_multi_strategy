@@ -77,7 +77,9 @@ that a provider returns a globally atomic snapshot across pages, symbols,
 timeframes or separate requests. A same-day revision of an already covered
 range is picked up by explicit refresh or the next day's refresh. The manifest
 makes different reads identifiable; it does not pin a whole research process to
-one provider revision. Cross-feed alignment remains F10.
+one provider revision. F10 now uses a [shared feed policy](market-data.md):
+the cache default follows `MARKET_DATA_FEED` (IEX), while explicit IEX/SIP
+requests remain separate series. Existing SIP rows are not relabeled as IEX.
 
 Existing cache schemas migrate additively. Unversioned coverage is refreshed
 before being served, so an old mixed series is not treated as trustworthy merely

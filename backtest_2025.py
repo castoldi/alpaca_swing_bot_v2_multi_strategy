@@ -1,6 +1,6 @@
 """Full-year 2025 backtest — all registered strategies on real market data.
 
-Downloads ~2 years of history from yfinance, runs every strategy on every
+Downloads adjusted Alpaca history on the shared configured feed, runs every strategy on every
 trading day of 2025, applies per-strategy portfolio caps, and writes a
 comprehensive Plotly HTML report with strategy comparison.
 
@@ -62,15 +62,16 @@ def download_history(
 ) -> pd.DataFrame:
     """Fetch strategy-timeframe bars with a warmup window for indicators."""
     warmup_start = start - timedelta(days=HISTORY_WARMUP_DAYS)
+    feed = data_feed.resolve_feed()
     bars = _MARKET_CACHE.get_bars(
         ticker,
         warmup_start,
         end + timedelta(days=1),
         timeframe,
-        feed="sip",
+        feed=feed,
     )
     bars = data_feed.completed_bars(bars, timeframe)
-    bars.attrs.update(timeframe=timeframe, feed='sip', adjustment='all')
+    bars.attrs.update(timeframe=timeframe, **data_feed.market_data_policy(feed))
     return bars
 
 

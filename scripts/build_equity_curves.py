@@ -58,9 +58,8 @@ def download_daily_history(ticker: str, start: date, end: date) -> pd.DataFrame:
 
     Half-open boundary at `ALPACA_DAILY_FLOOR`: yfinance is fetched as
     `[start, floor)` and Alpaca as `[floor, end]`, so the two segments cannot
-    overlap or gap at the handoff. Confirmed to stitch without a valuation
-    jump — same-day closes agree to within 1e-4 across the boundary on
-    NVDA/AMZN/AMD, since both sides are fully split+dividend adjusted.
+    overlap at the handoff. This is mixed-source research history, not a
+    single-feed live replay; agreement at the boundary is not guaranteed.
     """
     warmup_start = start - timedelta(days=HISTORY_WARMUP_DAYS)
     segments = []
@@ -77,7 +76,7 @@ def download_daily_history(ticker: str, start: date, end: date) -> pd.DataFrame:
     alp_start = max(warmup_start, ALPACA_DAILY_FLOOR)
     if end + timedelta(days=1) > alp_start:
         alp_frame = _MARKET_CACHE.get_bars(
-            ticker, alp_start, end + timedelta(days=1), "1d", feed="sip",
+            ticker, alp_start, end + timedelta(days=1), "1d", feed=data_feed.resolve_feed(),
         )
         if not alp_frame.empty:
             segments.append(alp_frame)
@@ -93,6 +92,10 @@ def build(strategies, start_year: int, end: date) -> int:
     """Run every strategy-year and persist its equity curve. Returns rows written."""
     written = 0
     for strat in strategies:
+        data_source = data_feed.historical_data_label()
+        if (strat.timeframe == "1d"
+                and date(start_year, 1, 1) - timedelta(days=HISTORY_WARMUP_DAYS) < ALPACA_DAILY_FLOOR):
+            data_source += " + yfinance before 2016 (mixed research history, including warmup)"
         universe = strategy_universe(strat, TICKERS)
         frames = {}
         for ticker in universe:
@@ -102,7 +105,7 @@ def build(strategies, start_year: int, end: date) -> int:
                 # Alpaca's floor and silently returns nothing, so SMA(50) isn't
                 # valid until ~50 trading days into whatever year is first —
                 # this cost 2016 6 real trades before the fix (11 vs 17).
-                # download_daily_history degrades to a sip-only fetch (no
+                # download_daily_history degrades to an Alpaca-only fetch (no
                 # yfinance calls) once warmup no longer crosses the floor, so
                 # this costs nothing for a strategy already starting in 2020+.
                 frame = download_daily_history(ticker, date(start_year, 1, 1), end)
@@ -150,6 +153,7 @@ def build(strategies, start_year: int, end: date) -> int:
             ]
             written += db_mod.save_equity_curve(
                 strat.name, year, points, PARAMS.initial_backtest_equity,
+                data_source=data_source,
             )
             log.info(
                 "%-16s %d: %3d trades, end $%8.2f (%+6.1f%%), %3d pts [%.1fs]",

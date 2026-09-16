@@ -308,6 +308,36 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.15] - 2026-09-15
+
+### Fixed
+
+- **F10 — align historical and live feeds:** share an explicit, validated
+  `MARKET_DATA_FEED` setting (default IEX) across bars, snapshots, cache defaults,
+  annual/cumulative backtests and Alpaca research downloads. Real-time SIP access
+  was denied by this account; retain the existing IEX live behavior. Never fall
+  back silently between feeds. Minute execution data inherits the signal feed.
+- Preserve feed/session/adjustment policy in report labels, cumulative JSON and
+  bot runtime metadata. Record new database backtest and equity-curve sources
+  with additive nullable columns; leave legacy source labels unknown. Preserve
+  input-frame feed metadata when rendering reports after a config change.
+
+### Added
+
+- Shared data-policy documentation and a bounded August 2026 IEX/SIP comparison:
+  14 Breakout entry disagreements on 227 aligned 4h bars, zero SMA 50 Cross entry
+  disagreements on 105 daily bars across five tickers. No profitability reranking;
+  old reports are not regenerated or relabeled. Legacy mixed yfinance history
+  remains a separately documented research limitation.
+- Regression coverage for both feeds/timeframes, snapshot routing, cache and
+  minute-feed inheritance, provider errors, report provenance and DB migration.
+  Validation: 631 tests passed (14 added cases), one existing dependency warning;
+  independent review passed 43 focused tests with no blocking findings.
+  Backed up the live DB, applied additive migration and verified integrity;
+  both services are HEALTHY on the original ensemble/30-minute/IEX settings.
+  Manager stop-path PID errors required verified-stop then manager-start recovery.
+
 ## [0.24.14] - 2026-09-15
 
 ### Fixed

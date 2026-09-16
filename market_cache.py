@@ -224,7 +224,7 @@ class MarketDataCache:
 
     def get_bars(
         self, ticker: str, start: date | datetime, end: date | datetime,
-        timeframe: str, *, feed: str = 'sip', adjustment: str = 'all',
+        timeframe: str, *, feed: str | None = None, adjustment: str = 'all',
         refresh: bool = False,
     ) -> pd.DataFrame:
         """Return one adjusted-price generation for [start, end).
@@ -234,7 +234,8 @@ class MarketDataCache:
         coverage or return stale data as refreshed. Snapshot fingerprints and
         per-process read manifests are retained; old bar generations are not.
         """
-        key = (ticker.upper(), timeframe.lower(), feed.lower(), adjustment.lower())
+        feed = data_feed.resolve_feed() if feed is None else feed.strip().lower()
+        key = (ticker.upper(), timeframe.lower(), feed, adjustment.lower())
         if key[2] not in {'iex', 'sip', 'yfinance'}:
             raise ValueError(f'Unsupported stock feed: {feed}')
         if key[3] != 'all':

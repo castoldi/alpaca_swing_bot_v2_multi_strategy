@@ -67,7 +67,6 @@ class VolLookup:
                 date(START_YEAR, 1, 1) - timedelta(days=200),
                 date(END_YEAR, 12, 31) + timedelta(days=1),
                 "1d",
-                feed="sip",
             )
             if bars.empty:
                 self._cache[ticker] = (np.array([], dtype="datetime64[D]"), np.array([]))

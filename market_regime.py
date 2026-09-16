@@ -76,7 +76,7 @@ def _load_daily(ticker: str, start: date, end: date) -> pd.DataFrame:
     cache = MarketDataCache()
     # 400 calendar days ≈ 252 trading days of warmup for the rolling high.
     warmup_start = start - timedelta(days=400)
-    bars = cache.get_bars(ticker, warmup_start, end + timedelta(days=1), "1d", feed="sip")
+    bars = cache.get_bars(ticker, warmup_start, end + timedelta(days=1), "1d")
     return bars
 
 

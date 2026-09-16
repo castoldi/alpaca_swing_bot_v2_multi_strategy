@@ -2279,6 +2279,7 @@ def main():
         "strategy": strategy.value,
         "interval": args.interval,
         "loop": bool(args.loop),
+        "market_data": data_feed.market_data_policy(),
         "cmd": "python " + " ".join(sys.argv),
     })
 

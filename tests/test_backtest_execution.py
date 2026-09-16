@@ -142,14 +142,15 @@ def test_daily_signal_exit_waits_for_next_session_after_completed_bar():
     assert (leg.reason, leg.exit_date) == ('sma_cross_down', pd.Timestamp('2025-11-28 14:30'))
 
 
-def test_production_metadata_loads_matching_cached_minute_feed(monkeypatch):
+@pytest.mark.parametrize('feed', ['iex', 'sip'])
+def test_production_metadata_loads_matching_cached_minute_feed(monkeypatch, feed):
     from market_cache import MarketDataCache
     signal_frame = bars(['2026-03-09 12:00', '2026-03-09 16:00'])
-    signal_frame.attrs.update(timeframe='4h', feed='sip', adjustment='all')
+    signal_frame.attrs.update(timeframe='4h', feed=feed, adjustment='all')
     minutes = bars(['2026-03-09 16:00'], [(101, 102, 100, 101)])
 
     def get_bars(self, ticker, start, end, timeframe, **options):
-        assert (ticker, timeframe, options) == ('TEST', '1min', {'feed': 'sip', 'adjustment': 'all'})
+        assert (ticker, timeframe, options) == ('TEST', '1min', {'feed': feed, 'adjustment': 'all'})
         return minutes
 
     monkeypatch.setattr(MarketDataCache, 'get_bars', get_bars)
@@ -183,7 +184,7 @@ def test_history_loader_marks_signal_feed_and_timeframe(monkeypatch):
     monkeypatch.setattr(backtest_2025, '_MARKET_CACHE', SimpleNamespace(
         get_bars=lambda *a, **k: bars(['2025-11-26 16:00'])))
     frame = backtest_2025.download_history('TEST', date(2025, 1, 1), date(2025, 12, 31), '4h')
-    assert frame.attrs['feed'] == 'sip'
+    assert frame.attrs['feed'] == backtest_2025.data_feed.resolve_feed()
     assert frame.attrs['timeframe'] == '4h'
     assert frame.attrs['adjustment'] == 'all'
 

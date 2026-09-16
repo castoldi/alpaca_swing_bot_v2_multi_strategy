@@ -220,6 +220,12 @@ def _migrate(c: sqlite3.Connection):
     bt_have = {row["name"] for row in c.execute("PRAGMA table_info(backtest_runs)")}
     if "timeframe" not in bt_have:
         c.execute("ALTER TABLE backtest_runs ADD COLUMN timeframe TEXT DEFAULT '1d'")
+    # Unknown historical sources stay NULL; never relabel old results with
+    # today's feed. Additive migration is safe to repeat on existing databases.
+    for table in ("backtest_runs", "equity_curves"):
+        columns = {row["name"] for row in c.execute(f"PRAGMA table_info({table})")}
+        if "data_source" not in columns:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN data_source TEXT")
 
     # research_experiments: multiple-testing evidence. Rows written before this
     # column set existed keep NULLs — which is the honest record, since the
@@ -644,7 +650,7 @@ def replace_rebuilt_balance_history(points: list[dict], strategy: Optional[str] 
 # ── Backtest equity curves ────────────────────────────────────────────────────
 
 def save_equity_curve(strategy: str, year: int, points: list[tuple[str, float]],
-                      initial_equity: float) -> int:
+                      initial_equity: float, *, data_source: str | None = None) -> int:
     """Replace one strategy-year curve. `points` is [(iso_ts, equity), ...]."""
     _ensure_tables()
     if initial_equity <= 0:
@@ -654,8 +660,8 @@ def save_equity_curve(strategy: str, year: int, points: list[tuple[str, float]],
                   (strategy, year))
         c.executemany(
             "INSERT OR REPLACE INTO equity_curves "
-            "(strategy, year, ts, equity, year_factor) VALUES (?,?,?,?,?)",
-            [(strategy, year, ts, eq, eq / initial_equity) for ts, eq in points],
+            "(strategy, year, ts, equity, year_factor, data_source) VALUES (?,?,?,?,?,?)",
+            [(strategy, year, ts, eq, eq / initial_equity, data_source) for ts, eq in points],
         )
     return len(points)
 
@@ -697,6 +703,7 @@ def get_equity_curves(from_year: Optional[int] = None) -> dict[str, list[dict]]:
             "ts": r["ts"],
             "year": year,
             "growth": round(carry[strat] * r["year_factor"], 6),
+            "data_source": r["data_source"],
         })
     return curves
 
@@ -805,11 +812,12 @@ def get_recent_signals(limit: int = 100) -> list[dict]:
 # ── Backtest runs ─────────────────────────────────────────────────────────────
 
 def start_backtest_run(year: int, strategy: str, timeframe: str = "4h") -> int:
+    from data_feed import historical_data_label
     _ensure_tables()
     with _con() as c:
         cur = c.execute(
-            "INSERT INTO backtest_runs (year, strategy, started_at, timeframe) VALUES (?, ?, ?, ?)",
-            (year, strategy, datetime.now(timezone.utc).isoformat(), timeframe),
+            "INSERT INTO backtest_runs (year, strategy, started_at, timeframe, data_source) VALUES (?, ?, ?, ?, ?)",
+            (year, strategy, datetime.now(timezone.utc).isoformat(), timeframe, historical_data_label()),
         )
         return cur.lastrowid
 
