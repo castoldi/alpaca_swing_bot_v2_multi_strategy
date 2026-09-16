@@ -312,6 +312,8 @@ _Changes landed but not yet released under a new version number go here._
 
 ## [0.24.16] - 2026-09-16
 
+Release commit `3546e87`; remote branch and build95 tag verified.
+
 ### Fixed
 
 - **F11 — holding-period consistency:** live and simulated bracket exits now

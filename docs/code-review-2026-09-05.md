@@ -16,9 +16,9 @@ each fixed finding has a resolution and validation record.
 | F08: corrected t-statistics, bootstrap tails and numerical consistency | v0.24.13, `32d1f46`, pushed 2026-09-15 | 601 tests passed, including 36 new regressions; independent review complete |
 | F09: atomic full-range adjusted-cache refreshes and read fingerprints | v0.24.14, `6894074`, pushed 2026-09-15 | 617 tests passed, including 16 new regressions; independent review complete |
 | F10: shared feed policy and persisted source metadata | v0.24.15, `ed97c78`, pushed 2026-09-15 | 631 tests passed, including 14 new cases; independent review complete |
-| F11: shared session-based holding period from actual fill | v0.24.16; publication verification pending | 664 tests passed, including 33 new cases; independent review complete |
+| F11: shared session-based holding period from actual fill | v0.24.16, `3546e87`, pushed 2026-09-16 | 664 tests passed, including 33 new cases; independent review complete |
 
-The F07/F08/F09/F10 release commits and their build tags were verified on the remote.
+The F07/F08/F09/F10/F11 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -542,7 +542,9 @@ Annual backtests request SIP; live recent bars default to IEX and snapshots expl
 
 ### F11 — “Days” are bars in backtests and rounded calendar days live
 
-**Status: FIXED** in v0.24.16 (2026-09-16). Publication verification pending.
+**Status: FIXED** in v0.24.16 (2026-09-16).
+Release commit: `3546e87482968ea18f7c75e3d5e3309dc7fb2337`;
+push and tag `v0.24.16+build95-20260916-072301` verified on the remote.
 
 The user selected exchange trading sessions. `holding_period.py` now defines
 one deadline for live and both backtest engines: the Nth XNYS close strictly
