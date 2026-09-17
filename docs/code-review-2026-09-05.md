@@ -19,9 +19,9 @@ each fixed finding has a resolution and validation record.
 | F11: shared session-based holding period from actual fill | v0.24.16, `3546e87`, pushed 2026-09-16 | 664 tests passed, including 33 new cases; independent review complete |
 | F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17, `b495dba`, pushed 2026-09-16 | 690 tests passed, including 26 new cases; independent review complete |
 | F13: reconciliation independent of entry scan success | v0.24.18, `0cbe3e6`, pushed 2026-09-16 | 716 tests passed, including 26 new cases; independent review complete |
-| F14: RSI boundaries, explicit warmup and missing-value entry guards | v0.24.19; release verification pending | 752 tests passed, including 36 new cases; independent review complete |
+| F14: RSI boundaries, explicit warmup and missing-value entry guards | v0.24.19, `cf57510`, pushed 2026-09-17 | 752 tests passed, including 36 new cases; independent review complete |
 
-The F07/F08/F09/F10/F11/F12/F13 release commits and their build tags were verified on the remote.
+The F07/F08/F09/F10/F11/F12/F13/F14 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -732,7 +732,9 @@ The ticker scan and exit phase share an outer `try`. An unexpected exception dur
 
 ### F14 — RSI returns 50 for an uninterrupted gain sequence
 
-**Status: FIXED** in v0.24.19 (2026-09-17). Release verification pending.
+**Status: FIXED** in v0.24.19 (2026-09-17), release commit `cf57510`.
+Remote branch and tag `v0.24.19+build101-20260917-093243` were verified against
+the release commit.
 
 **Current-code reproduction:** an 80-close uninterrupted rise still returned 50,
 while every pre-warmup observation was also filled with 50. The initial regression

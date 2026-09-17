@@ -315,6 +315,8 @@ _Changes landed but not yet released under a new version number go here._
 
 ## [0.24.19] - 2026-09-17
 
+Release commit `cf57510`; remote branch and build101 tag verified.
+
 ### Fixed
 
 - **F14 — RSI edge cases:** mature gains-only histories now return 100, losses-only
