@@ -39,7 +39,8 @@ class BreakoutStrategy(BaseStrategy):
         if pd.isna(prior_high) or not (float(row["high"]) > float(prior_high)):
             return None
         prev = df.iloc[idx - 1]
-        if row["rsi"] < 50 or row["rsi"] <= prev["rsi"]:
+        # Positive evidence is required: NaN must not pass either comparison.
+        if not (row["rsi"] >= 50 and row["rsi"] > prev["rsi"]):
             return None
         entry = float(row["close"])
         sl = entry * (1.0 - p.breakout_stop_loss_pct)

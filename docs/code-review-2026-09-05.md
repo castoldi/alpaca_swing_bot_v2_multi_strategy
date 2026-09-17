@@ -4,10 +4,10 @@
 **Code baseline:** `0063eafe3978cb463154ae3a9c70928f3bced7c1`, version `0.24.1`  
 **Scope:** order execution, reconciliation, singleton management, market data, shared indicators, all eight registered strategies, portfolio backtests, and research evaluation. Dashboard and tax integration were inspected selectively; this is not a comprehensive security or tax audit.
 
-## Current remediation status — updated 2026-09-16
+## Current remediation status — updated 2026-09-17
 
-**F01–F13 are fixed; F14–F16 remain open. Next: F14, RSI handling
-for uninterrupted gains/losses and flat series.** Original findings and baseline reproductions are retained below;
+**F01–F14 are fixed; F15–F16 remain open. Next: F15, optimizer alignment
+with production strategies and risk settings.** Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
@@ -19,6 +19,7 @@ each fixed finding has a resolution and validation record.
 | F11: shared session-based holding period from actual fill | v0.24.16, `3546e87`, pushed 2026-09-16 | 664 tests passed, including 33 new cases; independent review complete |
 | F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17, `b495dba`, pushed 2026-09-16 | 690 tests passed, including 26 new cases; independent review complete |
 | F13: reconciliation independent of entry scan success | v0.24.18, `0cbe3e6`, pushed 2026-09-16 | 716 tests passed, including 26 new cases; independent review complete |
+| F14: RSI boundaries, explicit warmup and missing-value entry guards | v0.24.19; release verification pending | 752 tests passed, including 36 new cases; independent review complete |
 
 The F07/F08/F09/F10/F11/F12/F13 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
@@ -57,7 +58,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F11 — **FIXED** | P2 | Holding-period rules disagree across config, backtest, and live | Fixed in v0.24.16; shared session deadline and broker fill clock |
 | F12 — **FIXED** | P2 | Terminal partial entries retain the wrong quantity and basis | Fixed in v0.24.17; verified entry refresh before all reconciliation exits |
 | F13 — **FIXED** | P2 | An entry-processing exception can skip all exit reconciliation | Fixed in v0.24.18; independent reconciliation and ticker failure isolation |
-| F14 | P2 | RSI treats an uninterrupted rise as neutral | Synthetic reproduction |
+| F14 — **FIXED** | P2 | RSI treats an uninterrupted rise as neutral | Fixed in v0.24.19; edge values, explicit warmup and strategy guard regressions |
 | F15 | P2 | Optimizer tests a different timeframe/universe and ineffective parameters | Source trace |
 | F16 | P2 | Advertised strategy guards and parameters do not control the stated rules | Source + synthetic reproduction |
 
@@ -67,7 +68,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F14 is the next unresolved finding following the F13 resolution below.
+F15 is the next unresolved finding following the F14 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -123,7 +124,7 @@ regular hours or at the stop price.
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
 was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F14 (RSI edge cases).**
+finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -210,7 +211,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F14 (RSI edge cases).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -275,7 +276,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F14 (RSI edge cases).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -325,7 +326,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -371,7 +372,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -419,7 +420,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -471,7 +472,7 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -530,7 +531,7 @@ The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
 source and lacks attributes needed for automatic minute execution; it was not
 validated end to end. Feed alignment does not resolve the remaining findings.
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -589,7 +590,7 @@ remain research approximations. Existing backtest reports were not regenerated
 or retuned; their performance claims require re-evaluation after these fixes.
 Detailed policy: [holding-period policy](holding-period.md).
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -654,7 +655,7 @@ this change does not relax protection-identity requirements. Missing broker fill
 timestamps remain unknown under F11's policy. Historical closed records are not
 rewritten and saved market backtests were not rerun. F13 was subsequently fixed below.
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -715,7 +716,7 @@ a cycle. Existing per-trade reconciliation guards continue to defer unsafe actio
 missing signal data never authorizes an exit. No strategy rules, holding-period
 policy, broker ownership checks or saved backtest reports were changed.
 
-**Next unresolved finding: F14 (RSI edge cases).**
+**Next unresolved finding: F15 (optimizer/production alignment).**
 
 The description below records the original reviewed baseline.
 
@@ -730,6 +731,58 @@ The ticker scan and exit phase share an outer `try`. An unexpected exception dur
 **Regression:** failure on one ticker still reconciles pending exits and available time stops for other holdings, without generating entries from invalid data.
 
 ### F14 — RSI returns 50 for an uninterrupted gain sequence
+
+**Status: FIXED** in v0.24.19 (2026-09-17). Release verification pending.
+
+**Current-code reproduction:** an 80-close uninterrupted rise still returned 50,
+while every pre-warmup observation was also filled with 50. The initial regression
+run had 28 failures and seven passing controls. Consumer tests additionally showed
+that NaN could pass Breakout's rejection comparisons and Mean Reversion's RSI
+checks when the other entry conditions were satisfied.
+
+**Resolution:** the shared indicator explicitly returns 100 for positive average
+gains with zero losses, 0 for positive losses with zero gains, and 50 when both
+smoothed averages are zero. Warmup remains NaN until `period` observed price
+changes are available: on complete data, the first valid result is at zero-based
+index `period` (15 closes for period 14). The smoothing remains pandas EWM with
+`alpha=1/period`, `adjust=False`, seeded from the first observed change. Ordinary
+mixed gain/loss values are unchanged; no SMA-seeded reseeding was introduced.
+
+Breakout now requires positive evidence of a current RSI at least 50 and rising
+from its previous value. Mean Reversion requires an available current RSI and an
+observed value at/below its oversold threshold in the lookback. Other strategies'
+existing warmup and NaN rejection checks are retained. RSI is still only metadata
+for SMA Cross and TQQQ Momentum; no new RSI trading filter was added to them.
+
+**Validation:** all **752 tests passed**, including **36 new F14 cases**, with
+one existing `websockets.legacy` deprecation warning. Independent review found
+no correctness issues and passed the original 35 cases; its suggested Mean
+Reversion exact-threshold test was added and passed in the final full suite.
+Coverage includes periods 1/3/14, rising/falling/flat sequences, insufficient and
+leading-missing history, flat-to-direction transitions, hand-calculated mixed
+prices, equality to the prior mixed-history formula at periods 3/14/28, required
+RSI values for all six RSI-driven strategies, preserved finite thresholds and
+extended configured warmup. Full-suite databases were isolated and subprocesses
+were windowless. Saved market backtests were not run.
+
+**Activation:** saved and integrity-checked
+`run/backups/before-f14-20260917-143106.db`, then restarted both services through
+`scripts/manage.ps1` to reload the shared strategy code. Final status: one HEALTHY
+bot and one HEALTHY dashboard, HTTP 200, database integrity OK, and three open
+tracked positions retained. The bot retains ensemble, a 30-minute interval and
+IEX. Dashboard: http://192.168.0.191:8004.
+
+**Limits:** this is indicator correctness, not evidence of improved returns.
+An RSI saturated at 100 is not rising and still fails a rising-RSI entry rule.
+Existing EWM treatment of interior missing observations is unchanged; this does
+not redesign market-data cleaning or smoothing initialization. Existing strategy
+thresholds are preserved (including Breakout's inclusive 50 boundary); advertised
+rule/implementation differences remain F16. Saved backtests/reports have not been
+rerun and historical performance claims have not been revalidated or retuned.
+
+**Next unresolved finding: F15 (optimizer/production alignment).**
+
+The description below records the original reviewed baseline.
 
 **Location:** [strategies/base.py](../strategies/base.py), lines 90–99.
 

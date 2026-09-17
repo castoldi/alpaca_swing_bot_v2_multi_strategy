@@ -58,6 +58,12 @@ def ema(series: pd.Series, period: int) -> pd.Series:
 
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """RSI using the existing first-change-seeded exponential smoothing.
+
+    Require ``period`` observed price changes (period + 1 closes on complete
+    data). Warmup stays NaN; mature gains-only/losses-only/flat histories are
+    100/0/50 respectively. Flat 50 is a convention, not a warmup substitute.
+    """
     delta = close.diff()
     gain = delta.clip(lower=0.0)
     loss = -delta.clip(upper=0.0)
@@ -65,7 +71,10 @@ def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     rs = avg_gain / avg_loss.replace(0.0, np.nan)
     out = 100 - (100 / (1 + rs))
-    return out.fillna(50.0)
+    out.loc[(avg_gain > 0) & (avg_loss == 0)] = 100.0
+    out.loc[(avg_gain == 0) & (avg_loss > 0)] = 0.0
+    out.loc[(avg_gain == 0) & (avg_loss == 0)] = 50.0
+    return out
 
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:

@@ -23,12 +23,13 @@ class MeanReversionStrategy(BaseStrategy):
             return None
         row = df.iloc[idx]
         prev = df.iloc[idx - 1]
-        if pd.isna(row["sma_slow"]) or pd.isna(row["atr"]) or pd.isna(row["bb_lower"]):
+        if (pd.isna(row["sma_slow"]) or pd.isna(row["atr"])
+                or pd.isna(row["bb_lower"]) or pd.isna(row["rsi"])):
             return None
         if not (row["close"] > row["sma_slow"]):
             return None
         rsi_window = df["rsi"].iloc[max(0, idx - p.mr_rsi_lookback + 1): idx + 1]
-        if rsi_window.min() > p.mr_rsi_oversold:
+        if not (rsi_window.min() <= p.mr_rsi_oversold):
             return None
         if pd.isna(row["sma_fast"]):
             return None

@@ -312,6 +312,34 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.19] - 2026-09-17
+
+### Fixed
+
+- **F14 — RSI edge cases:** mature gains-only histories now return 100, losses-only
+  return 0, and completely flat histories return neutral 50. Insufficient history
+  remains NaN until the configured number of observed price changes is available.
+  The existing first-change-seeded exponential smoothing and mixed-history values
+  are preserved; this is not a change to an SMA-seeded RSI implementation.
+- Breakout requires valid current/previous RSI evidence and Mean Reversion rejects
+  unavailable current RSI/history, so missing values cannot authorize an entry.
+  Existing finite thresholds and other entry rules are preserved.
+
+### Added
+
+- 36 F14 regressions for direction/flat edge cases, exact warmup boundaries,
+  leading missing values, hand-calculated mixed history, prior-formula equivalence,
+  flat-to-direction transitions, valid and missing strategy RSI inputs, and
+  configured extended warmup. Updated the review status, resolution and limitations;
+  F15 is the next unresolved finding.
+- Validation: **752 tests passed**, including **36 new F14 cases**; independent
+  review found no correctness issues. One existing dependency warning remains.
+- Backed up and integrity-checked the database, then restarted both services via
+  the singleton manager to load the shared strategy changes. One healthy bot and
+  dashboard, HTTP 200 and database integrity OK; ensemble/30-minute/IEX settings
+  and three open tracked positions retained. Historical reports were not rerun.
+
 ## [0.24.18] - 2026-09-16
 
 Release commit `0cbe3e6`; remote branch and build99 tag verified.
