@@ -17,6 +17,14 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Bear-market playbook** ([docs/bear-market-playbook.md](docs/bear-market-playbook.md)) —
+  one page on how much the bot loses in bears vs crashes and what to do about it.
+  Adds two new tests: four external-data entry gates (VIX term structure, credit
+  spreads, sector breadth, 2-of-3; `research/external_gate_experiment.py`) all
+  made 2022 worse, and shorting failed rallies in a confirmed bear
+  (`research/short_the_rally_experiment.py`, daily 1998–2026, three bears) has
+  no edge (t = 0.26). Recommends allocation (`ensemble + tqqq_momentum`) now and
+  a trend-break exit as the next test; refutes entry gates and short selling.
 - **IBKR historical data import** (`ibkr_history.py`, `scripts/import_ibkr_history.py`) —
   pulls 4h + daily bars back to 1999 through the IB Gateway that
   `ibkr_trading_bot` already runs (read-only, own client id), into a new

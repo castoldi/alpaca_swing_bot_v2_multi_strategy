@@ -1,5 +1,7 @@
 # Can this bot avoid losing money in bear markets and still make money in bull markets?
 
+> **Start at [bear-market-playbook.md](bear-market-playbook.md)** (2026-09-19) — the consolidated answer, including external-data gates and the short-selling test.
+
 **Written:** 2026-08-24 · **Method:** autoresearch-style experiment loop (17 variants, 3 independent mechanisms)
 **Companion to:** [bear-markets-and-crashes.md](bear-markets-and-crashes.md), which catalogued the bears and
 recommended a market-wide entry gate. This document **tests that recommendation on the bot's own trade-level

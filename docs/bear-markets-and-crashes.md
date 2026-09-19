@@ -1,5 +1,7 @@
 # Bear Markets and Crashes — Historical Catalog and Entry-Gate Feasibility
 
+> **Start at [bear-market-playbook.md](bear-market-playbook.md)** (2026-09-19) — the consolidated answer, including external-data gates and the short-selling test.
+
 **Written:** 2026-08-08 · **Bot version:** 0.19.2
 **Companion to:** [markov-and-garch.md](markov-and-garch.md) (which recommended a
 200-day SMA index filter but tested it only on 2018–2026, a window it explicitly
