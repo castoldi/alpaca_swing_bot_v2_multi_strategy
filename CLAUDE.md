@@ -57,12 +57,57 @@ python backtest_2026.py
 python backtest_2025.py --strategy ensemble
 python backtest_2025.py --strategy breakout
 
+# Pre-2016 history (2000 / 2008 bears) from IB Gateway -> cache feed "ibkr"
+# See "Historical data sources" below.
+python scripts/import_ibkr_history.py
+
 # One-shot bot run (no loop)
 python bot.py --strategy ensemble
 
 # Dashboard (dev — avoid on prod; use manage.ps1 instead)
 python -m uvicorn dashboard.server:app --host 0.0.0.0 --port 8004
 ```
+
+## Historical data sources (backtest cache)
+
+All backtest history lives in **one SQLite file: `cache/market_data.db`**
+(git-ignored), table `bars`, partitioned by the `feed` column. Inspect coverage
+with `MarketDataCache().status()` or the `coverage` table.
+
+| `feed` | Source | Range | Timeframes | Refresh |
+|--------|--------|-------|-----------|---------|
+| `iex` | Alpaca IEX (live default, `MARKET_DATA_FEED`) | 2020-07+ | 4h, 1d | auto, read-through |
+| `sip` | Alpaca SIP | 2016-01+ | 4h, 1d | auto, read-through |
+| `yfinance` | Yahoo | 2007–2015 | 1d only | auto |
+| **`ibkr`** | **IB Gateway via `ibkr_trading_bot`** | **1999+** (META 2012, TQQQ 2010, ARM 2023) | 4h, 1d | **import-only** |
+
+**Need more backtest history (pre-2016, the 2000/2008 bears, new symbols)? Use
+the IBKR connection.** The sibling project `C:\Data\ai_projects\ibkr_trading_bot`
+keeps IB Gateway running (paper, port 4002). `ibkr_history.py` connects to it
+**read-only with client id 241** (never 17/18/19/117 — those belong to the MNQ
+bot) and `scripts/import_ibkr_history.py` writes the `ibkr` partition:
+
+```powershell
+python scripts/import_ibkr_history.py                               # TICKERS + TQQQ + SPY, 1d+4h, 1999→today
+python scripts/import_ibkr_history.py --tickers QQQ XLK --timeframes 1d 4h
+python scripts/import_ibkr_history.py --force                       # re-download (e.g. to extend to today)
+```
+
+- Resumable: a series already covering `--start` is skipped unless `--force`.
+- Reading it: `MarketDataCache().get_bars(sym, start, end, "4h", feed="ibkr")`.
+  It never re-fetches on read; asking past the imported range returns only what
+  is stored. Backtest runners still read `MARKET_DATA_FEED` (iex/sip) — point a
+  research script at `feed="ibkr"` explicitly.
+- 4h bars are rebuilt from IBKR 1-hour extended-hours bars into Alpaca's UTC
+  buckets (never IBKR's session-anchored "4 hours" bars) and dividend-adjusted
+  per day. Matches SIP 40/40 buckets; prices within ~0.1%.
+- Differences vs SIP: volume excludes odd lots (~65% of SIP recently, ~95% in
+  2016); pre-market buckets are sparse before ~2017.
+- The Gateway is shared with the live MNQ bot — requests are spaced 2s apart;
+  do not lower that. IBKR can also serve 1-minute bars (2016+) if a future
+  execution model needs them (~10h+ download; not imported yet).
+- `ib_async` 2.1.0 pins `tzdata<2026`; install with `--no-deps` (see
+  `requirements.txt`).
 
 ## Architecture
 

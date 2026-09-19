@@ -23,6 +23,10 @@ from logger_setup import get_logger
 ROOT = Path(__file__).parent
 CACHE_DB = ROOT / "cache" / "market_data.db"
 OHLCV = ["open", "high", "low", "close", "volume"]
+# Partitions filled only by an explicit import script (the provider needs a
+# running IB Gateway). A read never re-fetches them just because a new UTC day
+# started; it serves whatever the last import stored.
+IMPORT_ONLY_FEEDS = {"ibkr"}
 
 SeriesKey = tuple[str, str, str, str]
 Fetcher = Callable[..., pd.DataFrame]
@@ -74,6 +78,11 @@ class MarketDataCache:
         ticker: str, start, end, timeframe: str, *, feed: str, strict: bool = False
     ) -> pd.DataFrame:
         """Route by feed: "yfinance" is a cache partition, not an Alpaca feed."""
+        if feed in IMPORT_ONLY_FEEDS:
+            raise ValueError(
+                f"The {feed!r} cache partition is import-only and does not cover this "
+                f"range: run scripts/import_{feed}_history.py"
+            )
         if feed == "yfinance":
             return yfinance_history.fetch_bars(ticker, start, end, timeframe, strict=strict)
         return data_feed.fetch_bars(ticker, start, end, timeframe, feed=feed, strict=strict)
@@ -236,7 +245,7 @@ class MarketDataCache:
         """
         feed = data_feed.resolve_feed() if feed is None else feed.strip().lower()
         key = (ticker.upper(), timeframe.lower(), feed, adjustment.lower())
-        if key[2] not in {'iex', 'sip', 'yfinance'}:
+        if key[2] not in {'iex', 'sip', 'yfinance', *IMPORT_ONLY_FEEDS}:
             raise ValueError(f'Unsupported stock feed: {feed}')
         if key[3] != 'all':
             raise ValueError("Only adjustment='all' is supported by this cache")
@@ -262,12 +271,17 @@ class MarketDataCache:
                 row = connection.execute('SELECT * FROM cache_snapshots WHERE snapshot_id=?',
                                          (coverage['snapshot_id'],)).fetchone()
                 snapshot = dict(row) if row else None
-            needs_refresh = (
-                refresh or snapshot is None
-                or pd.Timestamp(snapshot['fetched_at']).normalize() != now.normalize()
-                or full_start < pd.Timestamp(snapshot['requested_start'])
-                or full_end > pd.Timestamp(snapshot['requested_end'])
-            )
+            if key[2] in IMPORT_ONLY_FEEDS and snapshot is not None and not refresh:
+                # Serve the imported generation as-is; asking past its edges
+                # returns the covered part rather than calling the provider.
+                needs_refresh = False
+            else:
+                needs_refresh = (
+                    refresh or snapshot is None
+                    or pd.Timestamp(snapshot['fetched_at']).normalize() != now.normalize()
+                    or full_start < pd.Timestamp(snapshot['requested_start'])
+                    or full_end > pd.Timestamp(snapshot['requested_end'])
+                )
             if needs_refresh:
                 frame = self.fetcher(key[0], full_start.to_pydatetime(), full_end.to_pydatetime(),
                                      key[1], feed=key[2], strict=True)

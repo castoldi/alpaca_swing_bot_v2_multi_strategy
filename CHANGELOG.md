@@ -17,6 +17,16 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **IBKR historical data import** (`ibkr_history.py`, `scripts/import_ibkr_history.py`) —
+  pulls 4h + daily bars back to 1999 through the IB Gateway that
+  `ibkr_trading_bot` already runs (read-only, own client id), into a new
+  import-only `ibkr` partition of `cache/market_data.db`. Alpaca stops at
+  2016, so this is what makes the 2000 and 2007–09 bears testable at trade
+  level. 4h bars are rebuilt from 1-hour extended-hours bars into Alpaca's UTC
+  buckets and dividend-adjusted per day; validated against the SIP partition
+  (40/40 buckets matched on NVDA 2022 and META 2025). IBKR volume excludes odd
+  lots (~65% of SIP recently). The live bot and dashboard never read it, and
+  `market_cache` never re-fetches the partition on its own.
 - **Every year backtest now prints the hurdle it has to clear** — `backtest_2020`
   / `2022` / `2024` / `2025` / `2026` end with a `backtest_verdict(...)` block
   listing each strategy's t-statistic and BHY-adjusted p-value, the best-of-N
