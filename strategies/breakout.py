@@ -12,9 +12,9 @@ class BreakoutStrategy(BaseStrategy):
     version = "V1"
     color = "#f59e0b"
     description = (
-        "Price breaks above the 20-bar high with ≥1.5× average volume. "
-        "Price above SMA(50). RSI above 50 and rising. "
-        "Range filter rejects abnormally wide days."
+        "Intrabar high breaks above the prior 20-bar high with ≥1.5× average volume. "
+        "Price above SMA(50). RSI at least 50 and rising. "
+        "Current range must be ≤1.3× the prior 10-bar average range."
     )
     params_display = ["SL 8%", "TP 3×ATR [5%–15%]", "Time stop 7 sessions if breakeven+", "Volume 1.5×"]
 
@@ -26,11 +26,14 @@ class BreakoutStrategy(BaseStrategy):
             return None
         if not (row["close"] > row["sma_slow"]):
             return None
-        look = df.iloc[idx - p.breakout_range_lookback: idx + 1]
-        recent_range = (look["high"] - look["low"]).mean()
-        avg_range = look["high"].rolling(p.breakout_range_lookback).mean() - look["low"].rolling(p.breakout_range_lookback).mean()
-        avg_range_val = float(avg_range.iloc[-1]) if pd.notna(avg_range.iloc[-1]) else recent_range
-        if recent_range > avg_range_val * p.breakout_range_mult and not np.isnan(avg_range_val):
+        prior = df.iloc[idx - p.breakout_range_lookback: idx]
+        prior_ranges = prior["high"] - prior["low"]
+        current_range = float(row["high"] - row["low"])
+        if (not np.isfinite(current_range)
+                or not np.isfinite(prior_ranges.to_numpy()).all()):
+            return None
+        avg_range = float(prior_ranges.mean())
+        if current_range > avg_range * p.breakout_range_mult:
             return None
         if pd.isna(row["sma_vol"]) or row["volume"] < row["sma_vol"] * p.breakout_volume_mult:
             return None

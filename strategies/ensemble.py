@@ -30,9 +30,9 @@ class EnsembleStrategy(BaseStrategy):
     description = (
         "Weighted vote of all 5 base strategies must score ≥ 0.30. "
         "Weights: Regime 35%, MACD 25%, Trend 20%, Breakout 15%, Mean Rev 5%. "
-        "Enters only when multiple strategies agree."
+        "At least 2 strategies must agree."
     )
-    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6 sessions if breakeven+", "Score ≥ 0.30"]
+    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6 sessions if breakeven+", "Score ≥0.30 + 2 votes"]
 
     def __init__(self):
         super().__init__()
@@ -52,9 +52,10 @@ class EnsembleStrategy(BaseStrategy):
             return None
 
         signals = {name: s.check_entry(df, idx, p) for name, s in self._members.items()}
-        score = sum(ENSEMBLE_WEIGHTS.get(name, 0) for name, sig in signals.items() if sig is not None)
+        active = [name for name, signal in signals.items() if signal is not None]
+        score = sum(ENSEMBLE_WEIGHTS.get(name, 0) for name in active)
 
-        if score < 0.30:
+        if score < 0.30 or len(active) < p.ensemble_min_votes:
             return None
 
         entry = float(row["close"])

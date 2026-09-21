@@ -95,10 +95,12 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 **The idea:** Buy when a stock breaks to a new high, signalling that buyers have overwhelmed sellers at a prior resistance level.
 
 **Business logic:**
-- Price must close above the highest high seen in the last 20 days
+- The current candle's high must exceed the highest high from the prior 20 bars;
+  the close does not have to remain above that level
 - Volume must be at least 1.5× the 20-day average volume (conviction confirmation — big players are involved)
-- The daily price range must not be unusually wide (avoids chasing exhaustion moves)
-- RSI must be above 50 and rising (momentum is with the breakout)
+- The current high-low range must be no more than 1.3× the average range of the
+  prior 10 completed bars (avoids chasing exhaustion moves)
+- RSI must be at least 50 and rising (momentum is with the breakout)
 
 **In plain terms:** Stocks often consolidate below a price ceiling for weeks, then burst through when demand surges. This strategy catches that burst early with volume as evidence that the move is real.
 
@@ -112,7 +114,7 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 **Business logic:**
 - The stock must still be above its 50-day moving average (long-term uptrend intact)
-- RSI must have been below 50 recently (oversold condition)
+- RSI must have reached 50 or lower recently (the configured pullback condition)
 - Price must be trading below its 20-day moving average by at least a small margin (stretched to the downside)
 - Today must show a bounce — today's close above yesterday's close
 
@@ -151,7 +153,7 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 **In plain terms:** Markets go through phases. In a bull phase, you lean in aggressively. In a bear phase, you wait for extreme oversold conditions and use tighter risk. In between, you trade normally. Most strategies ignore this context entirely — this one doesn't.
 
-**Exit:** 10% stop loss (risk-on: 12%, risk-off: 10%) · 3–8% take profit · 5-session time stop
+**Exit:** Adaptive stop loss (risk-on: 12%, risk-off: 7%, neutral: 10%) · 3–8% take profit · 5-session time stop
 
 ---
 
@@ -172,24 +174,31 @@ For the six bracket strategies, take-profit targets are **dynamically sized** us
 
 ---
 
-### 7. Ensemble (V2) — Recommended
+### 7. Ensemble (V2)
 
-**The idea:** Instead of picking one strategy, run all five simultaneously and only trade when multiple strategies agree — reducing false signals and improving confidence.
+**The idea:** Run all five base strategies simultaneously and trade only when
+multiple strategies meet the configured weighted-vote gate.
 
 **How it works:**
-Each of the five base strategies casts a vote (signal or no signal) on each bar. Votes are **weighted by historical P&L performance**:
+Each base strategy casts a vote (signal or no signal) on each bar. The current
+weights were originally selected from historical P&L; F16 changed the vote gate,
+so those rankings do not validate the corrected Ensemble:
 
 | Strategy | Weight | Rationale |
 |----------|--------|-----------|
-| Regime Adaptive | 35% | Best overall performer (+$325 combined) |
-| MACD Momentum | 25% | Consistent across both years |
-| Trend Pullback | 20% | Solid baseline with earnings filter |
-| Breakout | 15% | Good in trend years, noisy in flat years |
-| Mean Reversion | 5% | Weakest performer, small weight |
+| Regime Adaptive | 35% | Highest weight in the pre-F16 tuning |
+| MACD Momentum | 25% | Second-highest pre-F16 weight |
+| Trend Pullback | 20% | Middle pre-F16 weight |
+| Breakout | 15% | Lower pre-F16 weight |
+| Mean Reversion | 5% | Lowest pre-F16 weight |
 
-A trade only opens when the weighted agreement score reaches **≥ 0.30** (30%). This filters out low-conviction setups where only one or two weak signals agree.
+A trade only opens when the weighted agreement score reaches **≥ 0.30** (30%)
+and at least **two strategies** signal. This prevents the 35% Regime vote from
+opening an Ensemble trade by itself.
 
-**In plain terms:** No single strategy wins all the time. The ensemble acts like a committee — a trade only happens when enough of the committee agrees. The committee members are weighted by how well they've actually performed historically. Result: fewer trades, higher quality.
+**In plain terms:** The ensemble acts like a weighted committee. A trade requires
+two members and enough combined weight. Whether this improves trade quality under
+the corrected rules remains to be measured.
 
 **Exit:** 9% stop loss · 4–12% take profit (2.5× ATR) · 6-session time stop
 
@@ -217,7 +226,7 @@ SMA 50 Cross uses a separate daily lifecycle: a 10% emergency stop has priority,
 | **RSI(14)** | Relative Strength Index — momentum and overbought/oversold | Six bracket strategies |
 | **ATR(14)** | Average True Range — volatility used to size take-profit targets | Six bracket strategies |
 | **MACD(12,26,9)** | Moving Average Convergence Divergence — momentum crossover | MACD Momentum, Ensemble |
-| **Bollinger Bands(20)** | Price channel around moving average — deviation measure | Mean Reversion |
+| **Bollinger Bands(20)** | Diagnostic price channel; not an entry predicate | Diagnostic output only |
 | **Volume SMA(20)** | Average volume baseline | Breakout, MACD Momentum |
 
 ---
@@ -238,8 +247,10 @@ the year, and resets to $1,000 for the next year.
 | **Regime Adaptive** | **+$196.45** | **+$207.28** | **+$403.73** |
 | **SMA 50 Cross (daily)** | **+$117.12** | **+$146.19** | **+$263.31** |
 
-*Generated 2026-07-18 from Alpaca SIP bars. The 2026 column is year-to-date
-through the latest completed data, not a full calendar year.*
+*Generated 2026-07-18 from Alpaca SIP bars. These figures predate the F16
+Breakout, Ensemble, and Regime corrections and require regeneration before they
+represent current rules. The 2026 column is year-to-date through the latest
+completed data, not a full calendar year.*
 
 ---
 

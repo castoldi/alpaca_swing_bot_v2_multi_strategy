@@ -71,7 +71,7 @@ def entry_frame(name):
         sma_slow=90., sma_fast=95., sma_vol=100., atr=2., bb_lower=100.,
         rsi=40., macd=1., macd_hist=-1., ema_short=95., ema_long=90., near_earnings=False,
     ), index=pd.date_range('2026-01-01', periods=65))
-    frame.loc[frame.index[-1], ['open', 'high', 'low', 'close', 'rsi', 'macd_hist']] = [99, 102, 98, 100, 60, 1]
+    frame.loc[frame.index[-1], ['open', 'high', 'low', 'close', 'rsi', 'macd_hist']] = [99, 101, 99, 100, 60, 1]
     if name == 'mean_reversion':
         frame['sma_fast'] = 110.
     return frame

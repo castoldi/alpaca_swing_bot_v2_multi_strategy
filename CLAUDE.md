@@ -141,11 +141,11 @@ All 8 strategies live in `strategies/`. The six bracket strategies exit through 
 | Strategy | Key entry condition | SL | TP | Max hold |
 |----------|--------------------|----|-----|---------|
 | `trend_pullback` | Price > SMA(50), RSI dipped < 55, bounce bar. Earnings filter (3d before skip). | 10% | 2×ATR [3%–8%] | 5d |
-| `breakout` | Price breaks 20-bar high, ≥1.5× avg volume, RSI > 50 rising | 8% | 3×ATR [5%–15%] | 7d |
-| `mean_reversion` | Price > SMA(50) but < SMA(20), RSI < 50, near Bollinger lower band, bounce | 7% | 1.5×ATR [1.5%–5%] | 3d |
+| `breakout` | Intrabar high breaks prior 20-bar high; ≥1.5× volume; range ≤1.3× prior average; RSI ≥50 rising | 8% | 3×ATR [5%–15%] | 7d |
+| `mean_reversion` | Price > SMA(50), ≥0.5% below SMA(20), RSI reached ≤50 in 7 bars, bounce | 7% | 1.5×ATR [1.5%–5%] | 3d |
 | `momentum_macd` | MACD hist just crossed above 0, RSI > 50 rising, price > SMA(20) & SMA(50) | 9% | 2.5×ATR [4%–12%] | 6d |
-| `regime` | EMA(10)/EMA(50) regime: risk-on = buy dips, risk-off = oversold bounces, neutral = trend-like | adaptive | ATR-based [3%–8%] | 5d |
-| `ensemble` | Weighted vote ≥ 0.30 across all 5 base strategies (regime 35%, MACD 25%, trend 20%, breakout 15%, MR 5%) | 9% | 2.5×ATR [4%–12%] | 6d |
+| `regime` | EMA regime: risk-on dips (12% stop), risk-off oversold bounces (7% stop), neutral trend-like (10% stop) | adaptive | ATR-based [3%–8%] | 5d |
+| `ensemble` | Weighted vote ≥0.30 and ≥2 members (regime 35%, MACD 25%, trend 20%, breakout 15%, MR 5%) | 9% | 2.5×ATR [4%–12%] | 6d |
 | `tqqq_momentum` | **TQQQ only.** TSI(25,13,13) crosses above its signal line | 8% (gap insurance) | none — exits on 4h close < EMA(50) | n/a |
 
 `bot.py` entry dispatch: `get_entry_checker(strategy)` returns the matching `check_entry_*` function.

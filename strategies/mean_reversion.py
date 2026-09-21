@@ -12,11 +12,11 @@ class MeanReversionStrategy(BaseStrategy):
     version = "V1"
     color = "#a78bfa"
     description = (
-        "Price above SMA(50) but below SMA(20) (pullback). RSI pulled back below 50. "
-        "Price near or below Bollinger lower band (2.2σ). "
+        "Price above SMA(50) and at least 0.5% below SMA(20). "
+        "RSI reached 50 or lower within the last 7 bars. "
         "Bounce confirmed by close > prev close."
     )
-    params_display = ["SL 7%", "TP 1.5×ATR [1.5%–5%]", "Time stop 3 sessions if breakeven+", "Bollinger 2.2σ"]
+    params_display = ["SL 7%", "TP 1.5×ATR [1.5%–5%]", "Time stop 3 sessions if breakeven+", "≥0.5% below SMA(20)"]
 
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         if idx < max(p.sma_slow, p.rsi_period, p.atr_period, p.mr_sma_fast) + 1:
@@ -24,7 +24,7 @@ class MeanReversionStrategy(BaseStrategy):
         row = df.iloc[idx]
         prev = df.iloc[idx - 1]
         if (pd.isna(row["sma_slow"]) or pd.isna(row["atr"])
-                or pd.isna(row["bb_lower"]) or pd.isna(row["rsi"])):
+                or pd.isna(row["rsi"])):
             return None
         if not (row["close"] > row["sma_slow"]):
             return None

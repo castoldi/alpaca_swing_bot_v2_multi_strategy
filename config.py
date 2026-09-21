@@ -208,6 +208,7 @@ class StrategyParams:
     mr_tp_floor_pct: float = 0.015
     mr_max_holding_days: int = 3
     mr_stop_loss_pct: float = 0.07
+    # Diagnostic band displayed by shared indicators; not an entry predicate.
     mr_bollinger_mult: float = 2.2
 
     # ── V2: MACD Momentum ────────────────────────────────────────────────

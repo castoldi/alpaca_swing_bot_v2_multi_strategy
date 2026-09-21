@@ -28,7 +28,7 @@ class RegimeAdaptiveStrategy(BaseStrategy):
         "Risk-off: defensive oversold bounces only. "
         "Neutral: standard trend-pullback style."
     )
-    params_display = ["SL adaptive", "TP 2×ATR [3%–8%]", "Time stop 5 sessions if breakeven+", "EMA(10/50)"]
+    params_display = ["SL risk-on 12% / risk-off 7% / neutral 10%", "TP 2×ATR [3%–8%]", "Time stop 5 sessions if breakeven+", "EMA(10/50)"]
 
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         if idx < max(p.sma_slow, p.rsi_period, p.atr_period, p.regime_lookback) + 2:
@@ -51,7 +51,7 @@ class RegimeAdaptiveStrategy(BaseStrategy):
                 return None
             if not (row["close"] > prev["close"]):
                 return None
-            sl_mult = p.stop_loss_pct
+            sl_mult = p.regime_risk_off_mult * p.stop_loss_pct
         else:
             if not (row["close"] > row["sma_slow"] and row["rsi"] > 40):
                 return None

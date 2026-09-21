@@ -6,8 +6,9 @@
 
 ## Current remediation status — updated 2026-09-21
 
-**F01–F15 are fixed; F16 remains open. Next: F16, strategy descriptions,
-unused parameters and ineffective guards.** Original findings and baseline reproductions are retained below;
+**F01–F16 are fixed. No numbered review finding remains open. Next: regenerate
+corrected strategy baselines, then address the risk-reporting limitations below.**
+Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
@@ -21,6 +22,7 @@ each fixed finding has a resolution and validation record.
 | F13: reconciliation independent of entry scan success | v0.24.18, `0cbe3e6`, pushed 2026-09-16 | 716 tests passed, including 26 new cases; independent review complete |
 | F14: RSI boundaries, explicit warmup and missing-value entry guards | v0.24.19, `cf57510`, pushed 2026-09-17 | 752 tests passed, including 36 new cases; independent review complete |
 | F15: shared optimizer/annual risk execution and frozen trial inputs | v0.24.20, `f4d31c4`, pushed 2026-09-21 | 794 tests passed, including 36 new cases; independent review complete; both services healthy |
+| F16: strategy predicates, effective parameters and truthful descriptions | v0.24.21; release verification pending | 805 tests passed, including 11 new cases; independent review complete; both services healthy |
 
 The F07/F08/F09/F10/F11/F12/F13/F14/F15 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
@@ -61,7 +63,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F13 — **FIXED** | P2 | An entry-processing exception can skip all exit reconciliation | Fixed in v0.24.18; independent reconciliation and ticker failure isolation |
 | F14 — **FIXED** | P2 | RSI treats an uninterrupted rise as neutral | Fixed in v0.24.19; edge values, explicit warmup and strategy guard regressions |
 | F15 — **FIXED** | P2 | Optimizer tests a different timeframe/universe and ineffective parameters | Fixed in v0.24.20; shared runner, baseline risk and trial-snapshot regressions |
-| F16 | P2 | Advertised strategy guards and parameters do not control the stated rules | Source + synthetic reproduction |
+| F16 — **FIXED** | P2 | Advertised strategy guards and parameters do not control the stated rules | Fixed in v0.24.21; prior-range, vote-count, stop-distance and description regressions |
 
 ## Detailed findings
 
@@ -69,7 +71,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F16 is the next unresolved finding following the F15 resolution below.
+All numbered findings are resolved following the F16 correction below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -212,7 +214,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F16 (strategy rules and descriptions).**
+F06 and F16 were subsequently fixed as recorded below. **Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -277,7 +279,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F16 (strategy rules and descriptions).**
+suppressed. F06 and F16 were subsequently fixed as recorded below. **Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -327,7 +329,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -373,7 +375,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -421,7 +423,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -473,7 +475,7 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -532,7 +534,7 @@ The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
 source and lacks attributes needed for automatic minute execution; it was not
 validated end to end. Feed alignment does not resolve the remaining findings.
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -591,7 +593,7 @@ remain research approximations. Existing backtest reports were not regenerated
 or retuned; their performance claims require re-evaluation after these fixes.
 Detailed policy: [holding-period policy](holding-period.md).
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -656,7 +658,7 @@ this change does not relax protection-identity requirements. Missing broker fill
 timestamps remain unknown under F11's policy. Historical closed records are not
 rewritten and saved market backtests were not rerun. F13 was subsequently fixed below.
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -717,7 +719,7 @@ a cycle. Existing per-trade reconciliation guards continue to defer unsafe actio
 missing signal data never authorizes an exit. No strategy rules, holding-period
 policy, broker ownership checks or saved backtest reports were changed.
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -779,11 +781,11 @@ IEX. Dashboard: http://192.168.0.191:8004.
 An RSI saturated at 100 is not rising and still fails a rising-RSI entry rule.
 Existing EWM treatment of interior missing observations is unchanged; this does
 not redesign market-data cleaning or smoothing initialization. Existing strategy
-thresholds are preserved (including Breakout's inclusive 50 boundary); advertised
-rule/implementation differences remain F16. Saved backtests/reports have not been
-rerun and historical performance claims have not been revalidated or retuned.
+thresholds are preserved (including Breakout's inclusive 50 boundary). F16 was
+subsequently fixed below. Saved backtests/reports have not been rerun and historical
+performance claims have not been revalidated or retuned.
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -857,10 +859,10 @@ spaces are deliberately limited; binding stops/targets can make distinct setting
 produce identical trades. Historical earnings gaps still suppress signals. No
 saved market backtests/reports were regenerated, no prior winner was revalidated,
 no trading parameters were promoted, and improved returns are not established.
-F16's strategy-rule discrepancies remain separate work. Full usage/policy:
+F16's strategy-rule discrepancies were subsequently fixed below. Full usage/policy:
 [optimizer execution and evidence policy](optimizer-policy.md).
 
-**Next unresolved finding: F16 (strategy rules and descriptions).**
+**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -875,6 +877,58 @@ The random search always mutates the same four Trend Pullback-oriented fields. B
 **Regression:** spy on source requests to verify TQQQ-only/4h and SMA-only/daily cases; compare optimizer baseline trades with the annual runner; verify each searched parameter affects its intended rule on a controlled fixture.
 
 ### F16 — Several strategy descriptions do not match their predicates
+
+**Status: FIXED** in v0.24.21 (2026-09-21). Release verification pending.
+
+**Resolution:** Breakout now compares the current high-low range with the average
+of the prior 10 completed bars, excluding the candle being judged. Its range
+multiplier therefore controls a real rejection boundary. The existing intrabar
+high break remains authoritative; descriptions now state that the close need not
+hold above the prior high.
+
+Mean Reversion retains its actual SMA-deviation design: price must be above
+SMA(50), at least 0.5% below SMA(20), recently at or below the configured RSI
+threshold, and bouncing. The unused lower-Bollinger availability gate was removed.
+`mr_bollinger_mult` remains a shared diagnostic-indicator setting and is explicitly
+not an entry rule; the prior experiment's Bollinger attribution is corrected in
+`research/experiments.md`.
+
+Ensemble now requires both weighted score ≥0.30 and the configured minimum vote
+count (two by default), so Regime's 0.35 weight cannot enter alone. Regime Adaptive
+risk-off stops now apply `regime_risk_off_mult`; defaults produce 12% risk-on, 7%
+risk-off and 10% neutral stop distances. No close-confirmed breakout or Bollinger
+proximity rule was added because either would be a separate unvalidated strategy.
+
+**Validation:** the red phase reproduced seven failures: wide Breakout acceptance,
+an ineffective range multiplier, missing current/prior range evidence passing,
+the diagnostic Bollinger value blocking Mean Reversion, a single Regime vote
+entering Ensemble, and the unused defensive stop multiplier. After correction,
+107 focused strategy, RSI, earnings and optimizer tests passed. The fresh full
+suite passed **805 tests**, including 11 new F16 cases, with one existing dependency
+deprecation warning. Test databases were isolated and subprocesses were windowless.
+Independent review found no actionable issues and separately passed all 11 F16
+tests; it specifically checked the two Ensemble gates, all regime stop branches,
+missing range evidence, preserved entry behavior and documentation consistency.
+
+**Activation:** saved and integrity-checked
+`run/backups/before-f16-20260921T182002Z.db`, then restarted the dashboard and bot
+through `scripts/manage.ps1`. Final status: one HEALTHY bot (PID 10964) and one
+HEALTHY dashboard (PID 45508), dashboard HTTP 200, and database integrity `ok`.
+Ensemble, the 30-minute interval, IEX and full adjustment are preserved. All four
+open trade rows remained present. The first reloaded cycle completed normally:
+three existing-position signals, zero orders, and no error.
+
+**Limits:** saved backtests, reports and performance tables were not regenerated.
+Existing Breakout, Ensemble and Regime results predate these corrections and are
+now labeled historical pending revalidation. The fixes establish rule consistency,
+not improved returns. No broker orders or real market-data replay were used in the
+validation; the activation cycle placed no orders.
+
+**Next work:** no numbered finding remains. Regenerate corrected baselines before
+using performance rankings, then address the mark-to-market, sizing, price-basis,
+selection-bias, candidate-ordering and dashboard-access limitations below.
+
+The description below records the original reviewed baseline.
 
 **Locations:** [strategies/breakout.py](../strategies/breakout.py), lines 29–44; [strategies/mean_reversion.py](../strategies/mean_reversion.py), lines 25–39; [strategies/ensemble.py](../strategies/ensemble.py), lines 15–22 and 52–56; [strategies/regime_adaptive.py](../strategies/regime_adaptive.py), risk branches; [config.py](../config.py), `regime_risk_off_mult`.
 
@@ -892,7 +946,7 @@ The random search always mutates the same four Trend Pullback-oriented fields. B
 
 ## Additional limitations affecting performance interpretation
 
-1. **Drawdown is primarily realized-only.** Annual `compute_max_drawdown` and the portfolio equity curve omit unrealized excursions between exits. A position that falls deeply and recovers can show little realized drawdown. The optimizer has an additional definite bug: it omits initial equity from the peak series; a single $100 loss on a $1,000 account reports **0%** maximum drawdown instead of 10%. Use daily or finer mark-to-market equity with an initial observation.
+1. **Drawdown is primarily realized-only.** Annual `compute_max_drawdown` and the portfolio equity curve omit unrealized excursions between exits. A position that falls deeply and recovers can show little realized drawdown. F15 fixed the optimizer's missing initial-equity peak, but it remains a realized-equity measure. Use daily or finer mark-to-market equity with an initial observation.
 2. **Sizing parity is incomplete.** `run_annual_portfolio` sizes from initial equity plus realized P&L and tracks leveraged exposure at cost; live sizing reads account equity and position market value. With unrealized moves they diverge. The annual reset convention is intentional, but its mean yearly ROI is not a continuous-account CAGR.
 3. **Fully adjusted prices change historical whole-share affordability.** Even a consistent split-adjusted series can make a stock appear affordable in a $200 historical allocation when its then-traded nominal share price was much higher. Use corporate-action-aware raw execution prices/quantities, or clearly label the result as an adjusted-price approximation. Dividend-adjusted execution prices also need an explicit cash-dividend accounting convention.
 4. **Selection bias remains after multiple-testing correction.** Today's five-name universe is concentrated in technology/growth; replaying it over history does not test how a universe would have been chosen then. Earlier research already used 2025/2026 and much of 2016–2026. Those periods cannot now become untouched validation data by relabeling them. Per-trade returns overlap across correlated names; a month bootstrap by entry date does not fully reproduce account-level daily exposure or cross-month holdings.

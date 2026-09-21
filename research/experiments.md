@@ -35,7 +35,8 @@ Sources used for operational risk decisions: [Alpaca OTO orders](https://docs.al
 **Change:** Modified `config.py` `StrategyParams`:
 - `mr_rsi_oversold`: 48.0 → 50.0 (wider net for "oversold")
 - `mr_deviation_pct`: 0.01 → 0.005 (price only needs 0.5% below SMA20, not 1%)
-- `mr_bollinger_mult`: 2.0 → 2.2 (wider Bollinger Band, more price action inside lower band)
+- `mr_bollinger_mult`: 2.0 → 2.2 (recorded at the time as a wider-band entry
+  change; F16 later established that the band was diagnostic and never gated entry)
 
 **Results:**
 
@@ -47,7 +48,10 @@ Sources used for operational risk decisions: [Alpaca OTO orders](https://docs.al
 | Ensemble 2026 | +$327.17 | +$329.92 | Slight improvement from MR votes |
 | All other strategies | Unchanged | Unchanged | No regressions |
 
-**Verdict: KEPT** — Both years improved. Mean Reversion is now generating +$12.43 combined with 20 trades across both years (up from 13). Still small vs other strategies but no longer dead.
+**Verdict at the time: KEPT** — Both years improved. Because the Bollinger field
+did not control entry, F16 invalidates attribution of the result to that field;
+the RSI and SMA-deviation changes were bundled in the same experiment. Treat the
+reported figures as historical, not isolated evidence for a Bollinger rule.
 
 **Goal:** Improve Ensemble strategy P&L by weighting strategies based on actual cross-year performance.
 
@@ -65,4 +69,6 @@ Sources used for operational risk decisions: [Alpaca OTO orders](https://docs.al
 | 2026 P&L | +$113.36 | **+$319.11** | +$205.75 ✅ |
 | Combined | +$85.21 | **+$513.55** | +$428.34 ✅✅ |
 
-**Verdict: KEPT** — Both years improved dramatically. Ensemble is now the #1 strategy by P&L.
+**Verdict at the time: KEPT** — Both years improved in that run. F16 later added
+the advertised two-member requirement and corrected member behavior, so the #1
+ranking and recommendation are withdrawn pending corrected baseline regeneration.

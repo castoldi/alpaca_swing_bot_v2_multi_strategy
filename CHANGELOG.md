@@ -332,6 +332,36 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.21] - 2026-09-21
+
+### Added
+
+- Eleven focused F16 regressions covering prior-range breakout rejection,
+  missing range evidence and its multiplier, preserved intrabar-high behavior,
+  Bollinger-independent Mean Reversion, both Ensemble gates, and all three
+  regime stop branches.
+
+### Fixed
+
+- **F16 — strategy predicate/documentation alignment:** compare a Breakout
+  candle's range with the prior 10 completed ranges, require the configured two
+  Ensemble votes as well as score ≥0.30, and apply `regime_risk_off_mult` to the
+  defensive stop.
+
+### Changed
+
+- Describe Breakout as an intrabar-high rule and Mean Reversion as an SMA
+  deviation rule. Bollinger bands remain diagnostic indicators and no longer
+  gate Mean Reversion merely by being non-missing. Updated README, agent guidance,
+  research history, and the review record; pre-F16 performance is explicitly
+  marked for revalidation.
+- Validation: 805 tests passed (11 new F16 cases); independent review found no
+  actionable issues and separately passed all 11 cases. Backed up and
+  integrity-checked SQLite, reloaded one bot and dashboard instance through the
+  singleton manager, preserved ensemble/30 minutes/IEX and all four open trade
+  rows, and observed the first cycle complete with zero orders.
+
 ## [0.24.20] - 2026-09-21
 
 ### Fixed
