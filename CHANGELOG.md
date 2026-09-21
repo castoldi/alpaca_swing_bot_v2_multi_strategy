@@ -361,6 +361,8 @@ _Changes landed but not yet released under a new version number go here._
   both HEALTHY, dashboard HTTP 200, ensemble/30 minutes/IEX preserved. Recorded
   the manager restart/PID recovery and F16 as the next unresolved finding in the
   review document. Existing backtest results were not regenerated or revalidated.
+- Release commit `f4d31c4` and tag `v0.24.20+build105-20260921-101552`
+  verified on the remote; bot completed its first reloaded cycle without errors.
 
 ## [0.24.19] - 2026-09-17
 

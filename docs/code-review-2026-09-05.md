@@ -20,9 +20,9 @@ each fixed finding has a resolution and validation record.
 | F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17, `b495dba`, pushed 2026-09-16 | 690 tests passed, including 26 new cases; independent review complete |
 | F13: reconciliation independent of entry scan success | v0.24.18, `0cbe3e6`, pushed 2026-09-16 | 716 tests passed, including 26 new cases; independent review complete |
 | F14: RSI boundaries, explicit warmup and missing-value entry guards | v0.24.19, `cf57510`, pushed 2026-09-17 | 752 tests passed, including 36 new cases; independent review complete |
-| F15: shared optimizer/annual risk execution and frozen trial inputs | v0.24.20; release verification pending | 794 tests passed, including 36 new cases; independent review complete; both services healthy |
+| F15: shared optimizer/annual risk execution and frozen trial inputs | v0.24.20, `f4d31c4`, pushed 2026-09-21 | 794 tests passed, including 36 new cases; independent review complete; both services healthy |
 
-The F07/F08/F09/F10/F11/F12/F13/F14 release commits and their build tags were verified on the remote.
+The F07/F08/F09/F10/F11/F12/F13/F14/F15 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -799,7 +799,10 @@ Zero average loss is converted to NaN, then every NaN is filled with 50. With po
 
 ### F15 — Optimizer results are not production-strategy results
 
-**Status: FIXED** in v0.24.20 (2026-09-21). Release verification pending.
+**Status: FIXED** in v0.24.20 (2026-09-21), commit
+`f4d31c484e207d4090d503c1662aee5d4dc1e872`, build tag
+`v0.24.20+build105-20260921-101552`. Both the release commit and dereferenced
+build tag were verified on `origin/main` and the remote tag respectively.
 
 **Current-code reproduction:** F10 already aligned the optimizer's provider/feed
 with the shared loader; the original yfinance assertion below is historical.
@@ -843,7 +846,8 @@ confirmed each service stopped, guarded `start-dashboard` and `start-bot` recove
 one healthy instance each. Final manager status: bot PID 11276 and dashboard PID
 43620, both HEALTHY; dashboard HTTP 200. Ensemble, 30-minute interval, IEX and full
 adjustment are preserved. Database `quick_check` returned `ok`, with zero open
-trade rows before and after activation. The manager's restart/PID race remains a
+trade rows before and after activation. The reloaded bot completed its first
+cycle without errors, with zero signals and zero orders. The manager's restart/PID race remains a
 separate operational issue; F15 does not modify lifecycle management.
 
 **Limits:** snapshots are experiment-local, not a permanent data archive or an
