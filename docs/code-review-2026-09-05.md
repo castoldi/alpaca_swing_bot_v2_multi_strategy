@@ -22,9 +22,9 @@ each fixed finding has a resolution and validation record.
 | F13: reconciliation independent of entry scan success | v0.24.18, `0cbe3e6`, pushed 2026-09-16 | 716 tests passed, including 26 new cases; independent review complete |
 | F14: RSI boundaries, explicit warmup and missing-value entry guards | v0.24.19, `cf57510`, pushed 2026-09-17 | 752 tests passed, including 36 new cases; independent review complete |
 | F15: shared optimizer/annual risk execution and frozen trial inputs | v0.24.20, `f4d31c4`, pushed 2026-09-21 | 794 tests passed, including 36 new cases; independent review complete; both services healthy |
-| F16: strategy predicates, effective parameters and truthful descriptions | v0.24.21; release verification pending | 805 tests passed, including 11 new cases; independent review complete; both services healthy |
+| F16: strategy predicates, effective parameters and truthful descriptions | v0.24.21, `2c8bf1d`, pushed 2026-09-21 | 805 tests passed, including 11 new cases; independent review complete; both services healthy |
 
-The F07/F08/F09/F10/F11/F12/F13/F14/F15 release commits and their build tags were verified on the remote.
+The F07/F08/F09/F10/F11/F12/F13/F14/F15/F16 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
 market backtests, regenerate saved reports, place orders, or require service
 restarts. Old significance verdicts remain unvalidated because complete saved
@@ -878,7 +878,10 @@ The random search always mutates the same four Trend Pullback-oriented fields. B
 
 ### F16 — Several strategy descriptions do not match their predicates
 
-**Status: FIXED** in v0.24.21 (2026-09-21). Release verification pending.
+**Status: FIXED** in v0.24.21 (2026-09-21), commit
+`2c8bf1d826ea0bc03d20929e8cf8b003ea294aff`, build tag
+`v0.24.21+build107-20260921-132933`. Both the release commit and dereferenced
+build tag were verified on `origin/main` and the remote tag respectively.
 
 **Resolution:** Breakout now compares the current high-low range with the average
 of the prior 10 completed bars, excluding the candle being judged. Its range

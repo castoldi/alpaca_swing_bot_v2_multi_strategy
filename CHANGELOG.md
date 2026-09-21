@@ -361,6 +361,8 @@ _Changes landed but not yet released under a new version number go here._
   integrity-checked SQLite, reloaded one bot and dashboard instance through the
   singleton manager, preserved ensemble/30 minutes/IEX and all four open trade
   rows, and observed the first cycle complete with zero orders.
+- Release commit `2c8bf1d` and tag `v0.24.21+build107-20260921-132933`
+  verified on the remote.
 
 ## [0.24.20] - 2026-09-21
 
