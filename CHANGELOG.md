@@ -17,6 +17,13 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **F01–F16 remediation verification** ([docs/code-review-2026-09-21-verification.md](docs/code-review-2026-09-21-verification.md)) —
+  confirms most fixes (805 tests pass; F08/F14 checked against SciPy/edge cases)
+  and records nine new items: same-bar live re-entry (P1, live ledger evidence),
+  after-hours bars skipped live but traded in backtests, live TQQQ 10% vs 8% stop,
+  manager restart `(pid=N)` failure (F03 incomplete), untested live Ensemble
+  2-vote change, earnings archive gap before 2026-09-14, missing alerts for
+  unprotected positions, shared-account kill switch, and doc accuracy.
 - **Bear-market playbook** ([docs/bear-market-playbook.md](docs/bear-market-playbook.md)) —
   one page on how much the bot loses in bears vs crashes and what to do about it.
   Adds two new tests: four external-data entry gates (VIX term structure, credit
