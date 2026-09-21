@@ -4,10 +4,10 @@
 **Code baseline:** `0063eafe3978cb463154ae3a9c70928f3bced7c1`, version `0.24.1`  
 **Scope:** order execution, reconciliation, singleton management, market data, shared indicators, all eight registered strategies, portfolio backtests, and research evaluation. Dashboard and tax integration were inspected selectively; this is not a comprehensive security or tax audit.
 
-## Current remediation status — updated 2026-09-17
+## Current remediation status — updated 2026-09-21
 
-**F01–F14 are fixed; F15–F16 remain open. Next: F15, optimizer alignment
-with production strategies and risk settings.** Original findings and baseline reproductions are retained below;
+**F01–F15 are fixed; F16 remains open. Next: F16, strategy descriptions,
+unused parameters and ineffective guards.** Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
 | Latest completed work | Release and commit | Validation |
@@ -20,6 +20,7 @@ each fixed finding has a resolution and validation record.
 | F12: actual terminal partial-entry quantity and basis across exit paths | v0.24.17, `b495dba`, pushed 2026-09-16 | 690 tests passed, including 26 new cases; independent review complete |
 | F13: reconciliation independent of entry scan success | v0.24.18, `0cbe3e6`, pushed 2026-09-16 | 716 tests passed, including 26 new cases; independent review complete |
 | F14: RSI boundaries, explicit warmup and missing-value entry guards | v0.24.19, `cf57510`, pushed 2026-09-17 | 752 tests passed, including 36 new cases; independent review complete |
+| F15: shared optimizer/annual risk execution and frozen trial inputs | v0.24.20; release verification pending | 794 tests passed, including 36 new cases; independent review complete; both services healthy |
 
 The F07/F08/F09/F10/F11/F12/F13/F14 release commits and their build tags were verified on the remote.
 One existing dependency deprecation warning remains. The F07–F09 fixes did not rerun
@@ -59,7 +60,7 @@ P1 means address before relying on the affected execution or research result. P2
 | F12 — **FIXED** | P2 | Terminal partial entries retain the wrong quantity and basis | Fixed in v0.24.17; verified entry refresh before all reconciliation exits |
 | F13 — **FIXED** | P2 | An entry-processing exception can skip all exit reconciliation | Fixed in v0.24.18; independent reconciliation and ticker failure isolation |
 | F14 — **FIXED** | P2 | RSI treats an uninterrupted rise as neutral | Fixed in v0.24.19; edge values, explicit warmup and strategy guard regressions |
-| F15 | P2 | Optimizer tests a different timeframe/universe and ineffective parameters | Source trace |
+| F15 — **FIXED** | P2 | Optimizer tests a different timeframe/universe and ineffective parameters | Fixed in v0.24.20; shared runner, baseline risk and trial-snapshot regressions |
 | F16 | P2 | Advertised strategy guards and parameters do not control the stated rules | Source + synthetic reproduction |
 
 ## Detailed findings
@@ -68,7 +69,7 @@ P1 means address before relying on the affected execution or research result. P2
 
 **Status: FIXED** in v0.24.3, commit `b9dd867ceaa823400491465764fc302a4771d2a1`.
 Validation: 415 tests passed, including 20 new ownership regression tests.
-F15 is the next unresolved finding following the F14 resolution below.
+F16 is the next unresolved finding following the F15 resolution below.
 
 **Resolution update — 2026-09-06, v0.24.3:** corrected bracket reconciliation to
 validate stored parent references and reconcile linked child fills before any
@@ -124,7 +125,7 @@ regular hours or at the stop price.
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
 was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F15 (optimizer/production alignment).**
+finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -211,7 +212,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 was subsequently fixed as recorded below. **Next unresolved finding: F15 (optimizer/production alignment).**
+F06 was subsequently fixed as recorded below. **Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -276,7 +277,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F15 (optimizer/production alignment).**
+suppressed. F06 was subsequently fixed as recorded below. **Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -326,7 +327,7 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -362,8 +363,8 @@ available to the simultaneous entry. Recovery re-enables entries, and the guard
 does not block exits.
 
 Sparse minute data carries the last observed price; this does not guarantee quote
-freshness. Historical/optimizer callers that omit price frames still have no guard
-(F15). Saved reports and database results have not been regenerated. Full valuation
+freshness. Historical/optimizer callers previously omitted price frames; F15 now
+requires valuation data for nonempty runs through their shared configured runner. Saved reports and database results have not been regenerated. Full valuation
 contract: [backtest execution model](backtest-execution.md).
 
 **Validation:** 565 tests passed, including 21 new F07 regressions, with one
@@ -372,7 +373,7 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -420,7 +421,7 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -472,7 +473,7 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -531,7 +532,7 @@ The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
 source and lacks attributes needed for automatic minute execution; it was not
 validated end to end. Feed alignment does not resolve the remaining findings.
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -590,7 +591,7 @@ remain research approximations. Existing backtest reports were not regenerated
 or retuned; their performance claims require re-evaluation after these fixes.
 Detailed policy: [holding-period policy](holding-period.md).
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -655,7 +656,7 @@ this change does not relax protection-identity requirements. Missing broker fill
 timestamps remain unknown under F11's policy. Historical closed records are not
 rewritten and saved market backtests were not rerun. F13 was subsequently fixed below.
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -716,7 +717,7 @@ a cycle. Existing per-trade reconciliation guards continue to defer unsafe actio
 missing signal data never authorizes an exit. No strategy rules, holding-period
 policy, broker ownership checks or saved backtest reports were changed.
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -782,7 +783,7 @@ thresholds are preserved (including Breakout's inclusive 50 boundary); advertise
 rule/implementation differences remain F16. Saved backtests/reports have not been
 rerun and historical performance claims have not been revalidated or retuned.
 
-**Next unresolved finding: F15 (optimizer/production alignment).**
+**Next unresolved finding: F16 (strategy rules and descriptions).**
 
 The description below records the original reviewed baseline.
 
@@ -797,6 +798,67 @@ Zero average loss is converted to NaN, then every NaN is filled with 50. With po
 **Regression:** rising, falling, flat, and mixed series; compare standard nondegenerate calculations and preserve strategy warmup requirements.
 
 ### F15 — Optimizer results are not production-strategy results
+
+**Status: FIXED** in v0.24.20 (2026-09-21). Release verification pending.
+
+**Current-code reproduction:** F10 already aligned the optimizer's provider/feed
+with the shared loader; the original yfinance assertion below is historical.
+The daily-only timeframe, ordinary ticker universe, omitted valuation frames and
+universal Trend Pullback parameter search remained. Custom risk/tax values also
+fell back to globals in the portfolio engine, and fresh trial parameter objects
+reset settings outside the search fields.
+
+**Resolution:** optimizer trials now delegate to the annual strategy runner with
+registered timeframe/universe, shared feed/adjustment policy and explicit minute
+execution. Annual and historical portfolios share the same configured risk path;
+nonempty candidates require valuation data. Initial equity, sizing, daily loss,
+leveraged exposure and tax settings are taken from each supplied parameter set.
+The historical helper now requires `price_frames` and accepts explicit `params`.
+
+Each search loads signal prices, matching minute execution/valuation prices
+(including the preceding session close), and archived earnings evidence once.
+Private dataset copies supply fresh copies per trial, and input fingerprints
+include prices, timestamps, metadata and earnings history. Parameters are replaced
+on the supplied baseline. Sixteen tested fields cover all eight strategies;
+unused/disputed F16 parameters are excluded. Exact repeated configurations reuse
+computation but remain counted in the significance panel. Results/logs distinguish
+attempts, distinct configurations and repeats, and retain full settings and source
+identity. Realized drawdown now includes the initial equity peak and supplied
+starting balance.
+
+**Validation:** the fresh full suite passed **794 tests** on 2026-09-21, including
+36 new F15 cases, with one existing dependency deprecation warning. This includes
+six tests from unrelated changes that landed during the pause. F15 regressions
+cover annual/optimizer parity, all 16 searched fields, universe/timeframe selection,
+custom sizing/leverage/loss/tax settings, initial-peak drawdown, frozen earnings and
+price data, provenance, duplicate accounting and invalid inputs. Independent review
+found no actionable defects and separately passed the 41 optimizer/history tests.
+The full suite used isolated databases and suppressed child console windows;
+verification used fixtures rather than real market-data replay or broker orders.
+
+**Activation:** created and checked the SQLite backup
+`run/backups/before-f15-20260921T151406Z.db`. Both manager restart commands stopped
+the old service but returned a PID error before replacement. After manager status
+confirmed each service stopped, guarded `start-dashboard` and `start-bot` recovered
+one healthy instance each. Final manager status: bot PID 11276 and dashboard PID
+43620, both HEALTHY; dashboard HTTP 200. Ensemble, 30-minute interval, IEX and full
+adjustment are preserved. Database `quick_check` returned `ok`, with zero open
+trade rows before and after activation. The manager's restart/PID race remains a
+separate operational issue; F15 does not modify lifecycle management.
+
+**Limits:** snapshots are experiment-local, not a permanent data archive or an
+atomic multi-instrument provider read. Separately loaded experiments can use
+revised data; retain inputs for future replay and compare fingerprints. Parameter
+spaces are deliberately limited; binding stops/targets can make distinct settings
+produce identical trades. Historical earnings gaps still suppress signals. No
+saved market backtests/reports were regenerated, no prior winner was revalidated,
+no trading parameters were promoted, and improved returns are not established.
+F16's strategy-rule discrepancies remain separate work. Full usage/policy:
+[optimizer execution and evidence policy](optimizer-policy.md).
+
+**Next unresolved finding: F16 (strategy rules and descriptions).**
+
+The description below records the original reviewed baseline.
 
 **Locations:** [research/optimizer.py](../research/optimizer.py), lines 36–85 and 166–203; [backtest_history.py](../backtest_history.py), `run_independent_annual_portfolios`.
 

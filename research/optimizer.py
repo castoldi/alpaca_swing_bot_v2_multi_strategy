@@ -1,11 +1,14 @@
 """Research optimizer — parameter tuning via grid/random search for strategy improvement."""
 from __future__ import annotations
 
-import itertools
 import random
 from datetime import date
+from dataclasses import asdict, replace
+from copy import deepcopy
+import hashlib
+import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -13,11 +16,8 @@ import pandas as pd
 from config import PARAMS, TICKERS, StrategyParams, StrategyType
 from logger_setup import get_logger
 from strategy import Trade
-from strategies import REGISTRY
-from backtest_portfolio import (
-    collect_backtest_candidates,
-    run_annual_portfolio,
-)
+from strategies import REGISTRY, strategy_universe
+from research.optimizer_data import BacktestDataset
 from research.significance import (
     SignificanceReport,
     evaluate_search,
@@ -33,48 +33,57 @@ REPORTS_DIR = ROOT / "reports"
 
 # ── Data helper ──────────────────────────────────────────────────────────────
 
-def download_history(ticker: str, start: date, end: date) -> pd.DataFrame:
-    # Signal and minute execution prices must share feed/adjustment provenance.
-    # The optimizer's existing daily signal timeframe remains tracked in F15.
+def download_history(ticker: str, start: date, end: date, timeframe: str) -> pd.DataFrame:
     from backtest_2025 import download_history as shared_history
-    return shared_history(ticker, start, end, '1d')
+    return shared_history(ticker, start, end, timeframe)
+
+
+def load_dataset(strategy: StrategyType, year: int) -> BacktestDataset:
+    """Load one immutable market/earnings snapshot before any trial runs."""
+    from backtest_execution import load_execution_bars
+    from backtest_valuation import previous_session_close
+    from earnings_calendar import get_store
+    from strategies.base import SKIP_EARNINGS_STRATEGIES
+
+    strategy_obj = REGISTRY[strategy.value]
+    start, end = date(year, 1, 1), date(year, 12, 31)
+    # Include the preceding session close for the first daily-loss baseline.
+    minute_start = previous_session_close(pd.Timestamp(start) + pd.Timedelta(hours=12)) - pd.Timedelta(minutes=1)
+    minute_end = pd.Timestamp(end) + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+    signals, execution, earnings = {}, {}, {}
+    for ticker in strategy_universe(strategy_obj, TICKERS):
+        frame = download_history(ticker, start, end, strategy_obj.timeframe)
+        if frame.empty:
+            continue
+        signals[ticker, strategy_obj.timeframe] = frame
+        minute = load_execution_bars(frame, ticker, minute_start, minute_end)
+        minute.attrs.setdefault('timeframe', '1min')
+        execution[ticker] = minute
+        if strategy_obj.name in SKIP_EARNINGS_STRATEGIES:
+            earnings[ticker] = get_store().history(ticker, minute_end)
+    if not signals:
+        raise ValueError('No signal data available for optimizer dataset')
+    return BacktestDataset(strategy.value, year, signals, execution, earnings)
 
 
 def run_backtest_for_params(
-    p: StrategyParams,
-    strategy: StrategyType,
-    year: int,
+    p: StrategyParams, strategy: StrategyType, year: int,
+    *, dataset: BacktestDataset | None = None,
 ) -> list[Trade]:
-    """Run a full multi-ticker backtest for a given year with custom params."""
-    start = date(year, 1, 1)
-    end = date(year, 12, 31)
-    all_candidates = []
-    strategy_obj = REGISTRY[strategy.value]
-
-    for ticker in TICKERS:
-        df = download_history(ticker, start, end)
-        if df.empty or len(df) < 60:
-            continue
-        window_start = pd.Timestamp(start)
-        window_end = (
-            pd.Timestamp(end) + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
-        )
-        all_candidates.extend(
-            collect_backtest_candidates(
-                df, ticker, window_start, window_end, p, strategy_obj
-            )
-        )
-
-    result = run_annual_portfolio(
-        all_candidates,
-        initial_equity=p.initial_backtest_equity,
-        position_fraction=p.position_size_pct,
-        max_positions=p.max_concurrent_positions,
+    """Use exactly the annual runner, including minute execution and risk policy."""
+    from backtest_2025 import run_strategy_year
+    dataset = load_dataset(strategy, year) if dataset is None else dataset
+    if dataset.strategy != strategy.value or dataset.year != year:
+        raise ValueError('Optimizer dataset does not match strategy/year')
+    signals, execution, earnings = dataset.inputs()
+    result, _, _ = run_strategy_year(
+        signals, REGISTRY[strategy.value], year, p,
+        execution_data=execution, earnings_store=earnings,
     )
     return list(result.trades)
 
 
-def compute_stats(trades: list[Trade]) -> dict[str, Any]:
+def compute_stats(trades: list[Trade], initial_equity: float = PARAMS.initial_backtest_equity) -> dict[str, Any]:
     if not trades:
         return dict(trades=0, wins=0, losses=0, win_rate=0, total_pnl=0, profit_factor=0,
                     avg_pnl_pct=0, max_drawdown=0, sharpe=0.0, t_stat=0.0, p_value=1.0)
@@ -86,12 +95,12 @@ def compute_stats(trades: list[Trade]) -> dict[str, Any]:
     total_pnl = sum(t.pnl_dollars for t in trades)
 
     # Simple equity curve for max drawdown
-    equity = []
-    running = PARAMS.initial_backtest_equity
+    equity = [initial_equity]
+    running = initial_equity
     for t in sorted(trades, key=lambda x: x.exit_date):
         running += t.pnl_dollars
         equity.append(running)
-    peak = np.maximum.accumulate(equity) if equity else [PARAMS.initial_backtest_equity]
+    peak = np.maximum.accumulate(equity) if equity else [initial_equity]
     dd = [(peak[i] - equity[i]) / peak[i] * 100 for i in range(len(equity))]
     max_dd = max(dd) if dd else 0
 
@@ -119,11 +128,19 @@ def compute_stats(trades: list[Trade]) -> dict[str, Any]:
 
 # ── Parameter grid search ────────────────────────────────────────────────────
 
-def _mutate_param(name: str, current: float, bounds: tuple[float, float], step: float) -> float:
-    """Random walk mutation within bounds."""
-    delta = random.choice([-step, -step * 0.5, step * 0.5, step])
-    new_val = current + delta
-    return round(max(bounds[0], min(bounds[1], new_val)), 4)
+# Deliberately bounded search spaces. Every field controls the selected strategy.
+# F16's ineffective/ambiguous rule fields are excluded until separately resolved.
+PARAMETER_SPACES = {
+    'trend_pullback': {'stop_loss_pct': (.05, .15), 'atr_tp_multiple': (1.5, 4.),
+                       'rsi_pullback_max': (40, 65), 'rsi_lookback': (5, 20)},
+    'breakout': {'breakout_stop_loss_pct': (.05, .15), 'breakout_atr_multiple': (1.5, 4.)},
+    'mean_reversion': {'mr_stop_loss_pct': (.03, .12), 'mr_atr_multiple': (1., 3.)},
+    'momentum_macd': {'macd_stop_loss_pct': (.05, .15), 'macd_tp_multiple': (1.5, 4.)},
+    'ensemble': {'ensemble_stop_loss_pct': (.05, .15), 'ensemble_tp_multiple': (1.5, 4.)},
+    'regime': {'stop_loss_pct': (.05, .15), 'atr_tp_multiple': (1.5, 4.)},
+    'sma_50_cross': {'sma_cross_stop_loss_pct': (.05, .15)},
+    'tqqq_momentum': {'tqqq_stop_loss_pct': (.04, .12)},
+}
 
 
 def random_search(
@@ -133,6 +150,7 @@ def random_search(
     seed: int = 42,
     alpha: float = 0.05,
     n_boot: int = 1000,
+    *, baseline: StrategyParams = PARAMS,
 ) -> tuple[list[dict], SignificanceReport]:
     """Random search over strategy params, priced against the search itself.
 
@@ -146,49 +164,54 @@ def random_search(
     distribution of that maximum under the null. Expect most sweeps to fail it —
     that is the correct outcome, not a bug.
     """
-    random.seed(seed)
-    np.random.seed(seed)
-    results = []
-
-    # Param search space
-    param_bounds = {
-        "stop_loss_pct": (0.05, 0.15),
-        "atr_tp_multiple": (1.5, 4.0),
-        "rsi_pullback_max": (40, 65),
-        "rsi_lookback": (5, 20),
-    }
+    if isinstance(iterations, bool) or not isinstance(iterations, int) or iterations < 1:
+        raise ValueError('iterations must be a positive integer')
+    rng = random.Random(seed)
+    results, evaluated = [], {}
+    param_bounds = PARAMETER_SPACES[strategy.value]
+    dataset = load_dataset(strategy, year)
 
     for i in range(iterations):
         overrides = {}
         for name, (lo, hi) in param_bounds.items():
             if isinstance(lo, int) and isinstance(hi, int):
-                overrides[name] = random.randint(lo, hi)
+                overrides[name] = rng.randint(lo, hi)
             else:
-                overrides[name] = round(random.uniform(lo, hi), 2)
+                overrides[name] = round(rng.uniform(lo, hi), 2)
 
-        # Build custom params
-        p = PARAMS
-        new_p = StrategyParams(
-            strategy=strategy,
-            stop_loss_pct=overrides.get("stop_loss_pct", p.stop_loss_pct),
-            atr_tp_multiple=overrides.get("atr_tp_multiple", p.atr_tp_multiple),
-            rsi_pullback_max=overrides.get("rsi_pullback_max", p.rsi_pullback_max),
-            rsi_lookback=overrides.get("rsi_lookback", p.rsi_lookback),
-        )
-
-        trades = run_backtest_for_params(new_p, strategy, year)
-        stats = compute_stats(trades)
+        new_p = replace(baseline, strategy=strategy, **overrides)
+        config_id = hashlib.sha256(json.dumps(asdict(new_p), sort_keys=True, default=str).encode()).hexdigest()
+        duplicate_of = evaluated[config_id]['label'] if config_id in evaluated else None
+        if duplicate_of is None:
+            trades = run_backtest_for_params(new_p, strategy, year, dataset=dataset)
+            stats = compute_stats(trades, new_p.initial_backtest_equity)
+            returns = returns_from_trades(trades)
+        else:
+            stats = deepcopy(evaluated[config_id]['stats'])
+            returns = deepcopy(evaluated[config_id]['returns'])
 
         label = f"cfg{i:03d}"
         results.append({
             "label": label,
             "overrides": overrides,
             "stats": stats,
-            "returns": returns_from_trades(trades),
+            "returns": returns,
+            "params": asdict(new_p),
+            "config_id": config_id,
+            "duplicate_of": duplicate_of,
+            "dataset": dataset.metadata,
         })
+        evaluated.setdefault(config_id, results[-1])
         log.info("  [%d/%d] P&L=$%.2f WR=%.1f%% trades=%d t=%.2f params=%s",
                  i + 1, iterations, stats["total_pnl"], stats["win_rate"],
                  stats["trades"], stats["t_stat"], overrides)
+
+    search = dict(attempted_trials=iterations, distinct_configurations=len(evaluated),
+                  duplicate_trials=iterations-len(evaluated))
+    for result in results:
+        result['search'] = dict(search)
+    log.info('Search accounting: %d attempts, %d distinct configurations, %d repeats; dataset=%s',
+             iterations, len(evaluated), iterations-len(evaluated), dataset.metadata['fingerprint'])
 
     results.sort(key=lambda r: r["stats"]["total_pnl"], reverse=True)
 

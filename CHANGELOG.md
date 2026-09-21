@@ -331,6 +331,37 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.24.20] - 2026-09-21
+
+### Fixed
+
+- **F15 — optimizer/production alignment:** use each strategy's timeframe/universe
+  and the shared configured data loader, minute execution, and annual portfolio
+  runner. Historical multi-year portfolios now require valuation frames, so they
+  no longer silently disable the daily-loss guard.
+- Pass custom baseline risk and tax settings through the shared portfolio path;
+  preserve non-searched parameters with `dataclasses.replace`. Optimizer realized
+  drawdown uses the supplied initial equity and includes the initial peak.
+- Search only effective strategy-specific fields. Repeated configurations reuse
+  computation but remain in the statistical trial panel and accounting.
+
+### Added
+
+- Experiment-local copies of signal/minute prices and archived earnings evidence,
+  with fingerprints and fresh trial copies. Results retain full parameters,
+  source metadata, configuration identities, and attempted/distinct/repeated counts.
+- 36 F15 regressions covering shared-runner parity, strategy universe/timeframe,
+  all 16 searched fields, custom risk/tax settings, immutable trial data, duplicate
+  accounting, missing valuation rejection, and input validation. Updated the
+  README example and added `docs/optimizer-policy.md`.
+- Validation: 794 tests passed (36 new F15 cases); independent review found no
+  actionable issues and passed 41 focused cases. One existing dependency warning
+  remains. Backed up SQLite and reloaded both services through the manager;
+  both HEALTHY, dashboard HTTP 200, ensemble/30 minutes/IEX preserved. Recorded
+  the manager restart/PID recovery and F16 as the next unresolved finding in the
+  review document. Existing backtest results were not regenerated or revalidated.
+
 ## [0.24.19] - 2026-09-17
 
 Release commit `cf57510`; remote branch and build101 tag verified.

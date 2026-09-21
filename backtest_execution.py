@@ -168,7 +168,7 @@ def _exits(rows, entry_idx, signal, known, signal_closes, exit_reasons,
     return legs
 
 
-def collect_session_candidates(data, ticker, start, end, params, strategy, execution_bars):
+def collect_session_candidates(data, ticker, start, end, params, strategy, execution_bars, *, earnings_store=None):
     from backtest_portfolio import BacktestCandidate
 
     timeframe = data.attrs.get('timeframe', strategy.timeframe)
@@ -182,7 +182,8 @@ def collect_session_candidates(data, ticker, start, end, params, strategy, execu
     if strategy.name in SKIP_EARNINGS_STRATEGIES:
         fill_indexes = minutes.index.searchsorted(available)
         decision_times = [minutes.index[i] if i < len(minutes) else pd.NaT for i in fill_indexes]
-        data = add_earnings_filter(data, ticker, params, decision_times=decision_times)
+        data = add_earnings_filter(data, ticker, params, decision_times=decision_times,
+                                   store=earnings_store)
     rows = list(minutes[['open', 'high', 'low', 'close']].itertuples(name=None))
     known = available.searchsorted(minutes.index, side='right') - 1
     closes = data['close'].to_numpy()

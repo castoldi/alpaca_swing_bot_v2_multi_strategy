@@ -24,10 +24,10 @@ from backtest_portfolio import (
     BacktestCandidate,
     PortfolioResult,
     collect_backtest_candidates,
-    run_annual_portfolio,
+    run_configured_portfolio,
 )
 from build_report_2025 import build_report_2025
-from config import PARAMS, TICKERS
+from config import PARAMS, TICKERS, StrategyParams
 from logger_setup import get_logger
 from strategies import REGISTRY, Trade, get_enabled, strategy_universe
 
@@ -42,15 +42,11 @@ EARLIEST_HISTORY = date(2016, 1, 1)
 
 def run_independent_annual_portfolios(
     candidates_by_year: dict[int, list[BacktestCandidate]],
+    *, price_frames: dict[str, pd.DataFrame], params: StrategyParams = PARAMS,
 ) -> dict[int, PortfolioResult]:
     """Run every calendar year with a fresh configured starting account."""
     return {
-        year: run_annual_portfolio(
-            candidates,
-            initial_equity=PARAMS.initial_backtest_equity,
-            position_fraction=PARAMS.position_size_pct,
-            max_positions=PARAMS.max_concurrent_positions,
-        )
+        year: run_configured_portfolio(candidates, price_frames=price_frames, params=params)
         for year, candidates in sorted(candidates_by_year.items())
     }
 
@@ -220,7 +216,7 @@ def run_history_backtest(
                 )
             candidates_by_year[year] = annual_candidates
 
-        annual_results = run_independent_annual_portfolios(candidates_by_year)
+        annual_results = run_independent_annual_portfolios(candidates_by_year, price_frames=frames)
         accepted = [
             trade
             for result in annual_results.values()

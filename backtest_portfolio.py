@@ -176,6 +176,7 @@ def run_annual_portfolio(
     max_daily_loss_pct: float | None = None,
     regime_gate: "MarketRegimeGate | None" = None,
     position_fraction_fn: "Callable[[BacktestCandidate], float] | None" = None,
+    params: StrategyParams | None = None,
 ) -> PortfolioResult:
     """Run one unlevered annual portfolio with realized-P&L compounding.
 
@@ -201,6 +202,7 @@ def run_annual_portfolio(
     Baselines include all fills through the previous exchange-session close,
     regardless of how many intervening sessions had no candidates.
     """
+    params = PARAMS if params is None else params
     if not math.isfinite(initial_equity) or initial_equity <= 0:
         raise ValueError("initial_equity must be finite and positive")
     if not math.isfinite(position_fraction) or not 0 < position_fraction <= 1:
@@ -215,11 +217,11 @@ def run_annual_portfolio(
     if leveraged_tickers is None:
         leveraged_tickers = frozenset(LEVERAGED_TICKERS)
     if max_leveraged_fraction is None:
-        max_leveraged_fraction = PARAMS.max_leveraged_exposure_pct
+        max_leveraged_fraction = params.max_leveraged_exposure_pct
     # The live bot refuses tax-blocked entries, so the backtest must too or the
     # two diverge — the same discipline the leveraged cap already follows.
     if apply_tax is None:
-        apply_tax = PARAMS.tax_year_end_guard
+        apply_tax = params.tax_year_end_guard
     tax_blocked_entries = 0
 
     if apply_kill_switch is None:
@@ -227,7 +229,7 @@ def run_annual_portfolio(
     if apply_kill_switch and not price_frames:
         raise ValueError("apply_kill_switch requires price_frames")
     if max_daily_loss_pct is None:
-        max_daily_loss_pct = PARAMS.max_daily_loss_pct
+        max_daily_loss_pct = params.max_daily_loss_pct
     kill_switch_blocked_entries = 0
     regime_blocked_entries = 0
     kill_switch_trip_days: set = set()
@@ -361,13 +363,13 @@ def run_annual_portfolio(
                     candidate.ticker,
                     entry_date.to_pydatetime(),
                     realized_so_far,
-                    guard_start_month=PARAMS.tax_guard_start_month,
-                    guard_start_day=PARAMS.tax_guard_start_day,
-                    enabled=PARAMS.tax_year_end_guard,
-                    hard_block=PARAMS.tax_hard_block,
-                    hard_block_days=PARAMS.tax_hard_block_days,
-                    mtm_475f=PARAMS.tax_mtm_475f,
-                    crypto_symbols=PARAMS.tax_crypto_symbols,
+                    guard_start_month=params.tax_guard_start_month,
+                    guard_start_day=params.tax_guard_start_day,
+                    enabled=params.tax_year_end_guard,
+                    hard_block=params.tax_hard_block,
+                    hard_block_days=params.tax_hard_block_days,
+                    mtm_475f=params.tax_mtm_475f,
+                    crypto_symbols=params.tax_crypto_symbols,
                 ):
                     tax_blocked_entries += 1
                     skipped_positions += 1
@@ -430,7 +432,7 @@ def run_annual_portfolio(
     realize_before(None)
     ending_equity = initial_equity + realized_pnl
 
-    tax_estimate, wash_count, disallowed = _tax_view(accepted_trades)
+    tax_estimate, wash_count, disallowed = _tax_view(accepted_trades, params)
 
     return PortfolioResult(
         trades=tuple(accepted_trades),
@@ -451,13 +453,27 @@ def run_annual_portfolio(
     )
 
 
-def _tax_view(trades: list[Trade]) -> tuple[float, int, float]:
+def run_configured_portfolio(
+    candidates: list[BacktestCandidate], *, price_frames: dict[str, pd.DataFrame],
+    params: StrategyParams = PARAMS,
+) -> PortfolioResult:
+    """Shared annual/research risk policy; populated runs require valuation data."""
+    return run_annual_portfolio(
+        candidates, initial_equity=params.initial_backtest_equity,
+        position_fraction=params.position_size_pct,
+        max_positions=params.max_concurrent_positions,
+        price_frames=price_frames, apply_kill_switch=bool(candidates), params=params,
+    )
+
+
+def _tax_view(trades: list[Trade], params: StrategyParams | None = None) -> tuple[float, int, float]:
     """Liability, wash-sale count and deferred loss for a set of trades.
 
     Reported alongside gross P&L rather than deducted from the equity curve:
     tax is assessed per year and paid the following April, so it never reduces
     the capital compounding inside the simulated year.
     """
+    params = PARAMS if params is None else params
     if not trades:
         return 0.0, 0, 0.0
     rows = [
@@ -476,9 +492,9 @@ def _tax_view(trades: list[Trade]) -> tuple[float, int, float]:
     ]
     records = tax_mod.compute_tax_records(
         rows,
-        mtm_475f=PARAMS.tax_mtm_475f,
-        identical_groups=PARAMS.tax_identical_groups,
-        crypto_symbols=PARAMS.tax_crypto_symbols,
+        mtm_475f=params.tax_mtm_475f,
+        identical_groups=params.tax_identical_groups,
+        crypto_symbols=params.tax_crypto_symbols,
     )
     if not records:
         return 0.0, 0, 0.0
@@ -491,12 +507,12 @@ def _tax_view(trades: list[Trade]) -> tuple[float, int, float]:
     for year in years:
         summary = tax_mod.summarize_year(
             records, year,
-            PARAMS.tax_short_term_rate, PARAMS.tax_long_term_rate,
-            use_brackets=PARAMS.tax_use_brackets,
-            filing_status=PARAMS.tax_filing_status,
-            other_income=PARAMS.tax_other_income,
-            apply_niit=PARAMS.tax_niit,
-            mtm_475f=PARAMS.tax_mtm_475f,
+            params.tax_short_term_rate, params.tax_long_term_rate,
+            use_brackets=params.tax_use_brackets,
+            filing_status=params.tax_filing_status,
+            other_income=params.tax_other_income,
+            apply_niit=params.tax_niit,
+            mtm_475f=params.tax_mtm_475f,
         )
         total_tax += summary["estimated_tax"]
 
@@ -576,6 +592,7 @@ def collect_backtest_candidates(
     strategy: BaseStrategy | None = None,
     *, execution_bars: pd.DataFrame | None = None,
     legacy_execution: bool = False,
+    earnings_store=None,
 ) -> list[BacktestCandidate]:
     """Collect entries using regular-session minute execution by default.
 
@@ -600,7 +617,8 @@ def collect_backtest_candidates(
         else:
             validate_execution_provenance(frame, execution_bars)
         return collect_session_candidates(
-            data, ticker, window_start, window_end, params, strategy, execution_bars
+            data, ticker, window_start, window_end, params, strategy, execution_bars,
+            earnings_store=earnings_store,
         )
 
     if strategy.name in SKIP_EARNINGS_STRATEGIES:

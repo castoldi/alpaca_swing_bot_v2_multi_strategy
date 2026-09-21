@@ -315,8 +315,13 @@ python bot.py --strategy ensemble --loop
 python bot.py --strategy ensemble --loop --interval 60
 
 # Parameter optimisation
-python -c "from research.optimizer import random_search; from config import StrategyType; r = random_search(StrategyType.TREND_PULLBACK, 2026); print(r[:3])"
+python -c "from research.optimizer import random_search; from config import StrategyType; results, report = random_search(StrategyType.TREND_PULLBACK, 2026); print(results[:3]); print(report.summary())"
 ```
+
+The optimizer uses strategy-specific data and parameters, frozen trial inputs,
+and the annual runner's risk policy. See [optimizer execution and evidence
+policy](docs/optimizer-policy.md) for baseline settings, trial accounting, and
+limitations. Earlier optimizer winners require re-evaluation.
 
 ### Dashboard routes
 

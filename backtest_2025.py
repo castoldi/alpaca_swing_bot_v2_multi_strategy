@@ -30,7 +30,7 @@ from market_cache import MarketDataCache
 from backtest_portfolio import (
     PortfolioResult,
     collect_backtest_candidates,
-    run_annual_portfolio,
+    run_configured_portfolio,
 )
 
 log = get_logger(__name__)
@@ -160,6 +160,8 @@ def run_strategy_year(
     strategy,
     year: int,
     params=PARAMS,
+    *, execution_data: dict[str, pd.DataFrame] | None = None,
+    earnings_store=None,
 ) -> tuple[PortfolioResult, dict, dict]:
     """Run one strategy as one combined, annually reset ticker portfolio."""
     window_start = pd.Timestamp(date(year, 1, 1))
@@ -182,15 +184,14 @@ def run_strategy_year(
                 window_end,
                 params,
                 strategy,
+                **({"execution_bars": execution_data[ticker]} if execution_data is not None else {}),
+                **({"earnings_store": earnings_store} if earnings_store is not None else {}),
             )
         )
 
-    result = run_annual_portfolio(
-        candidates,
-        initial_equity=params.initial_backtest_equity,
-        position_fraction=params.position_size_pct,
-        max_positions=params.max_concurrent_positions,
-        price_frames=frames,
+    result = run_configured_portfolio(
+        candidates, params=params,
+        price_frames=frames if execution_data is None else execution_data,
     )
     trades_by_ticker = {
         ticker: [trade for trade in result.trades if trade.ticker == ticker]

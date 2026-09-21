@@ -80,8 +80,12 @@ def _annual_candidate(year: int) -> BacktestCandidate:
 
 
 def test_independent_years_each_restart_at_one_thousand():
+    prices = pd.DataFrame({'close': [100., 100.]},
+                          index=pd.to_datetime(['2024-01-01', '2025-01-01']))
+    prices.attrs['price_timestamps'] = 'observed'
     results = backtest_history.run_independent_annual_portfolios(
-        {2024: [_annual_candidate(2024)], 2025: [_annual_candidate(2025)]}
+        {2024: [_annual_candidate(2024)], 2025: [_annual_candidate(2025)]},
+        price_frames={'TEST': prices},
     )
 
     assert results[2024].starting_equity == 1_000.0
@@ -104,6 +108,11 @@ def test_run_history_includes_partial_ticker_histories(tmp_path, monkeypatch):
         index=pd.date_range("2016-01-04", periods=60, freq="D"),
     )
     calls = []
+    old_bars.attrs.update(timeframe='4h', feed='iex', adjustment='all')
+    execution = old_bars.copy()
+    execution.index = execution.index + pd.Timedelta(hours=15)
+    execution.attrs['timeframe'] = '1min'
+    monkeypatch.setattr('backtest_valuation.load_execution_bars', lambda *args: execution)
 
     def fake_download(ticker, start, end, timeframe):
         calls.append((ticker, start, end, timeframe))
