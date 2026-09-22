@@ -17,6 +17,13 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Code review 2026-09-22** ([docs/code-review-2026-09-22.md](docs/code-review-2026-09-22.md)) —
+  ten new items (R01–R10) and a four-phase fix plan. Top items: a transient
+  position-lookup error can finalize a live trade as `external_liquidation`
+  (P2); pending entries at the open send a false "reconciliation blocked"
+  email (seen live 2026-09-22); Alpaca REST calls have no HTTP timeout; five
+  correlated names fill all five 20% slots. Confirms the V01 fix is working
+  live (fill delay 3.7–4.1 min, down from 15–164 min). 841 tests pass.
 - **F01–F16 remediation verification** ([docs/code-review-2026-09-21-verification.md](docs/code-review-2026-09-21-verification.md)) —
   confirms most fixes (805 tests pass; F08/F14 checked against SciPy/edge cases)
   and records nine new items: same-bar live re-entry (P1, live ledger evidence),
