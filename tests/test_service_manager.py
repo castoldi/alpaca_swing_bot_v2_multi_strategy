@@ -79,6 +79,54 @@ def test_stop_does_not_terminate_unrelated_children(manager, monkeypatch):
     assert proc.killed
 
 
+def test_exiting_launcher_access_denied_on_terminate_is_not_a_failure(manager, monkeypatch):
+    # V04: Windows refuses TerminateProcess for a process already exiting;
+    # psutil renders that AccessDenied as just "(pid=N)". Stop must succeed.
+    proc = Process(manager.root)
+    snapshot = runtime.process_identity(proc, "bot", manager.root)
+    def refuse():
+        proc.alive = False
+        raise psutil.AccessDenied(proc.pid)
+    proc.terminate = refuse
+    monkeypatch.setattr(psutil, "Process", lambda pid: proc)
+    manager.stop_identity(snapshot)
+    assert not proc.alive
+
+
+def test_process_ignoring_terminate_is_killed_after_timeout(manager, monkeypatch):
+    proc = Process(manager.root)
+    snapshot = runtime.process_identity(proc, "bot", manager.root)
+    waits, kills = [], []
+    proc.terminate = lambda: None
+    def wait(timeout=None):
+        waits.append(timeout)
+        if not kills:
+            raise psutil.TimeoutExpired(timeout, proc.pid)
+        return 0
+    proc.wait = wait
+    proc.kill = lambda: kills.append(True)
+    monkeypatch.setattr(psutil, "Process", lambda pid: proc)
+    manager.stop_identity(snapshot)
+    assert kills == [True] and waits == [8, 5]
+
+
+def test_restart_completes_when_launcher_refuses_termination(manager, monkeypatch):
+    worker = Process(manager.root, pid=2, created=200)
+    launcher = Process(manager.root, pid=1, created=100)
+    table = {1: launcher, 2: worker}
+    def launcher_refuses():
+        launcher.alive = False
+        raise psutil.AccessDenied(1)
+    launcher.terminate = launcher_refuses
+    monkeypatch.setattr(psutil, "Process", lambda pid: table[pid])
+    monkeypatch.setattr(manager, "processes", lambda service: [
+        runtime.process_identity(p, "bot", manager.root) for p in (launcher, worker) if p.alive])
+    monkeypatch.setattr(manager, "settings", lambda *a: ("ensemble", 30))
+    manager.run_dir.mkdir()
+    manager.stop("bot")
+    assert not worker.alive and not launcher.alive
+
+
 def test_healthy_bot_is_adopted_without_launch_or_settings_override(manager, monkeypatch):
     monkeypatch.setattr(manager, "status", lambda service: dict(healthy=True, pid=123, pids=[123]))
     calls = []

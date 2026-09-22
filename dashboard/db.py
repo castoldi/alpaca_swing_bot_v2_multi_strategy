@@ -180,6 +180,17 @@ def _ensure_tables():
             );
             CREATE INDEX IF NOT EXISTS idx_equity_curves_lookup
                 ON equity_curves(strategy, year, ts);
+            -- Last completed signal bar the live bot evaluated per strategy and
+            -- ticker. A bar is acted on at most once, like one backtest
+            -- candidate per signal bar, so an exit can never be followed by a
+            -- re-entry on the same stale bar.
+            CREATE TABLE IF NOT EXISTS signal_cursor (
+                strategy TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                last_bar TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (strategy, ticker)
+            );
         """)
         _migrate(c)
 
@@ -515,6 +526,29 @@ def get_closed_trades(limit: int = 200) -> list[dict]:
             "SELECT * FROM trades WHERE status='closed' ORDER BY entry_date DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_signal_cursor(strategy: str, ticker: str) -> Optional[str]:
+    """ISO timestamp of the last signal bar evaluated live, or None."""
+    _ensure_tables()
+    with _con() as c:
+        row = c.execute(
+            "SELECT last_bar FROM signal_cursor WHERE strategy=? AND ticker=?",
+            (strategy, ticker),
+        ).fetchone()
+        return row["last_bar"] if row else None
+
+
+def set_signal_cursor(strategy: str, ticker: str, last_bar: str) -> None:
+    """Advance (never rewind) the evaluated-bar cursor for one ticker."""
+    _ensure_tables()
+    with _con() as c:
+        c.execute(
+            "INSERT INTO signal_cursor (strategy, ticker, last_bar, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(strategy, ticker) DO UPDATE SET "
+            "last_bar=MAX(last_bar, excluded.last_bar), updated_at=excluded.updated_at",
+            (strategy, ticker, last_bar, datetime.now(timezone.utc).isoformat()),
+        )
 
 
 def get_trades_for_ledger() -> list[dict]:

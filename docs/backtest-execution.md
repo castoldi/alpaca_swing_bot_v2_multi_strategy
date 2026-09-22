@@ -24,7 +24,25 @@ minute bars starting at/after the open and before the close are executable. The
 16:00 ET minute (13:00 on an early-close day) is excluded. Missing trading bars
 are not fabricated; the next available eligible minute is used.
 
-## Fill assumptions
+## Live signal timing (v0.25.0)
+
+The live bot applies the same clock (`bot._signal_fill_time`):
+
+- **Every completed bar is evaluated once.** A per-strategy/ticker cursor
+  (`signal_cursor` table) records the last evaluated bar. Each cycle examines
+  every bar completed since then, oldest first, so bars that complete while the
+  market is closed (the regular-session close bar, after-hours buckets) are not
+  skipped. With no cursor (first run) only the latest bar is examined.
+- **A signal is actionable only in its fill window.** That window starts at the
+  modelled fill time (first regular-session minute at/after availability) and
+  lasts one loop interval plus 5 minutes' grace. A skipped entry (slippage,
+  sizing, tax) is not retried on the same bar, and an exit is never followed by
+  a re-entry on the same bar. Signals from bars missed while the bot was down
+  are dropped, which the backtest does not model.
+- **Signal exits latch.** `signal_with_stop` strategies exit on the oldest exit
+  signal from any completed bar after the entry's signal bar, matching the
+  backtest's pending-exit rule.
+
 
 - A sell stop already crossed at a minute's open fills at that open. It does not
   receive a better, unavailable stop price after a downward gap.

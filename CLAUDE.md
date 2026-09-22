@@ -109,6 +109,10 @@ python scripts/import_ibkr_history.py --force                       # re-downloa
 - `ib_async` 2.1.0 pins `tzdata<2026`; install with `--no-deps` (see
   `requirements.txt`).
 
+**Earnings history** (Trend Pullback / Ensemble backtests): `cache/earnings.db`
+holds live observations from 2026-09-14 plus a labelled historical import:
+`python scripts/import_earnings_history.py [--force]`. See docs/earnings-policy.md.
+
 ## Architecture
 
 ```
@@ -145,7 +149,7 @@ All 8 strategies live in `strategies/`. The six bracket strategies exit through 
 | `mean_reversion` | Price > SMA(50), ≥0.5% below SMA(20), RSI reached ≤50 in 7 bars, bounce | 7% | 1.5×ATR [1.5%–5%] | 3d |
 | `momentum_macd` | MACD hist just crossed above 0, RSI > 50 rising, price > SMA(20) & SMA(50) | 9% | 2.5×ATR [4%–12%] | 6d |
 | `regime` | EMA regime: risk-on dips (12% stop), risk-off oversold bounces (7% stop), neutral trend-like (10% stop) | adaptive | ATR-based [3%–8%] | 5d |
-| `ensemble` | Weighted vote ≥0.30 and ≥2 members (regime 35%, MACD 25%, trend 20%, breakout 15%, MR 5%) | 9% | 2.5×ATR [4%–12%] | 6d |
+| `ensemble` | Weighted vote ≥0.30 (regime 35%, MACD 25%, trend 20%, breakout 15%, MR 5%); Regime alone qualifies; `ensemble_min_votes` (default 1) | 9% | 2.5×ATR [4%–12%] | 6d |
 | `tqqq_momentum` | **TQQQ only.** TSI(25,13,13) crosses above its signal line | 8% (gap insurance) | none — exits on 4h close < EMA(50) | n/a |
 
 `bot.py` entry dispatch: `get_entry_checker(strategy)` returns the matching `check_entry_*` function.

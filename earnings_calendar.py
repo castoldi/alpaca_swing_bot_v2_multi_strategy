@@ -26,15 +26,19 @@ def utc(value):
     return ts.tz_localize('UTC') if ts.tzinfo is None else ts.tz_convert('UTC')
 
 
-def fetch_events(ticker):
-    """Current Yahoo schedule, never a source of historical observation dates."""
+def fetch_events(ticker, limit=16):
+    """Current Yahoo schedule, never a source of historical observation dates.
+
+    ``limit`` > 16 returns the provider's past event history too; only the
+    explicitly labelled historical importer uses that.
+    """
     import yfinance as yf
     from yfinance.data import YfData
     # yfinance shares a process-wide HTTP LRU without a TTL. A new Ticker
     # alone would re-stamp the same cached response as a fresh observation.
     # If this interface changes, refresh fails closed instead of claiming freshness.
     YfData().cache_get.cache_clear()
-    rows = yf.Ticker(ticker).get_earnings_dates(limit=16)
+    rows = yf.Ticker(ticker).get_earnings_dates(limit=limit)
     if rows is None or rows.empty:
         return []
     if 'Event Type' in rows:
@@ -84,6 +88,24 @@ class CalendarStore:
             con.execute('INSERT INTO snapshots(ticker, observed_at, valid_until, events, status, source) '
                         'VALUES (?,?,?,?,?,?)', (ticker.upper(), observed.isoformat(), until.isoformat(),
                                                 json.dumps(values), status, source))
+
+    def delete_source(self, ticker, source):
+        """Remove one import's own rows (re-import); live observations are never touched."""
+        if source == 'yfinance current schedule':
+            raise ValueError('Live observations are append-only')
+        with sqlite3.connect(self.path) as con:
+            return con.execute('DELETE FROM snapshots WHERE ticker=? AND source=?',
+                               (ticker.upper(), source)).rowcount
+
+    def first_observed(self, ticker, source=None):
+        with sqlite3.connect(self.path) as con:
+            query = 'SELECT MIN(observed_at) FROM snapshots WHERE ticker=?'
+            args = [ticker.upper()]
+            if source is not None:
+                query += ' AND source=?'
+                args.append(source)
+            value = con.execute(query, args).fetchone()[0]
+        return utc(value) if value else None
 
     def history(self, ticker, as_of):
         with sqlite3.connect(self.path) as con:

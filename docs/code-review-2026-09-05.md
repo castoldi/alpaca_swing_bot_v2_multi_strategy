@@ -6,8 +6,15 @@
 
 ## Current remediation status — updated 2026-09-21
 
-**F01–F16 are fixed. No numbered review finding remains open. Next: regenerate
+**F01–F16 are fixed; F03 was completed later. A verification pass on 2026-09-21
+([code-review-2026-09-21-verification.md](code-review-2026-09-21-verification.md))
+found nine further items (V01–V09). All are fixed in v0.25.0. Next: regenerate
 corrected strategy baselines, then address the risk-reporting limitations below.**
+
+The "independent review complete" entries below are the remediation author's own
+statements. No review artifacts are linked, so treat them as unverified; the
+2026-09-21 verification is the independent check.
+
 Original findings and baseline reproductions are retained below;
 each fixed finding has a resolution and validation record.
 
@@ -50,7 +57,7 @@ P1 means address before relying on the affected execution or research result. P2
 |---|---|---|---|
 | F01 — **FIXED** | P1 | Filled brackets can lead to selling another owner's shares | Fixed in v0.24.3 (`b9dd867`); ownership regression tests |
 | F02 — **FIXED** | P1 | Multi-day protection uses DAY orders with no active repair path | Fixed in v0.24.5; Alpaca documentation + protection lifecycle regressions |
-| F03 — **FIXED** | P1 | Manager is not atomic and does not reliably establish project identity | Fixed in v0.24.6–v0.24.7; process-control regressions |
+| F03 — **FIXED** (completed v0.25.0) | P1 | Manager is not atomic and does not reliably establish project identity | v0.24.6–v0.24.7 left `restart` failing with `(pid=N)`; completed by V04 in v0.25.0 |
 | F04 — **FIXED** | P1 | Bracket backtests record the wrong entry price and time | Fixed in v0.24.8; next-open accounting regressions |
 | F05 — **FIXED** | P1 | Bracket stop simulation fills through gaps at unavailable prices | Fixed in v0.24.9; execution-clock regressions |
 | F06 — **FIXED** | P1 | Earnings avoidance is missing live and wrong historically | Fixed in v0.24.11; observed-calendar and live/backtest regressions |
@@ -126,8 +133,7 @@ regular hours or at the stop price.
 **Validation:** 450 tests passed, including 35 new protection lifecycle cases;
 one existing dependency deprecation warning. Tests use real SDK requests and an
 isolated SQLite ledger with a simulated broker; no live-order compliance test
-was submitted. F03 was subsequently fixed as recorded below. **Next unresolved
-finding: F16 (strategy rules and descriptions).**
+was submitted. F03 was subsequently fixed as recorded below.
 
 The description below records the original reviewed baseline.
 
@@ -143,7 +149,11 @@ Alpaca documents automatic cancellation of unfilled DAY orders after the closing
 
 ### F03 — Singleton checks race, and process matching can affect unrelated projects
 
-**Status: FIXED — 2026-09-07, v0.24.6–v0.24.7.** `scripts/manage.ps1` now delegates
+**Status: PARTIALLY FIXED in v0.24.6–v0.24.7; completed in v0.25.0 (V04).** The
+restart path still failed with a PID-only `psutil.AccessDenied` from terminating an
+already-exiting launcher; see the [verification review](code-review-2026-09-21-verification.md).
+
+**Original resolution — 2026-09-07.** `scripts/manage.ps1` now delegates
 to a project-local manager that holds a service-specific OS lock through check,
 stop, launch, and readiness. Runtime services hold a separate lifetime lock,
 so a direct second bot, dashboard, or same-year backtest cannot overwrite the
@@ -214,7 +224,7 @@ run had 490 passes and three failures in `test_bracket_ownership.py` caused by
 the pre-existing, uncommitted `bot.py` holding-time edit; that edit was preserved
 and excluded from this release. The focused backtest run passed all 40 tests.
 
-F06 and F16 were subsequently fixed as recorded below. **Numbered review findings F01–F16 are resolved.**
+F06 and F16 were subsequently fixed as recorded below.
 
 The description below records the original reviewed baseline.
 
@@ -279,7 +289,7 @@ execution-clock regressions covering opening gaps, both-barrier bars, overnight
 barrier touches, a Thanksgiving holiday gap, early closes, feed/adjustment
 provenance mismatches, the fixed window-boundary case, and exit signals received
 before delayed entry fills. The full suite ran with child console windows
-suppressed. F06 and F16 were subsequently fixed as recorded below. **Numbered review findings F01–F16 are resolved.**
+suppressed. F06 and F16 were subsequently fixed as recorded below.
 
 The description below records the original reviewed baseline.
 
@@ -329,7 +339,6 @@ with schedules known at each historical decision. Saved reports and database
 results have not been regenerated. See [earnings policy](earnings-policy.md) for
 archive provenance, import instructions, and explicit missing-data behavior.
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -375,7 +384,6 @@ issues and separately passed both daily-loss modules (35 tests). The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed for this change.
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -423,7 +431,6 @@ and degenerate single-report inconsistencies; no findings remain. The full suite
 ran with child console windows suppressed and isolated test databases. No market
 backtests, broker orders, or service restarts were performed.
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -475,7 +482,6 @@ are not guaranteed. The real market-data history and old backtest reports were n
 regenerated; legacy series refresh on their next request. Full policy and manifest
 usage: [adjusted historical cache](market-cache.md).
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -534,7 +540,6 @@ The legacy pre-2016 yfinance/Alpaca stitched daily research path remains mixed
 source and lacks attributes needed for automatic minute execution; it was not
 validated end to end. Feed alignment does not resolve the remaining findings.
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -593,7 +598,6 @@ remain research approximations. Existing backtest reports were not regenerated
 or retuned; their performance claims require re-evaluation after these fixes.
 Detailed policy: [holding-period policy](holding-period.md).
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -658,7 +662,6 @@ this change does not relax protection-identity requirements. Missing broker fill
 timestamps remain unknown under F11's policy. Historical closed records are not
 rewritten and saved market backtests were not rerun. F13 was subsequently fixed below.
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -719,7 +722,6 @@ a cycle. Existing per-trade reconciliation guards continue to defer unsafe actio
 missing signal data never authorizes an exit. No strategy rules, holding-period
 policy, broker ownership checks or saved backtest reports were changed.
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -785,7 +787,6 @@ thresholds are preserved (including Breakout's inclusive 50 boundary). F16 was
 subsequently fixed below. Saved backtests/reports have not been rerun and historical
 performance claims have not been revalidated or retuned.
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 
@@ -862,7 +863,6 @@ no trading parameters were promoted, and improved returns are not established.
 F16's strategy-rule discrepancies were subsequently fixed below. Full usage/policy:
 [optimizer execution and evidence policy](optimizer-policy.md).
 
-**Numbered review findings F01–F16 are resolved.**
 
 The description below records the original reviewed baseline.
 

@@ -174,7 +174,10 @@ def test_ensemble_blocks_only_its_trend_vote():
                          'regime': SimpleNamespace(check_entry=lambda *a: object())}
     data = entry_frame()
     data['near_earnings'] = True
-    assert strategy.check_entry(data, 60, PARAMS) is None
+    # Earnings removes only the trend vote; Regime alone still qualifies (0.35).
+    assert strategy.check_entry(data, 60, PARAMS).strategy == 'ensemble_0.35'
+    from dataclasses import replace
+    assert strategy.check_entry(data, 60, replace(PARAMS, ensemble_min_votes=2)) is None
     data['near_earnings'] = False
     assert strategy.check_entry(data, 60, PARAMS).strategy == 'ensemble_0.55'
 

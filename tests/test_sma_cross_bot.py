@@ -63,7 +63,8 @@ def test_reconcile_closes_owned_sma_trade_on_cross_down(monkeypatch):
         "close": values,
         "volume": 1_000_000,
     }), PARAMS)
-    trade = _open_sma_trade()
+    # Exit signals are read from bars after the entry's signal bar.
+    trade = _open_sma_trade(entry_date=str(values.index[40].date()))
     entry = _oto_entry(SimpleNamespace(id="stop-1", status="new"))
     tc = SimpleNamespace(
         get_open_position=lambda _: SimpleNamespace(qty="1", current_price="99"),

@@ -143,3 +143,12 @@ def test_regime_other_branches_retain_their_stop_distances(frame, expected_stop)
 
     assert signal is not None
     assert signal.stop_loss == pytest.approx(expected_stop)
+
+
+def test_default_ensemble_restores_pre_f16_regime_only_entry():
+    # V05: the 2-vote gate is an unvalidated variant; live defaults to one vote.
+    strategy = EnsembleStrategy()
+    strategy._members = {"regime": _Member(True), "breakout": _Member(False)}
+
+    assert PARAMS.ensemble_min_votes == 1
+    assert strategy.check_entry(_frame(), 64, PARAMS) is not None

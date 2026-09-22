@@ -10,6 +10,23 @@ cache, the earnings archive and the live trade ledger. No orders were placed, no
 services were restarted and no backtests were run. The backtest scripts overwrite
 database results, so none were run.
 
+## Resolution — all nine items fixed in v0.25.0
+
+| ID | Fix | Regression tests |
+|---|---|---|
+| V01 | `signal_cursor` table plus a per-bar fill window (`bot._signal_is_actionable`); each bar is evaluated once and the cursor advances before any order work | `tests/test_verification_fixes.py` (re-entry, slippage retry, new bar, cursor failure, real window) |
+| V02 | Every bar completed since the cursor is evaluated, oldest first; signal exits latch from any bar after the entry signal (`_signal_exit_reason`) | same file (overnight close bar, no history replay, exit latch) |
+| V03 | Live stop uses `strat_obj.stop_loss_fraction(PARAMS)` | TQQQ 8% stop test |
+| V04 | `stop_identity` tolerates `AccessDenied` from an exiting process and kills after a wait timeout | 3 new `test_service_manager.py` cases (fail on the old code) |
+| V05 | `ensemble_min_votes` default back to 1 (pre-F16 live behaviour); description corrected; 2 votes stays available for the ablation | `test_default_ensemble_restores_pre_f16_regime_only_entry` |
+| V06 | `scripts/import_earnings_history.py`: labelled weekly snapshots from 2002 (ARM from 2023) up to the first live observation; 4,693 imported | `tests/test_import_earnings_history.py`; real NVDA 2024–25 check: blocks only earnings-week bars, no unknowns |
+| V07 | Per-trade reconciliation failures are returned, recorded on the run, and emailed once per trade per day; a new protection audit alerts on any owned position without a live stop | alert-dedupe, gap-detection and audit tests |
+| V08 | Kill switch uses the bot's own P&L since the previous close over yesterday's equity; if that is unknown it falls back to the account-wide drop | 4 rewritten `test_bot_risk_guards.py` cases |
+| V09 | Remediation doc corrected (F03 status, stale "next" line, repeated boilerplate, unlinked review claims) | — |
+
+Still open: regenerate the corrected baselines, then run the V05 ablation (1 vs 2
+votes, regime-only, equal weights) through `evaluate_search`.
+
 ## Verdict
 
 **Most of the fixes are correct. The claim that nothing remains open is not.**

@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 import time
@@ -66,6 +67,59 @@ def _daily_loss_pct(account) -> float | None:
     if not (math.isfinite(last) and last > 0 and math.isfinite(equity)):
         return None
     return (last - equity) / last
+
+
+def _bot_daily_loss_pct(account) -> float | None:
+    """This bot's OWN loss since the previous session close, or None if unknown.
+
+    The paper key is shared with other projects, so account equity moves on
+    trades this bot never made (and can hide this bot's losses). Numerator: P&L
+    of the bot's open trades plus trades closed today, each measured from the
+    previous close (or from its fill if it entered today). Denominator:
+    yesterday's account equity — the same base the 20% position sizing uses.
+    The backtest guard measures the same thing on its isolated portfolio.
+    """
+    try:
+        base = float(getattr(account, "last_equity", None))
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(base) and base > 0):
+        return None
+    today = datetime.now(_ET).date()
+    try:
+        relevant = []
+        for trade in db_mod.get_trades_for_ledger():
+            if not portfolio.is_real_trade(trade) or trade.get("entry_state") == "pending_submission":
+                continue
+            if portfolio.is_open(trade):
+                relevant.append(trade)
+            elif portfolio.is_closed(trade):
+                exited = _parse_timestamp(trade.get("exit_date"))
+                if exited is not None and exited.astimezone(_ET).date() == today:
+                    relevant.append(trade)
+        if not relevant:
+            return 0.0
+        snapshots = data_feed.fetch_snapshots(sorted({str(t["ticker"]) for t in relevant}))
+        pnl = 0.0
+        for trade in relevant:
+            snap = snapshots.get(str(trade["ticker"])) or {}
+            entered = (_parse_timestamp(trade.get("entry_filled_at"))
+                       or _parse_timestamp(trade.get("created_at")))
+            if entered is None:
+                return None
+            reference = (float(snap.get("prev_close") or 0)
+                         if entered.astimezone(_ET).date() < today
+                         else portfolio.effective_entry_price(trade))
+            current = (float(snap.get("price") or 0) if portfolio.is_open(trade)
+                       else float(trade.get("exit_price") or 0))
+            if not (math.isfinite(reference) and reference > 0
+                    and math.isfinite(current) and current > 0):
+                return None
+            pnl += (current - reference) * portfolio.shares_of(trade)
+        return -pnl / base
+    except Exception as exc:
+        log.warning("Bot-owned daily loss unavailable (%s)", exc)
+        return None
 
 
 _KILL_SWITCH_MARKER = ROOT / "run" / "killswitch.date"
@@ -219,7 +273,13 @@ def _load_live_sizing(tc) -> LiveSizingState | None:
             or open_position_count < 0
         ):
             raise ValueError("invalid equity or cash")
-        loss_pct = _daily_loss_pct(account)
+        loss_pct = _bot_daily_loss_pct(account)
+        if loss_pct is None:
+            # Unknown own P&L: fall back to the account-wide drop, which can
+            # only block entries (conservative), never permit extra risk.
+            loss_pct = _daily_loss_pct(account)
+            if loss_pct is not None:
+                log.warning("Kill switch using account-wide equity (bot-owned P&L unavailable)")
         if loss_pct is not None and loss_pct >= PARAMS.max_daily_loss_pct:
             _announce_kill_switch(loss_pct, equity)
             return None
@@ -685,6 +745,93 @@ def fetch_bars(
     return data_feed.fetch_recent(ticker, days=days + 30, timeframe=timeframe)
 
 
+# ── Signal timing (live/backtest parity) ──────────────────────────────────────
+#
+# The backtest turns every completed signal bar into at most ONE candidate,
+# filled at the first regular-session minute at/after the bar completes. Live
+# mirrors that: every bar completed since the last evaluated one is examined
+# once (so close-of-day and after-hours bars are not skipped), and a signal is
+# only actionable during the first loop interval after its backtest fill time
+# (so a stale bar can never produce a late entry or a re-entry after an exit).
+
+_loop_interval = timedelta(minutes=30)   # set by run_loop; 30 for one-shot runs
+SIGNAL_FILL_GRACE = timedelta(minutes=5)
+
+
+def _utc_naive(value) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    return ts.tz_convert("UTC").tz_localize(None) if ts.tzinfo else ts
+
+
+def _signal_fill_time(bar_start, timeframe: str) -> pd.Timestamp | None:
+    """First regular-session minute at/after a bar completes (UTC, naive).
+
+    Same rule as backtest_execution.collect_session_candidates: availability
+    from signal_availability, then the first XNYS minute at or after it.
+    """
+    from backtest_execution import signal_availability
+    from holding_period import calendar
+
+    available = signal_availability(pd.DatetimeIndex([_utc_naive(bar_start)]), timeframe)[0]
+    schedule = calendar(available.year, available.year + 1).schedule
+    opens = pd.DatetimeIndex(schedule["open"]).tz_localize(None)
+    closes = pd.DatetimeIndex(schedule["close"]).tz_localize(None)
+    session = closes.searchsorted(available, side="right")
+    if session >= len(closes):
+        return None
+    return max(available, opens[session])
+
+
+def _signal_is_actionable(bar_start, timeframe: str, now=None) -> bool:
+    """True only within one loop interval (+grace) of the modelled fill time."""
+    try:
+        fill = _signal_fill_time(bar_start, timeframe)
+    except Exception as exc:
+        log.warning("  Signal fill time unavailable for bar %s (%s)", bar_start, exc)
+        return False
+    if fill is None:
+        return False
+    current = _utc_naive(now if now is not None else datetime.now(timezone.utc))
+    return fill <= current < fill + _loop_interval + SIGNAL_FILL_GRACE
+
+
+def _bar_key(bar_start) -> str:
+    return _utc_naive(bar_start).isoformat()
+
+
+def _unevaluated_bar_indexes(strat_name: str, ticker: str, df: pd.DataFrame) -> list[int]:
+    """Completed bars newer than the stored cursor, oldest first.
+
+    With no cursor yet (first run / new ticker) only the latest bar is new, so
+    a restart never replays history.
+    """
+    cursor = db_mod.get_signal_cursor(strat_name, ticker)
+    if cursor is None:
+        return [len(df) - 1]
+    after = pd.Timestamp(cursor)
+    return [i for i, stamp in enumerate(df.index) if _utc_naive(stamp) > after]
+
+
+def _signal_exit_reason(strat_obj, frame: pd.DataFrame, trade: dict) -> str | None:
+    """Oldest exit signal on any completed bar after the entry's signal bar.
+
+    The backtest latches an exit signal from any bar after the signal bar, so a
+    cross on a bar that completed while the market was closed (and is no longer
+    the latest bar by the next session) still exits.
+    """
+    last = len(frame) - 1
+    try:
+        signal_bar = _utc_naive(trade.get("entry_date"))
+        indexes = [i for i, stamp in enumerate(frame.index) if _utc_naive(stamp) > signal_bar]
+    except (TypeError, ValueError):
+        indexes = [last]
+    for idx in indexes or []:
+        reason = strat_obj.check_exit(frame, idx, PARAMS)
+        if reason:
+            return reason
+    return None
+
+
 # ── Main trading loop ─────────────────────────────────────────────────────────
 
 def run_once(strategy: StrategyType) -> int:
@@ -738,10 +885,23 @@ def run_once(strategy: StrategyType) -> int:
                         df['near_earnings'] = True
                         df['earnings_status'] = 'unknown'
                 frames[ticker] = df
-                idx = len(df) - 1
 
-                # Check for entry signal
-                sig = strat_obj.check_entry(df, idx, PARAMS)
+                # Examine every newly completed bar once; only a bar still
+                # inside its modelled fill window may produce an entry.
+                sig = None
+                for idx in _unevaluated_bar_indexes(strat_name, ticker, df):
+                    candidate = strat_obj.check_entry(df, idx, PARAMS)
+                    if candidate is None:
+                        continue
+                    if not _signal_is_actionable(df.index[idx], strat_obj.timeframe):
+                        log.info("  %s: signal on bar %s is outside its fill window — skipped",
+                                 ticker, df.index[idx])
+                        continue
+                    sig = candidate
+                    break
+                # Advance before any order work: a bar is never acted on twice,
+                # and a cursor that cannot be stored blocks the entry.
+                db_mod.set_signal_cursor(strat_name, ticker, _bar_key(df.index[-1]))
                 if sig is not None:
                     trades_found += 1
                     if strat_obj.has_take_profit:
@@ -889,8 +1049,11 @@ def run_once(strategy: StrategyType) -> int:
                         )
 
                         if strat_obj.exit_mode == "signal_with_stop":
+                            # Each signal strategy owns its emergency-stop
+                            # distance (TQQQ 8%, SMA cross 10%), exactly as the
+                            # backtest applies it.
                             sig.stop_loss = market_ref * (
-                                1.0 - PARAMS.sma_cross_stop_loss_pct
+                                1.0 - strat_obj.stop_loss_fraction(PARAMS)
                             )
 
                         entry_coid = _make_client_order_id(
@@ -1050,10 +1213,17 @@ def run_once(strategy: StrategyType) -> int:
 
     # Entry data and submission errors must never starve existing holdings.
     # This phase retains its own per-trade ownership and idempotency guards.
+    # Per-trade failures are alerted once per day by the reconciler itself; they
+    # mark the run as errored but are not re-emailed every cycle below.
+    alerted: list[str] = []
     try:
-        _reconcile_and_exit(strat_name, frames)
+        alerted.extend(_reconcile_and_exit(strat_name, frames) or [])
     except Exception as exc:
         record_error("Reconciliation", exc)
+    try:
+        alerted.extend(_audit_protection())
+    except Exception as exc:
+        record_error("Protection audit", exc)
 
     try:
         # Tax records are recomputed over the whole history because a new
@@ -1074,7 +1244,7 @@ def run_once(strategy: StrategyType) -> int:
             send_notification("Bot V2 Error", "\n".join(errors) + f"\n\nRun: {datetime.now().isoformat()}")
         except Exception as exc:
             record_error("Error notification", exc)
-    error = "\n".join(errors) or None
+    error = "\n".join(errors + alerted) or None
     run_status = "error" if error else "done"
     db_mod.finish_bot_run(run_id, trades_found, orders_placed, error)
     log.info("Bot V2 run complete: %d signals, %d orders — status=%s", trades_found, orders_placed, run_status)
@@ -1159,7 +1329,7 @@ def _signal_exit_frame(
 
 def _reconcile_and_exit(
     strat_name: str, frames: dict[str, pd.DataFrame] | None = None
-):
+) -> list[str]:
     """Keep DB trades in sync and apply each trade's own strategy exit.
 
     Covers EVERY open trade this bot recorded — whatever strategy opened it —
@@ -1169,18 +1339,23 @@ def _reconcile_and_exit(
       * else if past max-hold and at breakeven+ → close OUR quantity (after verifying
         ownership and cancelling our own bracket legs).
     Positions the bot did not open are never inspected or closed.
+
+    Returns one message per trade whose reconciliation failed. Each failure is
+    also alerted (once per trade per day): fail-closed states such as an
+    unresolved protective submission need an operator and must not stay silent.
     """
+    failures: list[str] = []
     try:
         tc = _get_trading()
     except Exception as e:
         log.debug("Exit check skipped (no trading client): %s", e)
-        return
+        return failures
 
     try:
         open_trades = db_mod.get_open_trades()
     except Exception as e:
         log.error("Exit check skipped: open trades unavailable (%s)", e)
-        return
+        return [f"open trades unavailable: {e}"]
 
     frame_cache: dict[tuple[str, str], pd.DataFrame] = {}
     for trade in open_trades:
@@ -1256,7 +1431,7 @@ def _reconcile_and_exit(
                     log.warning("  %s cross exit blocked: ownership unverified (coid=%s)",
                                 ticker, trade.get("client_order_id"))
                     continue
-                reason = strat_obj.check_exit(frame, len(frame) - 1, PARAMS)
+                reason = _signal_exit_reason(strat_obj, frame, trade)
                 if reason:
                     _close_owned(tc, trade, pos, reason=reason)
                 else:
@@ -1275,6 +1450,114 @@ def _reconcile_and_exit(
                 _ensure_owned_protection(tc, trade)
         except Exception as e:
             log.error("  Exit check failed for %s: %s", ticker, e)
+            message = f"{ticker} trade {trade.get('id')}: {e}"
+            failures.append(message)
+            _alert_once(
+                f"reconcile-{trade.get('id')}",
+                f"Bot V2: {ticker} reconciliation blocked",
+                f"{message}\n\nThe bot fails closed and will not place orders for this "
+                f"trade until the broker state is resolved. Check that the position "
+                f"still has a live stop.",
+            )
+    return failures
+
+
+_ALERT_MARKER = ROOT / "run" / "alerts.json"
+
+
+def _alert_once(key: str, subject: str, body: str) -> bool:
+    """Email at most once per key per ET trading day; always logs."""
+    log.error("ALERT %s: %s", subject, body.splitlines()[0] if body else "")
+    today = datetime.now(_ET).date().isoformat()
+    try:
+        sent = json.loads(_ALERT_MARKER.read_text()) if _ALERT_MARKER.exists() else {}
+        if not isinstance(sent, dict):
+            sent = {}
+    except Exception:
+        sent = {}
+    if sent.get(key) == today:
+        return False
+    sent = {k: v for k, v in sent.items() if v == today}
+    sent[key] = today
+    try:
+        _ALERT_MARKER.parent.mkdir(exist_ok=True)
+        _ALERT_MARKER.write_text(json.dumps(sent))
+    except Exception:
+        pass  # a marker failure must never suppress the alert itself
+    send_notification(subject, body)
+    return True
+
+
+_ACTIVE_ORDER_STATES = {"new", "accepted", "held", "pending_new", "partially_filled", "done_for_day"}
+
+
+def _protection_gap(tc, trade: dict) -> str | None:
+    """Why a filled, owned position has no live broker stop, or None.
+
+    Only evidence of an owned, settled position counts: unsettled entries, a
+    missing broker position and a working controlled exit are not gaps.
+    """
+    if trade.get("entry_state") == "pending_submission":
+        return None
+    try:
+        if _reconcile_entry_fill(tc, trade) is None:
+            return None
+    except Exception:
+        return None  # entry unsettled/unknown; reconciliation reports it
+    try:
+        pos = tc.get_open_position(trade["ticker"])
+    except Exception:
+        return None
+    if pos is None or float(getattr(pos, "qty", 0) or 0) <= 0:
+        return None
+    if float(trade.get("shares") or 0) - db_mod.get_exit_fill_totals(trade["id"])[0] < 1e-9:
+        return None
+    exit_id = trade.get("exit_alpaca_order_id")
+    if exit_id:
+        try:
+            if _status_str(tc.get_order_by_id(exit_id)) in _ACTIVE_ORDER_STATES:
+                return None  # a market exit is working; protection was removed on purpose
+        except Exception:
+            pass
+    try:
+        orders = _owned_bracket_orders(tc, trade)
+    except Exception as exc:
+        return f"protection cannot be verified ({exc})"
+    if orders is None:
+        return None
+    for order in orders:
+        kind = str(getattr(getattr(order, "type", ""), "value", getattr(order, "type", "")))
+        if kind == "stop" and _status_str(order) in _ACTIVE_ORDER_STATES:
+            return None
+    return "no live stop order is linked to this trade"
+
+
+def _audit_protection() -> list[str]:
+    """Alert (once per trade per day) on any owned position without a live stop."""
+    gaps: list[str] = []
+    try:
+        tc = _get_trading()
+        trades = db_mod.get_open_trades()
+    except Exception as exc:
+        log.warning("Protection audit skipped (%s)", exc)
+        return gaps
+    for trade in trades:
+        try:
+            reason = _protection_gap(tc, trade)
+        except Exception as exc:
+            reason = f"protection audit failed ({exc})"
+        if reason is None:
+            continue
+        message = f"{trade['ticker']} trade {trade.get('id')}: {reason}"
+        gaps.append(message)
+        _alert_once(
+            f"unprotected-{trade.get('id')}",
+            f"Bot V2: {trade['ticker']} position is UNPROTECTED",
+            f"{message}\n\nThe broker holds this bot's shares with no active stop. "
+            f"The bot keeps retrying repairs; if this persists, place or verify "
+            f"a stop manually.",
+        )
+    return gaps
 
 
 def _reconcile_closed(tc, trade: dict):
@@ -2291,7 +2574,10 @@ def _in_trading_hours() -> bool:
 
 def run_loop(strategy: StrategyType, interval_minutes: int = 30):
     """Run bot in continuous loop, active only 08:30–17:00 ET."""
+    global _loop_interval
     log.info("Starting Bot V2 loop — %s every %d min", strategy.value, interval_minutes)
+    # A signal stays actionable for one pass after its modelled fill time.
+    _loop_interval = timedelta(minutes=interval_minutes)
     while True:
         runtime.heartbeat(SERVICE)
         if _in_trading_hours():

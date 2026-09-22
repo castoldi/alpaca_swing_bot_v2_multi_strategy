@@ -222,7 +222,10 @@ class StrategyParams:
     macd_max_holding_days: int = 6
 
     # ── V2: Ensemble ─────────────────────────────────────────────────────
-    ensemble_min_votes: int = 2      # min strategies that must agree
+    # Minimum member strategies that must agree. 1 = pre-F16 live behaviour
+    # (Regime's 0.35 weight can qualify alone). 2 is an unvalidated variant:
+    # promote it only after the ablation in docs/code-review-2026-09-21-verification.md (V05).
+    ensemble_min_votes: int = 1
     ensemble_stop_loss_pct: float = 0.09
     ensemble_tp_multiple: float = 2.5
     ensemble_tp_cap_pct: float = 0.12

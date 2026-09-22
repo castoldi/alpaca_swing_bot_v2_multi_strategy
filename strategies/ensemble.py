@@ -30,9 +30,9 @@ class EnsembleStrategy(BaseStrategy):
     description = (
         "Weighted vote of all 5 base strategies must score ≥ 0.30. "
         "Weights: Regime 35%, MACD 25%, Trend 20%, Breakout 15%, Mean Rev 5%. "
-        "At least 2 strategies must agree."
+        "Regime alone (0.35) can qualify; ensemble_min_votes adds a member-count gate."
     )
-    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6 sessions if breakeven+", "Score ≥0.30 + 2 votes"]
+    params_display = ["SL 9%", "TP 2.5×ATR [4%–12%]", "Time stop 6 sessions if breakeven+", "Score ≥0.30"]
 
     def __init__(self):
         super().__init__()

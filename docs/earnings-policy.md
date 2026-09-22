@@ -49,9 +49,16 @@ latest observation at or before that decision, and uses it only while valid.
 Later schedule revisions cannot change an earlier decision. Historical runs and
 dashboard examples never fetch today's calendar to reconstruct an old schedule.
 
-The repository has no pre-existing point-in-time earnings archive. Consequently,
-older Trend Pullback opportunities are suppressed as unknown until independently
-archived observations are supplied. Ensemble can still trade on its other votes.
+Live observations begin on 2026-09-14. Everything before that comes from
+`scripts/import_earnings_history.py` (v0.25.0). It builds weekly snapshots
+from Yahoo's past earnings dates under a stated approximation: each date is
+assumed public 14 days ahead. Every imported row carries that assumption in its
+`source`. Weeks outside a continuous quarterly history (before a ticker's first
+known event, or inside a gap over 120 days) are not certified and stay unknown.
+The import stops at each ticker's first live observation and never alters live
+rows. Re-run it with `--force` to replace a previous import. Report
+historical Trend Pullback and Ensemble results as depending on this
+approximation.
 Existing reported P&L and the old claimed earnings-filter benefit have not been
 recomputed and are not evidence of improvement under the corrected policy.
 

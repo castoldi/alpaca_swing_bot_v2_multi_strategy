@@ -177,7 +177,7 @@ the one-time install command above after a fresh clone (otherwise no auto tag/pu
 | **breakout** | Intrabar high breaks prior 20-bar high with ≥1.5× avg volume, current range ≤1.3× prior 10-bar average, price > SMA(50), RSI ≥50 rising | 8% | 3×ATR [5%, 15%] | 7d | +$78.64 | +$3.95 |
 | **mean_reversion** | Price > SMA(50), at least 0.5% below SMA(20), RSI reached ≤50 in 7 bars, bounce bar | 7% | 1.5×ATR [1.5%, 5%] | 3d | +$35.10 | -$23.15 |
 | **momentum_macd** | MACD histogram just crossed above 0, RSI > 50 rising, price > SMA(20) and SMA(50) | 9% | 2.5×ATR [4%, 12%] | 6d | +$29.89 | +$3.99 |
-| **ensemble** | Weighted vote ≥0.30 and ≥2 members: regime(0.35) + MACD(0.25) + trend(0.20) + breakout(0.15) + MR(0.05) | 9% | 2.5×ATR [4%, 12%] | 6d | +$91.83 | +$243.87 |
+| **ensemble** | Weighted vote ≥0.30 (Regime alone qualifies; `ensemble_min_votes`=1): regime(0.35) + MACD(0.25) + trend(0.20) + breakout(0.15) + MR(0.05) | 9% | 2.5×ATR [4%, 12%] | 6d | +$91.83 | +$243.87 |
 | **regime** | EMA(10)/EMA(50) cross: risk-on = buy dips with 12% stop, risk-off = oversold bounces with 7% stop, neutral = trend-like with 10% stop | adaptive | ATR-based [3%, 8%] | 5d | +$196.45 | +$207.28 |
 | **sma_50_cross** | Completed daily close crosses from ≤ SMA(50) to > SMA(50); exit on the opposite daily cross | 10% emergency | none | until cross | +$117.12 | +$146.19 |
 

@@ -35,3 +35,47 @@ def isolate_earnings_calendar(tmp_path, monkeypatch):
     import earnings_calendar
     monkeypatch.setattr(earnings_calendar, '_STORE', earnings_calendar.CalendarStore(
         tmp_path / 'earnings.db', fetcher=lambda _: []))
+
+
+@pytest.fixture(autouse=True)
+def open_live_signal_window(request, monkeypatch):
+    """Legacy run_once fixtures use synthetic timestamps far in the past.
+
+    The live fill-window rule has its own tests, marked ``real_signal_window``;
+    everywhere else the window is held open so those tests keep exercising the
+    entry path they were written for. The one-evaluation-per-bar cursor stays
+    real (and per-test isolated through the database fixture).
+    """
+    if request.node.get_closest_marker("real_signal_window"):
+        return
+    if "bot" not in sys.modules:
+        try:
+            import bot  # noqa: F401
+        except Exception:
+            return
+    monkeypatch.setattr(sys.modules["bot"], "_signal_is_actionable", lambda *_a, **_k: True)
+
+
+@pytest.fixture(autouse=True)
+def isolate_bot_alerts(tmp_path, monkeypatch):
+    """Never email or touch run/ markers from tests; tests may still override."""
+    if "bot" not in sys.modules:
+        try:
+            import bot  # noqa: F401
+        except Exception:
+            return
+    bot_module = sys.modules["bot"]
+    monkeypatch.setattr(bot_module, "_ALERT_MARKER", tmp_path / "alerts.json")
+    monkeypatch.setattr(bot_module, "_KILL_SWITCH_MARKER", tmp_path / "killswitch.date")
+    monkeypatch.setattr(bot_module, "send_notification", lambda *_a, **_k: False)
+
+
+@pytest.fixture(autouse=True)
+def skip_protection_audit(request, monkeypatch):
+    """Legacy run_once fakes do not model broker stop orders.
+
+    The audit has dedicated tests marked ``protection_audit``.
+    """
+    if request.node.get_closest_marker("protection_audit") or "bot" not in sys.modules:
+        return
+    monkeypatch.setattr(sys.modules["bot"], "_audit_protection", lambda: [])

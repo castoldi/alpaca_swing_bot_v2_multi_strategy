@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 import bot
 
 
@@ -22,19 +24,64 @@ class _KillSwitchClient:
         return []
 
 
-def test_daily_loss_beyond_limit_disables_sizing_and_emails_once(tmp_path, monkeypatch):
+def _open_bot_trade(shares=10, entry=100.0, entered="2026-09-01T14:00:00+00:00"):
+    trade_id = bot.db_mod.save_trade("AMD", "ensemble", "2026-09-01 12:00:00", entry,
+                                     90.0, 110.0, shares=shares,
+                                     client_order_id="swingv2-entry-ensemble-AMD-1",
+                                     alpaca_order_id="entry-1", entry_state="accepted")
+    bot.db_mod.set_entry_fill(trade_id, entry, shares, entered)
+    return trade_id
+
+
+def test_bot_owned_daily_loss_beyond_limit_disables_sizing_and_emails_once(tmp_path, monkeypatch):
     notified = []
     monkeypatch.setattr(bot, "_KILL_SWITCH_MARKER", tmp_path / "killswitch.date")
     monkeypatch.setattr(
         bot, "send_notification", lambda *args, **kwargs: notified.append(args)
     )
-    client = _KillSwitchClient(equity="960", last_equity="1000")  # -4% day
+    _open_bot_trade(shares=10)
+    # 10 shares down $4 from yesterday's close = -$40 on a $1000 base = 4%.
+    monkeypatch.setattr(bot.data_feed, "fetch_snapshots",
+                        lambda symbols: {"AMD": {"price": 96.0, "prev_close": 100.0}})
+    client = _KillSwitchClient(equity="1000", last_equity="1000")
 
     assert bot._load_live_sizing(client) is None
     assert bot._load_live_sizing(client) is None
 
     assert len(notified) == 1
     assert "kill switch" in notified[0][0].lower()
+
+
+def test_foreign_account_loss_does_not_trip_the_bot_kill_switch(tmp_path, monkeypatch):
+    # V08: another project on the shared key lost 4%; this bot owns nothing.
+    monkeypatch.setattr(bot, "_KILL_SWITCH_MARKER", tmp_path / "killswitch.date")
+    monkeypatch.setattr(bot, "send_notification", lambda *args, **kwargs: None)
+    client = _KillSwitchClient(equity="960", last_equity="1000")
+
+    state = bot._load_live_sizing(client)
+
+    assert state is not None and state.equity == 960.0
+
+
+def test_trade_entered_today_is_measured_from_its_fill(monkeypatch):
+    from datetime import datetime, timezone
+    _open_bot_trade(shares=10, entry=100.0,
+                    entered=datetime.now(timezone.utc).isoformat())
+    monkeypatch.setattr(bot.data_feed, "fetch_snapshots",
+                        lambda symbols: {"AMD": {"price": 98.0, "prev_close": 150.0}})
+    account = SimpleNamespace(equity="1000", last_equity="1000")
+
+    assert bot._bot_daily_loss_pct(account) == pytest.approx(0.02)
+
+
+def test_unknown_bot_pnl_falls_back_to_the_account_wide_drop(tmp_path, monkeypatch):
+    monkeypatch.setattr(bot, "_KILL_SWITCH_MARKER", tmp_path / "killswitch.date")
+    monkeypatch.setattr(bot, "send_notification", lambda *args, **kwargs: None)
+    _open_bot_trade()
+    monkeypatch.setattr(bot.data_feed, "fetch_snapshots", lambda symbols: {})  # no marks
+    client = _KillSwitchClient(equity="960", last_equity="1000")
+
+    assert bot._load_live_sizing(client) is None
 
 
 def test_daily_loss_within_limit_keeps_entries_enabled(tmp_path, monkeypatch):

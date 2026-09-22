@@ -340,6 +340,47 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.25.0] - 2026-09-21
+
+Fixes all nine items (V01–V09) from
+[docs/code-review-2026-09-21-verification.md](docs/code-review-2026-09-21-verification.md).
+Validation: 839 tests passed (34 added); one existing dependency warning.
+
+### Added
+- **Historical earnings import** (`scripts/import_earnings_history.py`, V06):
+  labelled weekly point-in-time snapshots from Yahoo past earnings dates
+  (assumption recorded per row: date public ≥14 days ahead), up to each ticker's
+  first live observation. 4,693 snapshots imported (2002+, ARM 2023+), so
+  historical Trend Pullback / Ensemble backtests are no longer earnings-suppressed.
+- **Alerts for states that need an operator** (V07): per-trade reconciliation
+  failures are recorded on the run and emailed once per trade per day, and a
+  protection audit alerts when an owned position has no live broker stop.
+
+### Fixed
+- **Same-bar live re-entry and late entries** (V01, P1): a `signal_cursor` table
+  makes every completed bar evaluated once, and a signal is actionable only
+  within one loop interval (+5 min) of the backtest's modelled fill time. The
+  live ledger showed META bought twice on 2026-09-08 from a 2026-09-04 bar.
+- **Bars completing outside market hours skipped live** (V02): all bars since
+  the cursor are evaluated oldest first; signal exits latch from any bar after
+  the entry's signal bar, as in the backtest.
+- **Live TQQQ emergency stop 10% instead of 8%** (V03): live uses each
+  strategy's own `stop_loss_fraction`.
+- **`restart-bot` / `restart-dashboard` failing with `(pid=N)`** (V04, completes
+  F03): stopping an already-exiting launcher tolerates `AccessDenied`, and a
+  process that ignores terminate is killed after the wait.
+
+### Changed
+- **Ensemble vote gate restored to pre-F16 behaviour** (V05):
+  `ensemble_min_votes` defaults to 1 (Regime alone qualifies). The 2-vote rule
+  was deployed without evaluation; it remains available for the planned ablation.
+- **Live kill switch measures this bot's own P&L** (V08) since the previous
+  close, over yesterday's equity, instead of the shared 9-project account;
+  falls back to the account-wide drop when own P&L is unknown.
+- Remediation doc corrected (V09); live signal-timing policy documented in
+  docs/backtest-execution.md.
+
 ## [0.24.21] - 2026-09-21
 
 ### Added
@@ -1801,6 +1842,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

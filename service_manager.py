@@ -106,8 +106,18 @@ class Manager:
                     pass
                 raise RuntimeError(f"Process identity changed for PID {identity['pid']}; stop refused")
             # psutil checks PID reuse; never kill an unverified descendant tree.
-            proc.terminate()
-            proc.wait(timeout=8)
+            try:
+                proc.terminate()
+            except psutil.AccessDenied:
+                # Windows refuses TerminateProcess for a process that is already
+                # exiting — the venv launcher does exactly that once its verified
+                # interpreter child is stopped. Its exit is verified below.
+                pass
+            try:
+                proc.wait(timeout=8)
+            except psutil.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
         except psutil.NoSuchProcess:
             return
 
