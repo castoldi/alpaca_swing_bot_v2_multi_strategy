@@ -89,9 +89,11 @@ class StrategyParams:
     # Skip an entry when the live price has drifted further than this from the
     # signal bar close: the SL/TP geometry would no longer match the backtest.
     entry_max_slippage_pct: float = 0.015
-    # Kill switch: once the account is down this much vs yesterday's close
-    # equity, new entries are disabled (exits and broker-held protection keep
-    # working). Re-evaluated fresh every cycle, not latched for the rest of
+    # Kill switch: once THIS BOT's own P&L since the previous session close
+    # (open trades plus trades closed today) is down this much of yesterday's
+    # account equity, new entries are disabled (exits and broker-held protection
+    # keep working). If the bot's own P&L cannot be computed it falls back to
+    # the account-wide drop, which can only block entries. Re-evaluated fresh every cycle, not latched for the rest of
     # the day: if equity recovers back above the threshold later the same
     # session, new entries resume without waiting for the next calendar day.
     max_daily_loss_pct: float = 0.03
@@ -109,6 +111,13 @@ class StrategyParams:
     # ticker therefore cannot raise risk until this number is deliberately
     # raised. Enforced identically in live sizing and in run_annual_portfolio.
     max_leveraged_exposure_pct: float = 0.20
+    # Correlated-group exposure caps, the generalization of the leveraged cap:
+    # ((name, (tickers, ...), max fraction of equity), ...). Total notional of
+    # every open position in a group stays under its cap, enforced identically
+    # in live sizing and run_annual_portfolio. A ticker in several groups must
+    # fit under all of them. Empty by default = no change in behaviour; any
+    # value must come out of research/group_cap_experiment.py, not a guess.
+    exposure_groups: tuple[tuple[str, tuple[str, ...], float], ...] = ()
 
     # ── Tax awareness ─────────────────────────────────────────────────────
     # Rates used only to forecast a liability on the dashboard; they change no
@@ -285,6 +294,13 @@ ALPACA_PAPER: bool = os.getenv("ALPACA_PAPER", "true").lower() in {"1", "true", 
 GMAIL_USER: str | None = os.getenv("GMAIL_USER")
 GMAIL_APP_PASSWORD: str | None = os.getenv("GMAIL_APP_PASSWORD")
 NOTIFY_EMAIL: str | None = os.getenv("NOTIFY_EMAIL") or GMAIL_USER
+
+
+# --- Dashboard access --------------------------------------------------------
+# The dashboard listens on the LAN (the owner's phone). When set, any request
+# not from this machine must carry this token once (?token=...), after which a
+# long-lived cookie is used. Empty = open dashboard (previous behaviour).
+DASHBOARD_TOKEN: str = (os.getenv("DASHBOARD_TOKEN") or "").strip()
 
 
 # --- Output paths ------------------------------------------------------------

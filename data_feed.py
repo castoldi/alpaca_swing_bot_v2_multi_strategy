@@ -32,7 +32,8 @@ def _get_client():
     global _client
     if _client is None:
         from alpaca.data.historical import StockHistoricalDataClient
-        _client = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
+        from http_timeouts import apply_default_timeout
+        _client = apply_default_timeout(StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET))
     return _client
 
 
@@ -145,6 +146,10 @@ def fetch_recent(
     return fetch_bars(ticker, start, end, timeframe)
 
 
+# How long after a 4h bucket ends before it is treated as final.
+BAR_SETTLE = timedelta(seconds=60)
+
+
 def completed_bars(
     df: pd.DataFrame, timeframe: str, as_of: datetime | None = None
 ) -> pd.DataFrame:
@@ -165,9 +170,11 @@ def completed_bars(
         return df[pd.Index(df.index.date) < session_date].copy()
     if timeframe == "4h":
         # Index is tz-naive UTC bar-start; a bucket [T, T+4h) is complete
-        # once now >= T+4h.
+        # once now >= T+4h plus a settle margin for the last minute's trades
+        # to reach Alpaca's aggregate. The live cursor evaluates each bar once,
+        # so a bar judged on partial data would never be judged again.
         now_utc = current.astimezone(timezone.utc).replace(tzinfo=None)
-        cutoff = now_utc - timedelta(hours=4)
+        cutoff = now_utc - timedelta(hours=4) - BAR_SETTLE
         return df[df.index <= cutoff].copy()
     return df
 

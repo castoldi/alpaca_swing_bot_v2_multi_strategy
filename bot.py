@@ -15,7 +15,7 @@ import math
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, date, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -34,7 +34,8 @@ import data_feed
 import portfolio
 import runtime
 import tax as tax_mod
-from position_sizing import leveraged_headroom, whole_share_position_size
+from position_sizing import (combine_headroom, group_headroom, leveraged_headroom,
+                             whole_share_position_size)
 
 log = get_logger(__name__)
 ROOT = Path(__file__).parent
@@ -45,6 +46,21 @@ SERVICE = "bot"  # name used for run/bot.pid, run/bot.meta.json, run/bot.heartbe
 # ever close a position whose originating order carries this prefix.
 CLIENT_ORDER_PREFIX = "swingv2"
 ENTRY_PENDING_GRACE = timedelta(minutes=5)
+# Broker states of an entry order that is still working normally.
+_WORKING_ENTRY_STATES = {"new", "accepted", "pending_new", "partially_filled", "held"}
+
+
+class EntryPending(ValueError):
+    """The owned entry order is still working, so its quantity is not final.
+
+    A ValueError subclass so every existing fail-closed caller still treats it
+    as unsettled; only the reconciler tells a young pending entry (normal right
+    after submission, especially at the open) from a stuck one.
+    """
+
+    def __init__(self, message: str, submitted_at=None):
+        super().__init__(message)
+        self.submitted_at = submitted_at
 
 
 @dataclass
@@ -55,6 +71,8 @@ class LiveSizingState:
     # Market value of every open leveraged-ETF position, whoever opened it —
     # the cap is about account risk, not about which orders the bot owns.
     leveraged_notional: float = 0.0
+    # Market value per symbol, account-wide, for the correlated-group caps.
+    open_notional_by_ticker: dict[str, float] = field(default_factory=dict)
 
 
 def _daily_loss_pct(account) -> float | None:
@@ -181,6 +199,24 @@ def _open_leveraged_notional(positions) -> float:
     return total
 
 
+def _open_notional_by_ticker(positions) -> dict[str, float]:
+    """Market value per open symbol; an unreadable value counts as infinite,
+    so the exposure-group cap fails closed exactly like the leveraged cap."""
+    out: dict[str, float] = {}
+    for pos in positions or []:
+        symbol = str(getattr(pos, "symbol", "") or "")
+        if not symbol:
+            continue
+        try:
+            value = abs(float(getattr(pos, "market_value", None)))
+            if not math.isfinite(value):
+                raise ValueError("non-finite market value")
+        except (TypeError, ValueError):
+            value = float("inf")
+        out[symbol] = out.get(symbol, 0.0) + value
+    return out
+
+
 def _bot_owned_symbols() -> set[str] | None:
     """Symbols this bot currently tracks as open, or None when unreadable."""
     try:
@@ -290,6 +326,7 @@ def _load_live_sizing(tc) -> LiveSizingState | None:
                 0, PARAMS.max_concurrent_positions - open_position_count
             ),
             leveraged_notional=_open_leveraged_notional(positions),
+            open_notional_by_ticker=_open_notional_by_ticker(positions),
         )
     except Exception as exc:
         log.warning("New entries disabled this cycle: account sizing unavailable (%s)", exc)
@@ -487,14 +524,6 @@ def _ensure_owned_protection(tc, trade: dict) -> None:
     log.warning("  %s: restored owned GTC protection for %g shares", trade["ticker"], remaining)
 
 
-def _position_qty(tc, ticker: str) -> float:
-    try:
-        pos = tc.get_open_position(ticker)
-        return abs(float(pos.qty)) if pos else 0.0
-    except Exception:
-        return 0.0
-
-
 def _effective_entry_price(trade: dict) -> float:
     """Real broker fill when recorded, else the signal-close entry price."""
     return float(trade.get("entry_filled_price") or trade["entry_price"])
@@ -575,6 +604,21 @@ def _exception_status_code(exc: Exception) -> int | None:
 def _is_definite_submission_rejection(exc: Exception) -> bool:
     """True only for broker responses that definitively reject the request."""
     return _exception_status_code(exc) in {400, 401, 403, 404, 422}
+
+
+def _open_position_or_none(tc, ticker: str):
+    """The account position for ``ticker``, or None only when Alpaca says none.
+
+    Alpaca answers 404 for a symbol with no position. Anything else (429, 5xx,
+    timeout, DNS) is unknown state and is re-raised: treating it as "the
+    position is gone" would finalize a live trade from a network blip.
+    """
+    try:
+        return tc.get_open_position(ticker)
+    except Exception as exc:
+        if _exception_status_code(exc) == 404:
+            return None
+        raise
 
 
 def _lookup_entry_by_client_id(
@@ -732,7 +776,10 @@ def _get_trading():
             log.warning("⚠️  ALPACA_PAPER=false — would trade REAL MONEY! Forcing paper=True")
         from alpaca.trading.client import TradingClient
         # PAPER ONLY — hardcoded paper=True as safety override
-        _trading_client = TradingClient(ALPACA_KEY, ALPACA_SECRET, paper=True)
+        from http_timeouts import apply_default_timeout
+        _trading_client = apply_default_timeout(
+            TradingClient(ALPACA_KEY, ALPACA_SECRET, paper=True)
+        )
     return _trading_client
 
 
@@ -795,6 +842,101 @@ def _signal_is_actionable(bar_start, timeframe: str, now=None) -> bool:
     return fill <= current < fill + _loop_interval + SIGNAL_FILL_GRACE
 
 
+# A pass is scheduled this long after each modelled fill time: after the 4h
+# bucket has settled (data_feed.BAR_SETTLE) and well inside the fill window.
+FILL_WAKE_DELAY = timedelta(seconds=90)
+
+
+def _next_signal_fill_after(now, timeframe: str) -> pd.Timestamp | None:
+    """Earliest modelled fill time strictly after ``now`` (UTC, naive).
+
+    Candidate bars span a couple of days either side of now, which always
+    includes the next session open (weekends and holidays included).
+    """
+    current = _utc_naive(now)
+    if timeframe == "4h":
+        base = current.floor("4h")
+        starts = [base + pd.Timedelta(hours=4 * k) for k in range(-2, 13)]
+    elif timeframe == "1d":
+        # Any instant inside the New York day identifies that day's bar.
+        noon = (current.tz_localize("UTC").tz_convert(_ET).normalize()
+                + pd.Timedelta(hours=12))
+        starts = [noon + pd.DateOffset(days=k) for k in range(-2, 5)]
+    else:
+        return None
+    fills = [fill for fill in (_signal_fill_time(start, timeframe) for start in starts)
+             if fill is not None and fill > current]
+    return min(fills) if fills else None
+
+
+def _seconds_until_next_pass(now, interval: timedelta, timeframe: str) -> float:
+    """Sleep one interval, or less so a pass lands just after the next fill time.
+
+    The backtest fills at the first session minute after a bar completes; a
+    fixed sleep put live passes anywhere up to one interval later. Waking at
+    each fill time keeps live entries within ~FILL_WAKE_DELAY of the model.
+    """
+    current = _utc_naive(now)
+    wake = current + interval
+    try:
+        fill = _next_signal_fill_after(current, timeframe)
+    except Exception as exc:
+        log.warning("Next fill time unavailable (%s) — sleeping one interval", exc)
+        fill = None
+    if fill is not None and fill + FILL_WAKE_DELAY < wake:
+        wake = fill + FILL_WAKE_DELAY
+    return max(1.0, (wake - current).total_seconds())
+
+
+def _modelled_fill_iso(bar_start, timeframe: str) -> str | None:
+    """The backtest's fill time for this signal bar; None if unknowable."""
+    try:
+        fill = _signal_fill_time(bar_start, timeframe)
+    except Exception:
+        return None
+    return fill.isoformat() if fill is not None else None
+
+
+# The backtest takes the first minute WITH A TRADE at/after the modelled time;
+# look this far ahead for it.
+MODEL_FILL_SEARCH = timedelta(minutes=15)
+
+
+def _record_execution_quality(now=None) -> int:
+    """Store each live entry's modelled fill time and that minute's open.
+
+    Bookkeeping only (never raises). ``entry_filled_at - modelled_fill_at``
+    is the live fill delay and ``entry_filled_price / model_fill_price - 1``
+    the live slippage against the backtest's own execution assumption.
+    Returns how many trades were priced.
+    """
+    now = _utc_naive(now if now is not None else datetime.now(timezone.utc))
+    priced = 0
+    try:
+        for trade in db_mod.get_trades_missing_modelled_fill():
+            strat_obj = REGISTRY.get(str(trade.get("strategy") or ""))
+            fill = _modelled_fill_iso(trade.get("entry_date"), strat_obj.timeframe) if strat_obj else None
+            if fill is not None:
+                db_mod.set_modelled_fill(trade["id"], fill)
+        since = (now - timedelta(days=30)).isoformat()
+        for trade in db_mod.get_trades_missing_model_price(since):
+            start = _utc_naive(trade["modelled_fill_at"])
+            if start + MODEL_FILL_SEARCH > now:
+                continue  # the search window has not fully printed yet
+            begin = start.tz_localize("UTC").to_pydatetime()
+            bars = data_feed.fetch_bars(trade["ticker"], begin, begin + MODEL_FILL_SEARCH,
+                                        timeframe="1min")
+            if bars is None or bars.empty:
+                continue
+            bars = bars[bars.index >= start]
+            if not bars.empty:
+                db_mod.set_model_fill_price(trade["id"], float(bars["open"].iloc[0]))
+                priced += 1
+    except Exception as exc:
+        log.warning("Execution quality not recorded (%s)", exc)
+    return priced
+
+
 def _bar_key(bar_start) -> str:
     return _utc_naive(bar_start).isoformat()
 
@@ -843,6 +985,7 @@ def run_once(strategy: StrategyType) -> int:
     log.info("=" * 50)
 
     orders_placed = 0
+    cycle_started = time.monotonic()
     trades_found = 0
     errors: list[str] = []
     tc = None
@@ -902,6 +1045,12 @@ def run_once(strategy: StrategyType) -> int:
                 # Advance before any order work: a bar is never acted on twice,
                 # and a cursor that cannot be stored blocks the entry.
                 db_mod.set_signal_cursor(strat_name, ticker, _bar_key(df.index[-1]))
+                # A signal on a ticker this bot already holds can never become an
+                # order, so it is not counted or stored as a signal.
+                if sig is not None and db_mod.get_open_trade(ticker, strat_name):
+                    log.info("  %s: signal while already holding an open trade — skipped",
+                             ticker)
+                    continue
                 if sig is not None:
                     trades_found += 1
                     if strat_obj.has_take_profit:
@@ -912,16 +1061,12 @@ def run_once(strategy: StrategyType) -> int:
                                  ticker, sig.entry_price)
                     bot_hooks.log_signal(sig, ticker, strat_name)
 
-                    # Only enter if the nearest target (TP1) is reachable within ~2 trading days
+                    # Only enter if TP1 is within 4 ATRs of the entry. The ATR is on
+                    # the strategy's own candles, so on 4h bars this is 4 bar-ATRs.
                     if (strat_obj.has_take_profit and
                             not is_tp_reachable_in_days(sig.entry_price, sig.tp1, sig.atr, days=4)):
                         log.info("  TP1 $%.2f not reachable (ATR=%.2f) — skipping",
                                  sig.tp1, sig.atr)
-                        continue
-
-                    # Skip if THIS bot already has an open trade for the ticker.
-                    if db_mod.get_open_trade(ticker, strat_name):
-                        log.info("  Bot already holds an open %s trade — skipping", ticker)
                         continue
 
                     # Year-end wash-sale guard. Only active from December: an
@@ -938,17 +1083,14 @@ def run_once(strategy: StrategyType) -> int:
                     # other failure (network, outage) is unknown state, so skip the
                     # entry rather than risk doubling exposure.
                     try:
-                        open_pos = tc.get_open_position(ticker)
+                        open_pos = _open_position_or_none(tc, ticker)
                     except Exception as pos_exc:
-                        if _exception_status_code(pos_exc) == 404:
-                            open_pos = None
-                        else:
-                            log.warning(
-                                "  %s: position lookup failed (%s) — skipping entry",
-                                ticker,
-                                pos_exc,
-                            )
-                            continue
+                        log.warning(
+                            "  %s: position lookup failed (%s) — skipping entry",
+                            ticker,
+                            pos_exc,
+                        )
+                        continue
                     if open_pos is not None:
                         log.info("  A %s position already exists (qty %s) not tracked by the bot — skipping",
                                  ticker, open_pos.qty)
@@ -996,14 +1138,20 @@ def run_once(strategy: StrategyType) -> int:
                                 continue
 
                         is_leveraged = ticker in set(LEVERAGED_TICKERS)
-                        headroom = (
+                        headroom = combine_headroom(
                             leveraged_headroom(
                                 sizing_state.equity,
                                 sizing_state.leveraged_notional,
                                 PARAMS.max_leveraged_exposure_pct,
                             )
                             if is_leveraged
-                            else None
+                            else None,
+                            group_headroom(
+                                sizing_state.equity,
+                                ticker,
+                                sizing_state.open_notional_by_ticker,
+                                PARAMS.exposure_groups,
+                            ),
                         )
                         size = whole_share_position_size(
                             sizing_state.equity,
@@ -1016,11 +1164,10 @@ def run_once(strategy: StrategyType) -> int:
                         if qty < 1:
                             if size.reason == "group_exposure_cap":
                                 log.info(
-                                    "  %s: entry skipped — leveraged exposure cap "
-                                    "(%.0f%% of equity) leaves $%.2f headroom, "
+                                    "  %s: entry skipped — exposure cap (leveraged "
+                                    "or correlated group) leaves $%.2f headroom, "
                                     "below one share @ $%.2f",
                                     ticker,
-                                    PARAMS.max_leveraged_exposure_pct * 100,
                                     headroom,
                                     market_ref,
                                 )
@@ -1059,6 +1206,7 @@ def run_once(strategy: StrategyType) -> int:
                         entry_coid = _make_client_order_id(
                             strat_name, ticker, "entry"
                         )
+                        modelled_fill = _modelled_fill_iso(sig.date, strat_obj.timeframe)
                         entry_db_id = db_mod.save_trade(
                             ticker,
                             strat_name,
@@ -1070,6 +1218,7 @@ def run_once(strategy: StrategyType) -> int:
                             client_order_id=entry_coid,
                             alpaca_order_id=None,
                             entry_state="pending_submission",
+                            modelled_fill_at=modelled_fill,
                         )
 
                         def record_accepted_entry(accepted_info: dict) -> None:
@@ -1084,6 +1233,12 @@ def run_once(strategy: StrategyType) -> int:
                                 # signal together, so later tickers in the same
                                 # pass must see this entry's exposure.
                                 sizing_state.leveraged_notional += size.notional
+                            # Same for correlated-group caps: four names entered
+                            # on one bar within 14 s on 2026-09-21.
+                            sizing_state.open_notional_by_ticker[ticker] = (
+                                sizing_state.open_notional_by_ticker.get(ticker, 0.0)
+                                + size.notional
+                            )
                             if entry_db_id is not None:
                                 try:
                                     db_mod.set_entry_order_id(
@@ -1229,6 +1384,7 @@ def run_once(strategy: StrategyType) -> int:
         # Tax records are recomputed over the whole history because a new
         # purchase can retroactively wash an earlier loss.
         _refresh_tax_records()
+        _record_execution_quality()
 
         # Confirm our own positions with the broker and append a point to the
         # bot's local equity curve. Bookkeeping only — never places an order.
@@ -1247,7 +1403,8 @@ def run_once(strategy: StrategyType) -> int:
     error = "\n".join(errors + alerted) or None
     run_status = "error" if error else "done"
     db_mod.finish_bot_run(run_id, trades_found, orders_placed, error)
-    log.info("Bot V2 run complete: %d signals, %d orders — status=%s", trades_found, orders_placed, run_status)
+    log.info("Bot V2 run complete: %d signals, %d orders — status=%s (%.1fs)",
+             trades_found, orders_placed, run_status, time.monotonic() - cycle_started)
     return 0 if not error else 1
 
 
@@ -1377,10 +1534,9 @@ def _reconcile_and_exit(
             # Unknown/unsettled ownership must not finalize or initiate a sell.
             if _reconcile_entry_fill(tc, trade) is None:
                 continue
-            try:
-                pos = tc.get_open_position(ticker)
-            except Exception:
-                pos = None  # Alpaca raises when there is no position for the symbol
+            # Only a 404 proves the position is gone; any other lookup failure
+            # raises into this trade's failure handler and fails closed.
+            pos = _open_position_or_none(tc, ticker)
 
             # A previously submitted market exit owns this trade until Alpaca
             # confirms that it filled or reached a terminal unfilled state.
@@ -1448,18 +1604,38 @@ def _reconcile_and_exit(
                 _close_owned(tc, trade, pos, reason="time_stop")
             else:
                 _ensure_owned_protection(tc, trade)
+        except EntryPending as pending:
+            if _entry_pending_is_young(pending):
+                log.info("  %s: entry order still working — reconciling next cycle", ticker)
+                continue
+            _record_reconcile_failure(failures, trade, pending)
         except Exception as e:
-            log.error("  Exit check failed for %s: %s", ticker, e)
-            message = f"{ticker} trade {trade.get('id')}: {e}"
-            failures.append(message)
-            _alert_once(
-                f"reconcile-{trade.get('id')}",
-                f"Bot V2: {ticker} reconciliation blocked",
-                f"{message}\n\nThe bot fails closed and will not place orders for this "
-                f"trade until the broker state is resolved. Check that the position "
-                f"still has a live stop.",
-            )
+            _record_reconcile_failure(failures, trade, e)
     return failures
+
+
+def _entry_pending_is_young(pending: "EntryPending", now=None) -> bool:
+    """A working entry inside the grace window is normal, not a failure."""
+    submitted = pending.submitted_at
+    if submitted is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return now - submitted < ENTRY_PENDING_GRACE
+
+
+def _record_reconcile_failure(failures: list[str], trade: dict, e: Exception) -> None:
+    """Record one trade's reconciliation failure and alert once per day."""
+    ticker = trade["ticker"]
+    log.error("  Exit check failed for %s: %s", ticker, e)
+    message = f"{ticker} trade {trade.get('id')}: {e}"
+    failures.append(message)
+    _alert_once(
+        f"reconcile-{trade.get('id')}",
+        f"Bot V2: {ticker} reconciliation blocked",
+        f"{message}\n\nThe bot fails closed and will not place orders for this "
+        f"trade until the broker state is resolved. Check that the position "
+        f"still has a live stop.",
+    )
 
 
 _ALERT_MARKER = ROOT / "run" / "alerts.json"
@@ -2054,6 +2230,12 @@ def _reconcile_entry_fill(tc, trade: dict):
             or getattr(entry, "symbol", None) != trade["ticker"] or side != "buy"):
         raise ValueError("broker entry does not match stored ownership")
     if _status_str(entry) not in {"filled", "closed", "canceled", "expired", "rejected"}:
+        if _status_str(entry) in _WORKING_ENTRY_STATES:
+            raise EntryPending(
+                "entry quantity is still unsettled",
+                _parse_timestamp(getattr(entry, "submitted_at", None))
+                or _parse_timestamp(trade.get("created_at")),
+            )
         raise ValueError("entry quantity is still unsettled")
     qty = float(entry.filled_qty)
     price = float(entry.filled_avg_price or 0)
@@ -2224,9 +2406,13 @@ def _execute_exit_intent(
     # Cancellation is asynchronous, so the position used to decide the exit may
     # now be stale. Refetch and subtract every durable partial fill before sizing.
     try:
-        live_pos = tc.get_open_position(ticker)
-    except Exception:
-        live_pos = None
+        live_pos = _open_position_or_none(tc, ticker)
+    except Exception as exc:
+        # Unknown, not absent: keep the durable intent and retry next cycle.
+        # The protection audit alerts while the position has no live stop.
+        log.error("  %s exit deferred: position lookup failed (%s); intent retained",
+                  ticker, exc)
+        return False
 
     filled_shares, _filled_notional = db_mod.get_exit_fill_totals(trade["id"])
     our_qty = float(trade.get("shares") or 0)
@@ -2573,11 +2759,16 @@ def _in_trading_hours() -> bool:
 
 
 def run_loop(strategy: StrategyType, interval_minutes: int = 30):
-    """Run bot in continuous loop, active only 08:30–17:00 ET."""
+    """Run bot in continuous loop while the market is open.
+
+    Passes run every ``interval_minutes`` and additionally just after each
+    modelled signal fill time (see ``_seconds_until_next_pass``).
+    """
     global _loop_interval
     log.info("Starting Bot V2 loop — %s every %d min", strategy.value, interval_minutes)
     # A signal stays actionable for one pass after its modelled fill time.
     _loop_interval = timedelta(minutes=interval_minutes)
+    timeframe = REGISTRY[strategy.value].timeframe
     while True:
         runtime.heartbeat(SERVICE)
         if _in_trading_hours():
@@ -2586,8 +2777,11 @@ def run_loop(strategy: StrategyType, interval_minutes: int = 30):
         else:
             now_et = datetime.now(_ET)
             log.info("Outside trading hours (%s ET) — skipping run", now_et.strftime("%H:%M"))
-        log.info("Sleeping %d minutes...", interval_minutes)
-        time.sleep(interval_minutes * 60)
+        seconds = _seconds_until_next_pass(
+            datetime.now(timezone.utc), _loop_interval, timeframe
+        )
+        log.info("Sleeping %.1f minutes...", seconds / 60)
+        time.sleep(seconds)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -13,17 +14,43 @@ _TICKERS: list[str] = []
 _log = logging.getLogger(__name__)
 
 
-def _con() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+# The live bot, the dashboard and the backtest scripts all write this file. A
+# writer waits this long for another's lock instead of SQLite's 5 s default, so
+# a long backtest write cannot make a live trade write fail.
+BUSY_TIMEOUT_S = 30.0
+# Database paths whose schema this process has already created/migrated.
+_READY: set[str] = set()
 
 
-def _ensure_tables():
-    """Create tables if they don't exist."""
+@contextmanager
+def _con():
+    """One transaction on a fresh connection that is always closed.
+
+    ``sqlite3.Connection.__exit__`` only commits or rolls back; it never closes.
+    """
+    conn = sqlite3.connect(str(_DB), timeout=BUSY_TIMEOUT_S)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_S * 1000)}")
+        conn.execute("PRAGMA foreign_keys=ON")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
+def _ensure_tables(force: bool = False):
+    """Create/migrate the schema once per process and database path.
+
+    Every CRUD helper calls this; after the first call it is a set lookup, not
+    a DDL script (``executescript`` also commits whatever transaction is open).
+    ``init_db`` forces a re-run for callers that changed the schema on disk.
+    """
+    key = str(_DB)
+    if key in _READY and not force:
+        return
     with _con() as c:
+        c.execute("PRAGMA journal_mode=WAL")  # persistent in the file itself
         c.executescript("""
             CREATE TABLE IF NOT EXISTS bot_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,6 +220,7 @@ def _ensure_tables():
             );
         """)
         _migrate(c)
+    _READY.add(key)
 
 
 def _migrate(c: sqlite3.Connection):
@@ -223,6 +251,11 @@ def _migrate(c: sqlite3.Connection):
         "broker_status": "TEXT",         # confirmed | mismatch | missing | unverified
         "broker_shares": "REAL",         # quantity the broker reported
         "broker_checked_at": "TEXT",
+        # Execution quality: the backtest fills at the first session minute
+        # with a trade at/after the signal bar completes. These record that
+        # modelled time and that minute's open, next to the real fill.
+        "modelled_fill_at": "TEXT",
+        "model_fill_price": "REAL",
     }
     for col, decl in add.items():
         if col not in have:
@@ -302,18 +335,68 @@ def save_trade(ticker: str, strategy: str, entry_date: str, entry_price: float,
                stop_loss: float, take_profit: float, shares: Optional[float] = None,
                client_order_id: Optional[str] = None,
                alpaca_order_id: Optional[str] = None,
-               entry_state: str = "accepted") -> int:
+               entry_state: str = "accepted",
+               modelled_fill_at: Optional[str] = None) -> int:
     """Persist a newly opened trade, including its Alpaca correlation ids."""
     _ensure_tables()
     with _con() as c:
         cur = c.execute(
             "INSERT INTO trades (ticker, strategy, entry_date, entry_price, stop_loss, "
-            "take_profit, shares, requested_shares, client_order_id, alpaca_order_id, entry_state, status) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,'open')",
+            "take_profit, shares, requested_shares, client_order_id, alpaca_order_id, entry_state, "
+            "modelled_fill_at, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open')",
             (ticker, strategy, entry_date, entry_price, stop_loss, take_profit,
-             shares, shares, client_order_id, alpaca_order_id, entry_state),
+             shares, shares, client_order_id, alpaca_order_id, entry_state, modelled_fill_at),
         )
         return cur.lastrowid
+
+
+def get_trades_missing_model_price(since: str) -> list[dict]:
+    """Filled trades whose modelled fill minute has not been priced yet."""
+    _ensure_tables()
+    with _con() as c:
+        rows = c.execute(
+            "SELECT * FROM trades WHERE modelled_fill_at IS NOT NULL "
+            "AND model_fill_price IS NULL AND entry_filled_at IS NOT NULL "
+            "AND modelled_fill_at >= ? ORDER BY id",
+            (since,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_trades_missing_modelled_fill() -> list[dict]:
+    """Filled trades recorded before the modelled fill time was stored."""
+    _ensure_tables()
+    with _con() as c:
+        rows = c.execute(
+            "SELECT * FROM trades WHERE modelled_fill_at IS NULL "
+            "AND entry_filled_at IS NOT NULL ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_modelled_fill(db_id: int, modelled_fill_at: str) -> None:
+    with _con() as c:
+        c.execute("UPDATE trades SET modelled_fill_at=? WHERE id=?", (modelled_fill_at, db_id))
+
+
+def set_model_fill_price(db_id: int, price: float) -> None:
+    with _con() as c:
+        c.execute("UPDATE trades SET model_fill_price=? WHERE id=?", (price, db_id))
+
+
+def get_execution_quality(limit: int = 50) -> list[dict]:
+    """Live entries with their modelled fill, newest first."""
+    _ensure_tables()
+    with _con() as c:
+        rows = c.execute(
+            "SELECT id, ticker, strategy, entry_date, entry_price, modelled_fill_at, "
+            "model_fill_price, entry_filled_at, entry_filled_price FROM trades "
+            "WHERE modelled_fill_at IS NOT NULL AND entry_filled_at IS NOT NULL "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def set_entry_order_id(db_id: int, alpaca_order_id: Optional[str]):
@@ -1036,7 +1119,7 @@ def sync_positions_from_alpaca(trading_client) -> dict:
 
 
 def init_db():
-    _ensure_tables()
+    _ensure_tables(force=True)
 
 
 init_db()

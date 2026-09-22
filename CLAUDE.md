@@ -154,11 +154,13 @@ All 8 strategies live in `strategies/`. The six bracket strategies exit through 
 
 `bot.py` entry dispatch: `get_entry_checker(strategy)` returns the matching `check_entry_*` function.
 
-All strategies share: TP reachability filter (target reachable in ≤4 ATR-days),
+All strategies share: TP reachability filter (TP1 within 4 ATRs of the entry,
+measured on the strategy's own candles — 4 bar-ATRs on 4h),
 one position per ticker, whole-share entries capped at 20% of current equity
 and cash, five positions maximum, no margin, an entry slippage guard
 (skip if live price drifts >1.5% from the signal close), a daily-loss kill
-switch (−3% vs yesterday's closing equity halts new entries for the day), and
+switch (the bot's own loss since the previous close reaching 3% of yesterday's
+equity halts new entries; account-wide drop only as a fallback), and
 one protected bracket exit (TP3 + SL) per entry regardless of quantity. Annual
 backtests start at $1,000, compound within the year, and reset each January.
 
@@ -171,19 +173,32 @@ The default equals one 20% position, so **adding a leveraged ticker cannot raise
 risk until this number is deliberately raised**. `bot._open_leveraged_notional`
 fails closed: an unreadable position is charged the full cap.
 
+**Correlated-group caps** (`exposure_groups`, default empty = off): the same
+mechanism for any declared group, e.g. `(("semis", ("NVDA","AMD","ARM"), 0.40),)`,
+enforced in live sizing and `run_annual_portfolio`. Pick values only from
+`research/group_cap_experiment.py`, never by guess.
+
 **Ensemble warmup**: needs 60+ bars before first signal. Regime needs 50+ for EMA(50).
 
 ## Bot trading hours
 
 The loop only calls `run_once` while **Alpaca's market clock reports the market open** (handles holidays and early closes; fallback window 09:30–16:00 ET weekdays if the clock API fails). Outside the session it heartbeats normally and logs `"Outside trading hours"`. The candle timeframe is **4h** and `data_feed.completed_bars` drops the still-forming bucket, so signals only ever come from completed candles — a 30-min loop interval is well-matched.
+A 4h bucket counts as complete 60 s after it ends (`data_feed.BAR_SETTLE`), and the
+loop also wakes 90 s after every modelled fill time (`bot._seconds_until_next_pass`),
+so live entries land within ~2 min of the backtest's first-minute fill.
 
 ## Dashboard
 
 Port **8004**. Always give the user http://192.168.0.191:8004 (their mobile network address) — never `localhost`, which is unreachable from their phone.
 
+**Access token:** when `DASHBOARD_TOKEN` is set in `.env`, LAN requests need it
+once per device (`http://192.168.0.191:8004/?token=<value>`, then a cookie).
+Requests from this machine never do, so the watchdog probe keeps working.
+
 Routes: `/` (Home + Strategies tabs), `/backtest-2024`, `/backtest-2025`, `/backtest-2026`.
 
-Key API endpoints: `/api/summary`, `/api/trades`, `/api/positions`, `/api/backtest-results`, `/api/backtest-history`, `/api/strategy-examples` (cached 4h candlestick charts).
+Key API endpoints: `/api/summary`, `/api/trades`, `/api/positions`, `/api/backtest-results`, `/api/backtest-history`, `/api/strategy-examples` (cached 4h candlestick charts), `/api/bot-orders`
+(own orders incl. bracket legs), `/api/execution-quality` (live fill vs modelled fill).
 
 Run backtests before first open or the DB will be empty.
 

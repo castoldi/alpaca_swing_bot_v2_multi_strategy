@@ -161,7 +161,8 @@ def test_later_entries_respect_capacity_after_a_ticker_failure(cycle, monkeypatc
     monkeypatch.setattr(broker, 'get_open_position', position)
     monkeypatch.setitem(bot.REGISTRY, 'ensemble', _SignalStrategy())
     monkeypatch.setattr(bot, '_load_live_sizing', lambda _: NS(
-        equity=1000, remaining_cash=1000, remaining_slots=4, leveraged_notional=0))
+        equity=1000, remaining_cash=1000, remaining_slots=4, leveraged_notional=0,
+        open_notional_by_ticker={}))
     monkeypatch.setattr(bot, '_tax_entry_block', lambda _: None)
     monkeypatch.setattr(bot.data_feed, 'fetch_snapshots', lambda symbols: {symbols[0]: {'price': 100}})
 

@@ -1,5 +1,55 @@
 # Research Experiments Log
 
+## Experiment 6: Correlated-group exposure caps (2026-09-22)
+
+**Goal:** R04 of [the 2026-09-22 review](../docs/code-review-2026-09-22.md). The
+universe is five mega-cap tech/semiconductor names and the portfolio has five
+20% slots, so it regularly goes 100% into one factor. On 2026-09-21 four names
+were entered within 14 s on the same bar. The question: does capping a
+correlated group cut drawdown enough to be worth the P&L it gives up?
+
+**Setup:** `research/group_cap_experiment.py`, five variants declared before
+running (trials = 5): **A** no cap (live), **B** NVDA+AMD+ARM ≤ 40% of equity,
+**C** the same semis ≤ 20%, **D** all five names ≤ 60%, **E** all five ≤ 40%.
+Live Ensemble on the corrected engine (IEX 4h signals, one-minute execution,
+daily-loss guard, tax guard). Candidates are collected once per year and every
+variant runs the same annual portfolio runner with only `exposure_groups`
+changed. Equity starts at **$100,000** (about the live account) rather than
+$1,000, because whole-share sizing at $1,000 distorts a dollar cap.
+
+**Decision rule (fixed before running):** adopt a cap only if, against A, its
+max drawdown is lower in at least 4 of 5 years, it keeps at least 75% of A's
+total P&L, and its return-to-drawdown ratio (total P&L / mean max drawdown)
+beats A's.
+
+| Variant | 2022 | 2023 | 2024 | 2025 | 2026 YTD | Total | Mean max DD | P&L vs A |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| A none (live) | −$38,314 (43.8%) | +$94,634 (10.7%) | +$66,335 (13.0%) | +$34,946 (31.1%) | +$40,740 (13.4%) | **+$198,340** | 22.4% | 100% |
+| B semis ≤ 40% | −$38,202 (43.7%) | +$85,736 (10.7%) | +$46,917 (9.3%) | +$14,265 (27.1%) | +$44,382 (9.2%) | +$153,099 | 20.0% | 77% |
+| C semis ≤ 20% | −$33,341 (38.2%) | +$55,307 (9.3%) | +$24,850 (5.4%) | +$9,750 (20.9%) | +$23,502 (7.1%) | +$80,068 | 16.2% | 40% |
+| D all ≤ 60% | −$37,358 (42.0%) | +$64,196 (10.5%) | +$37,537 (10.2%) | +$11,388 (24.7%) | +$39,668 (9.1%) | +$115,430 | 19.3% | 58% |
+| E all ≤ 40% | −$28,790 (32.3%) | +$42,781 (8.0%) | +$11,461 (10.1%) | +$14,445 (17.2%) | +$19,527 (10.7%) | +$59,424 | 15.7% | 30% |
+
+Each cell is P&L (max drawdown).
+
+**Findings:**
+- Every cap lowers drawdown: B in 4 of 5 years, C–E in all five. None lowers it
+  enough to pay for itself. Return-to-drawdown is best for **A**; B comes closest
+  (0.86× A's ratio at 77% of A's P&L) and fails only that test.
+- The caps cut P&L roughly in proportion to the exposure they remove, while
+  drawdown falls less than proportionally. The positions are highly correlated,
+  so a cap acts like a smaller position size, not like diversification. Real
+  diversification needs different assets, not a limit on the same ones.
+- 2022 barely moves under B/D (its 43.8% drawdown stays at 42–44%). The bear-market loss
+  is not a same-bar concentration problem; the
+  [bear-market playbook](../docs/bear-market-playbook.md) covers it.
+
+**Verdict: REJECTED — keep `exposure_groups = ()`.** The mechanism stays in the
+code (live and backtest), off by default, ready for a diversified universe.
+Search-corrected evidence for A: t = 3.89 vs hurdle 3.00 over 5 variants. Caveats
+as in Experiment 5 (overlapping trades; 2022–2024 not out-of-sample). Logged via
+`log_experiment` with evidence.
+
 ## Experiment 5: Ensemble vote-gate ablation on the corrected engine (2026-09-21)
 
 **Goal:** V05 of [the verification review](../docs/code-review-2026-09-21-verification.md).

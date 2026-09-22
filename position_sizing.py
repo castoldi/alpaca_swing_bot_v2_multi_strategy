@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 
@@ -52,6 +53,34 @@ def whole_share_position_size(
         return PositionSize(0, budget, 0.0, "budget_below_one_share")
 
     return PositionSize(quantity, budget, quantity * price)
+
+
+def group_headroom(
+    equity: float,
+    ticker: str,
+    open_notional_by_ticker: Mapping[str, float],
+    groups: Iterable[tuple[str, Iterable[str], float]],
+) -> float | None:
+    """Dollars ``ticker`` may still add under every exposure group it is in.
+
+    None when the ticker belongs to no group (no group limit applies). An
+    unreadable (non-finite) open notional in a group leaves zero headroom.
+    """
+    limits = []
+    for _name, members, cap_fraction in groups:
+        members = set(members)
+        if ticker not in members:
+            continue
+        used = sum(max(0.0, float(open_notional_by_ticker.get(m, 0.0))) for m in members)
+        limits.append(leveraged_headroom(equity, used, cap_fraction)
+                      if math.isfinite(used) else 0.0)
+    return min(limits) if limits else None
+
+
+def combine_headroom(*limits: float | None) -> float | None:
+    """The tightest of several optional notional ceilings."""
+    present = [limit for limit in limits if limit is not None]
+    return min(present) if present else None
 
 
 def leveraged_headroom(

@@ -6,14 +6,16 @@ Usage:
 """
 from __future__ import annotations
 
+import ipaddress
 import os
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
@@ -22,6 +24,7 @@ _PROJECT = _HERE.parent
 if str(_PROJECT) not in sys.path:
     sys.path.insert(0, str(_PROJECT))
 
+import config
 from config import ALPACA_KEY, ALPACA_PAPER, ALPACA_SECRET, PARAMS, TICKERS, ALL_TICKERS, BAR_TIMEFRAME
 from dashboard import db as db_mod
 from logger_setup import get_logger
@@ -44,7 +47,10 @@ def _get_trading():
             log.warning("ALPACA_PAPER=false — forcing paper=True safety override")
         from alpaca.trading.client import TradingClient
         # PAPER ONLY — hardcoded safety
-        _trading_client = TradingClient(ALPACA_KEY, ALPACA_SECRET, paper=True)
+        from http_timeouts import apply_default_timeout
+        _trading_client = apply_default_timeout(
+            TradingClient(ALPACA_KEY, ALPACA_SECRET, paper=True)
+        )
     return _trading_client
 
 
@@ -52,6 +58,48 @@ db_mod.set_tickers(ALL_TICKERS)
 
 app = FastAPI(title="Alpaca Swing Bot V2 Dashboard")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ── LAN access token ──────────────────────────────────────────────────────────
+AUTH_COOKIE = "swing_dash_token"
+_AUTH_COOKIE_MAX_AGE = 400 * 24 * 3600   # browsers cap cookies at 400 days
+
+
+def _is_loopback(host: str | None) -> bool:
+    try:
+        return ipaddress.ip_address(host or "").is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
+def _token_matches(candidate: str | None, token: str) -> bool:
+    return bool(candidate) and secrets.compare_digest(candidate.encode(), token.encode())
+
+
+@app.middleware("http")
+async def require_lan_token(request: Request, call_next):
+    """Gate every non-local request behind DASHBOARD_TOKEN when it is set.
+
+    Requests from this machine (the watchdog's health probe, manage.ps1, the
+    owner at the desk) are always allowed. A phone opens
+    ``/?token=<token>`` once; the token is then kept in a cookie and removed
+    from the address bar.
+    """
+    token = config.DASHBOARD_TOKEN
+    if not token or _is_loopback(request.client.host if request.client else None):
+        return await call_next(request)
+    if _token_matches(request.cookies.get(AUTH_COOKIE), token):
+        return await call_next(request)
+    if _token_matches(request.query_params.get("token"), token):
+        response = RedirectResponse(str(request.url.remove_query_params("token")), status_code=303)
+        response.set_cookie(AUTH_COOKIE, token, max_age=_AUTH_COOKIE_MAX_AGE,
+                            httponly=True, samesite="lax")
+        return response
+    return JSONResponse({"error": "unauthorized: open the dashboard link that includes ?token="},
+                        status_code=401)
+
+
+if not config.DASHBOARD_TOKEN:
+    log.warning("DASHBOARD_TOKEN is not set — the dashboard is open to the whole LAN")
 
 
 def _configured_timeframes() -> list[str]:
@@ -193,48 +241,120 @@ async def get_market():
     return result
 
 
+def _enum_text(value) -> str:
+    return str(getattr(value, "value", value) or "").split(".")[-1].lower()
+
+
+def _order_row(order, kind: str, client_order_id: str) -> dict:
+    submitted = getattr(order, "submitted_at", None) or getattr(order, "created_at", None)
+    filled_qty = getattr(order, "filled_qty", None)
+    return {
+        "symbol": getattr(order, "symbol", None),
+        "kind": kind,                       # entry / protect / exit / tp / stop
+        "side": _enum_text(getattr(order, "side", "")),
+        "type": _enum_text(getattr(order, "order_type", None) or getattr(order, "type", "")),
+        "qty": float(getattr(order, "qty", 0) or 0),
+        "filled_qty": float(filled_qty) if filled_qty else 0.0,
+        "filled_avg_price": float(order.filled_avg_price) if getattr(order, "filled_avg_price", None) else None,
+        "limit_price": float(order.limit_price) if getattr(order, "limit_price", None) else None,
+        "stop_price": float(order.stop_price) if getattr(order, "stop_price", None) else None,
+        "status": _enum_text(getattr(order, "status", "")),
+        "submitted_at": submitted.isoformat() if hasattr(submitted, "isoformat") else submitted,
+        "client_order_id": client_order_id,
+    }
+
+
+def bot_order_rows(raw_orders) -> list[dict]:
+    """Flatten the bot's own parent orders and their bracket/OCO child legs.
+
+    Child legs carry broker-generated client ids, so a prefix filter alone drops
+    every stop and take-profit fill. They are ours because their parent is;
+    each leg is listed under its parent's correlation id.
+    """
+    rows: list[dict] = []
+    for order in raw_orders or []:
+        coid = str(getattr(order, "client_order_id", "") or "")
+        if not coid.startswith(CLIENT_ORDER_PREFIX):
+            continue
+        # coid shape: swingv2-<kind>-<strategy>-<ticker>-<hex>
+        parts = coid.split("-")
+        rows.append(_order_row(order, parts[1] if len(parts) > 1 else "?", coid))
+        for leg in getattr(order, "legs", None) or []:
+            leg_type = _enum_text(getattr(leg, "order_type", None) or getattr(leg, "type", ""))
+            rows.append(_order_row(leg, "stop" if "stop" in leg_type else "tp", coid))
+    rows.sort(key=lambda row: str(row["submitted_at"] or ""), reverse=True)
+    return rows
+
+
 @app.get("/api/bot-orders")
 async def bot_orders(limit: int = Query(50, ge=1, le=200)):
-    """Recent Alpaca orders THIS bot placed — filtered by the swingv2 correlation
-    id prefix. Proves opens/closes are the bot's own, straight from the broker."""
+    """Recent Alpaca orders THIS bot placed, including bracket exit legs.
+
+    The key is shared, so the query is narrowed to the bot's own symbols
+    before Alpaca's 500-order page limit applies; ownership is still proved
+    by the swingv2 correlation-id prefix on each parent.
+    """
     try:
         from alpaca.trading.requests import GetOrdersRequest
         from alpaca.trading.enums import QueryOrderStatus
 
         def _fetch():
             tc = _get_trading()
-            req = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=300, nested=False)
+            req = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=500, nested=True,
+                                   symbols=list(ALL_TICKERS))
             return tc.get_orders(filter=req) or []
 
         raw = await run_in_threadpool(_fetch)
-        orders = []
-        for o in raw:
-            coid = str(getattr(o, "client_order_id", "") or "")
-            if not coid.startswith(CLIENT_ORDER_PREFIX):
-                continue
-            # coid shape: swingv2-<kind>-<strategy>-<ticker>-<hex>
-            parts = coid.split("-")
-            kind = parts[1] if len(parts) > 1 else "?"
-            submitted = getattr(o, "submitted_at", None) or getattr(o, "created_at", None)
-            filled_qty = getattr(o, "filled_qty", None)
-            orders.append({
-                "symbol": getattr(o, "symbol", None),
-                "kind": kind,                       # entry / tp1 / tp2 / tp3 / stop / exit
-                "side": str(getattr(o, "side", "")).split(".")[-1].lower(),
-                "type": str(getattr(o, "order_type", getattr(o, "type", ""))).split(".")[-1].lower(),
-                "qty": float(getattr(o, "qty", 0) or 0),
-                "filled_qty": float(filled_qty) if filled_qty else 0.0,
-                "filled_avg_price": float(o.filled_avg_price) if getattr(o, "filled_avg_price", None) else None,
-                "limit_price": float(o.limit_price) if getattr(o, "limit_price", None) else None,
-                "stop_price": float(o.stop_price) if getattr(o, "stop_price", None) else None,
-                "status": str(getattr(o, "status", "")).split(".")[-1].lower(),
-                "submitted_at": submitted.isoformat() if submitted else None,
-                "client_order_id": coid,
-            })
-        orders.sort(key=lambda x: x["submitted_at"] or "", reverse=True)
-        return {"orders": orders[:limit], "prefix": CLIENT_ORDER_PREFIX}
+        return {"orders": bot_order_rows(raw)[:limit], "prefix": CLIENT_ORDER_PREFIX}
     except Exception as e:
         return JSONResponse({"error": str(e), "orders": []}, status_code=500)
+
+
+def _utc(value) -> datetime | None:
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def execution_quality(trades: list[dict]) -> dict:
+    """Live fills against the backtest's execution model, plus medians.
+
+    delay: broker fill time minus the modelled fill minute. Slippage vs model:
+    fill price against that minute's open (what the backtest paid). Slippage
+    vs signal: fill price against the signal bar close the SL/TP came from.
+    """
+    import statistics
+
+    rows = []
+    for t in trades:
+        modelled, filled = _utc(t.get("modelled_fill_at")), _utc(t.get("entry_filled_at"))
+        price, model, signal = (t.get("entry_filled_price"), t.get("model_fill_price"),
+                                t.get("entry_price"))
+        rows.append({
+            "id": t.get("id"), "ticker": t.get("ticker"), "strategy": t.get("strategy"),
+            "modelled_fill_at": modelled.isoformat() if modelled else None,
+            "entry_filled_at": filled.isoformat() if filled else None,
+            "delay_sec": round((filled - modelled).total_seconds(), 1) if modelled and filled else None,
+            "fill_price": price, "model_fill_price": model, "signal_close": signal,
+            "slip_vs_model_pct": round((price / model - 1) * 100, 3) if price and model else None,
+            "slip_vs_signal_pct": round((price / signal - 1) * 100, 3) if price and signal else None,
+        })
+
+    def median(key):
+        values = [r[key] for r in rows if r[key] is not None]
+        return round(statistics.median(values), 3) if values else None
+
+    return {"trades": rows, "median_delay_sec": median("delay_sec"),
+            "median_slip_vs_model_pct": median("slip_vs_model_pct"),
+            "median_slip_vs_signal_pct": median("slip_vs_signal_pct")}
+
+
+@app.get("/api/execution-quality")
+async def get_execution_quality(limit: int = Query(30, ge=1, le=500)):
+    """How far live entries land from the backtest's modelled fill."""
+    return execution_quality(db_mod.get_execution_quality(limit))
 
 
 @app.get("/api/pnl")

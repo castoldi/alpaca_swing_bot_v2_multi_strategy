@@ -13,7 +13,8 @@ if TYPE_CHECKING:
     from market_regime import MarketRegimeGate
 
 from config import LEVERAGED_TICKERS, PARAMS, StrategyParams
-from position_sizing import leveraged_headroom, whole_share_position_size
+from position_sizing import (combine_headroom, group_headroom, leveraged_headroom,
+                             whole_share_position_size)
 from backtest_valuation import prepare_valuation_frames, previous_session_close, session_date
 import tax as tax_mod
 from strategies.base import (
@@ -239,6 +240,9 @@ def run_annual_portfolio(
     cash = float(initial_equity)
     realized_pnl = 0.0
     open_leveraged_notional = 0.0
+    # Cost basis reserved per ticker, for the correlated-group caps.
+    exposure_groups = tuple(params.exposure_groups)
+    open_notional_by_ticker: dict[str, float] = {}
     accepted_positions = 0
     skipped_positions = 0
     accepted_trades: list[Trade] = []
@@ -265,6 +269,11 @@ def run_annual_portfolio(
                 open_leveraged_notional = max(
                     0.0, open_leveraged_notional - trade.shares * trade.entry_price
                 )
+            open_notional_by_ticker[trade.ticker] = max(
+                0.0,
+                open_notional_by_ticker.get(trade.ticker, 0.0)
+                - trade.shares * trade.entry_price,
+            )
             equity_curve.append(
                 (pd.Timestamp(trade.exit_date), initial_equity + realized_pnl)
             )
@@ -389,12 +398,15 @@ def run_annual_portfolio(
                 cash,
                 candidate.entry_price,
                 candidate_fraction,
-                max_notional=(
+                max_notional=combine_headroom(
                     leveraged_headroom(
                         equity, open_leveraged_notional, max_leveraged_fraction
                     )
                     if is_leveraged
-                    else None
+                    else None,
+                    group_headroom(
+                        equity, candidate.ticker, open_notional_by_ticker, exposure_groups
+                    ),
                 ),
             )
             if size.quantity < 1:
@@ -412,6 +424,9 @@ def run_annual_portfolio(
             cash -= size.notional
             if is_leveraged:
                 open_leveraged_notional += size.notional
+            open_notional_by_ticker[candidate.ticker] = (
+                open_notional_by_ticker.get(candidate.ticker, 0.0) + size.notional
+            )
             open_remaining[position_id] = size.quantity
             open_tickers[candidate.ticker] = position_id
             position_tickers[position_id] = candidate.ticker

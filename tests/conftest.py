@@ -79,3 +79,15 @@ def skip_protection_audit(request, monkeypatch):
     if request.node.get_closest_marker("protection_audit") or "bot" not in sys.modules:
         return
     monkeypatch.setattr(sys.modules["bot"], "_audit_protection", lambda: [])
+
+
+@pytest.fixture(autouse=True)
+def skip_execution_quality(request, monkeypatch):
+    """Execution-quality bookkeeping fetches minute bars from Alpaca.
+
+    It has dedicated tests marked ``execution_quality``; elsewhere it is a no-op
+    so a run_once test can never reach the network through it.
+    """
+    if request.node.get_closest_marker("execution_quality") or "bot" not in sys.modules:
+        return
+    monkeypatch.setattr(sys.modules["bot"], "_record_execution_quality", lambda *_a, **_k: 0)

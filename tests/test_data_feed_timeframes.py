@@ -32,8 +32,17 @@ def test_completed_bars_keeps_a_finished_four_hour_bucket():
     df = pd.DataFrame(
         {"close": [100.0]}, index=pd.to_datetime(["2026-07-18 16:00"])
     )
-    as_of = datetime(2026, 7, 18, 20, 0, tzinfo=ZoneInfo("UTC"))
+    as_of = datetime(2026, 7, 18, 20, 1, tzinfo=ZoneInfo("UTC"))
     assert data_feed.completed_bars(df, "4h", as_of).equals(df)
+
+
+def test_completed_bars_waits_for_the_bucket_to_settle():
+    """At 20:00:30 the 16:00 bucket's last minute may not be aggregated yet."""
+    df = pd.DataFrame(
+        {"close": [100.0]}, index=pd.to_datetime(["2026-07-18 16:00"])
+    )
+    as_of = datetime(2026, 7, 18, 20, 0, 30, tzinfo=ZoneInfo("UTC"))
+    assert data_feed.completed_bars(df, "4h", as_of).empty
 
 
 def test_alpaca_timeframe_accepts_only_supported_values():

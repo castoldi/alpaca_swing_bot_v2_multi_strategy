@@ -17,13 +17,6 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
-- **Code review 2026-09-22** ([docs/code-review-2026-09-22.md](docs/code-review-2026-09-22.md)) —
-  ten new items (R01–R10) and a four-phase fix plan. Top items: a transient
-  position-lookup error can finalize a live trade as `external_liquidation`
-  (P2); pending entries at the open send a false "reconciliation blocked"
-  email (seen live 2026-09-22); Alpaca REST calls have no HTTP timeout; five
-  correlated names fill all five 20% slots. Confirms the V01 fix is working
-  live (fill delay 3.7–4.1 min, down from 15–164 min). 841 tests pass.
 - **F01–F16 remediation verification** ([docs/code-review-2026-09-21-verification.md](docs/code-review-2026-09-21-verification.md)) —
   confirms most fixes (805 tests pass; F08/F14 checked against SciPy/edge cases)
   and records nine new items: same-bar live re-entry (P1, live ledger evidence),
@@ -348,6 +341,68 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.26.0] - 2026-09-22
+
+Validation: 891 tests passed (50 added); dependency deprecation warnings only.
+Fixes every item in [docs/code-review-2026-09-22.md](docs/code-review-2026-09-22.md).
+
+### Added
+- **Code review 2026-09-22** ([docs/code-review-2026-09-22.md](docs/code-review-2026-09-22.md)) —
+  ten new items (R01–R10) and a four-phase fix plan. Top items: a transient
+  position-lookup error can finalize a live trade as `external_liquidation`
+  (P2); pending entries at the open send a false "reconciliation blocked"
+  email (seen live 2026-09-22); Alpaca REST calls have no HTTP timeout; five
+  correlated names fill all five 20% slots. Confirms the V01 fix is working
+  live (fill delay 3.7–4.1 min, down from 15–164 min). 841 tests pass.
+- **Execution quality vs the backtest model (R07).** Each live entry stores its
+  modelled fill time and that minute's open (`modelled_fill_at`,
+  `model_fill_price`; the first minute with a trade, as the backtest takes it).
+  `/api/execution-quality` and a new dashboard panel show fill delay and slippage
+  against the model and against the signal close. Existing trades from the last
+  30 days are backfilled automatically.
+- **Correlated-group exposure caps (R04)**: `StrategyParams.exposure_groups`
+  generalizes the leveraged cap to any ticker group, enforced identically in live
+  sizing and `run_annual_portfolio`, **off by default**. The predeclared sweep
+  (`research/group_cap_experiment.py`, Experiment 6 in `research/experiments.md`)
+  rejected all four caps: each cut drawdown but lost more return-to-drawdown than
+  it gained, so the live bot is unchanged.
+- **Optional dashboard access token (R10)**: set `DASHBOARD_TOKEN` in `.env`. A LAN
+  device opens `/?token=<value>` once and gets a 400-day cookie; requests from
+  this machine (watchdog, manager) never need it.
+
+### Fixed
+- **A transient position-lookup error could close a live trade in the ledger
+  (R01).** Only Alpaca's 404 now means "no position". A 429/5xx/timeout raises
+  into the per-trade failure path, so it can no longer reach the foreign-
+  liquidation post-mortem while the shares and bracket are still live.
+- **False "reconciliation blocked" email for a pending entry at the open (R02)**,
+  seen live on 2026-09-22 (AMZN). A working entry order is skipped quietly for
+  5 minutes and alerts only if it is still unfilled after that.
+- **No HTTP timeouts on Alpaca calls (R03).** Every REST call now has a (5 s, 30 s)
+  deadline, so one hung socket can no longer freeze the loop until the watchdog
+  restarts it. Each cycle logs its duration.
+- **SQLite connections were never closed (R05)** and gave up after 5 s on a lock.
+  Connections now always close, wait up to 30 s, and schema DDL runs once per
+  process.
+- **Dashboard order list missed every stop/TP fill (R08)**: bracket and OCO legs
+  are now listed under their owned parent; the query is scoped to the bot's symbols.
+
+### Changed
+- **The loop wakes at the backtest's fill times (R07).** Besides the regular
+  interval, a pass runs 90 s after each modelled fill time (4h bucket
+  completions in session and the 09:30 open), so live entries land within ~2 min
+  of the modelled first-minute fill instead of anywhere in the next 30 min.
+- **A 4h bucket counts as complete 60 s after it ends** (`data_feed.BAR_SETTLE`),
+  so a bar is never evaluated before its last minute has been aggregated. The
+  signal cursor evaluates each bar only once, so a bar read early would never be
+  re-read.
+- **Signals on tickers already held are no longer counted or stored (R06)**:
+  "N signals" in the run log now means actionable signals.
+- Comments and CLAUDE.md now describe the kill switch (bot-owned P&L) and the TP
+  reachability rule (4 bar-ATRs) correctly. The dead `_position_qty` helper and
+  the merged `sma-50-cross` worktree and branch are removed (R09).
 
 ## [0.25.1] - 2026-09-21
 
@@ -1877,6 +1932,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

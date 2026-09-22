@@ -18,6 +18,23 @@ The Alpaca paper key is shared with 8 other projects (separate account deferred
 2026-09-10), and the live-readiness verdict is still **NO**
 ([live-readiness-2026-09-10.md](live-readiness-2026-09-10.md)).
 
+## Resolution — all ten items addressed in v0.26.0
+
+| ID | Fix | Regression tests |
+|---|---|---|
+| R01 | `bot._open_position_or_none` treats only a 404 as "no position" and re-raises everything else. It is used by the entry guard, the reconciler and `_execute_exit_intent`; the last defers the exit and keeps the durable intent. `_position_qty` deleted | `tests/test_review_2026_09_22.py`: a 503 with a qualifying sibling sell leaves the trade open and alerts; a 404 still reaches the post-mortem; exit deferral |
+| R02 | `EntryPending` (a `ValueError` subclass) for a working entry parent; the reconciler skips it quietly inside `ENTRY_PENDING_GRACE` (5 min) and alerts after | young pending entry gives no failure and no alert; a 10-minute-old one alerts; no timestamp means not young |
+| R03 | `http_timeouts.apply_default_timeout`: every Alpaca REST call gets `(5 s, 30 s)` unless the caller sets its own; applied to the bot, dashboard and data clients. Each cycle logs its duration | default applied, explicit override kept, idempotent, real clients wrapped |
+| R04 | Generic `exposure_groups` cap (live sizing plus `run_annual_portfolio`, reserved within a cycle, fails closed on an unreadable value), **default off**. The predeclared 5-variant sweep ([Experiment 6](../research/experiments.md)) rejected every cap: each cut drawdown but lost more return-to-drawdown than it gained | `tests/test_exposure_groups.py` (headroom, same-bar cap, release after exit, default unchanged, live reservation) |
+| R05 | `db._con` is a context manager that commits or rolls back and **always closes**, with a 30 s busy timeout. Schema DDL runs once per process and path; `init_db` still forces migrations | closed connections, busy timeout, rollback, DDL once |
+| R06 | Signals on already-held tickers are logged as skipped, not counted or stored | held signal not counted; actionable signal counted |
+| R07 | The loop also wakes 90 s after each modelled fill time. A 4h bucket counts as complete 60 s after it ends. Each trade stores `modelled_fill_at` and `model_fill_price` (the first traded minute's open, as the backtest uses); `/api/execution-quality` and a dashboard panel show delay and slippage against the model | next-fill calculation (in session, after close, weekend, EST, early close, daily), wake times, inside the real fill window, execution-quality pricing |
+| R08 | `/api/bot-orders` queries the bot's own symbols with `nested=True` and lists bracket/OCO legs under their parent | legs included, foreign orders excluded |
+| R09 | Kill-switch and TP-reachability comments corrected (code and CLAUDE.md); dead helper removed; merged worktree and branch deleted | — |
+| R10 | Optional `DASHBOARD_TOKEN`: LAN requests need it once (`?token=`, then a 400-day cookie); requests from this machine never do, so the watchdog probe is unaffected | missing, wrong and valid token; local bypass; unset keeps it open |
+
+---
+
 ## Summary
 
 The V01 fix works in production. The two entries since it shipped (trades 77
@@ -266,10 +283,11 @@ exit) and fetch those directly.
 - `bot.py:915`: the comment says "reachable within ~2 trading days", but the call
   passes `days=4` and the ATR is a **4h-bar** ATR, so the rule is "within 4 bar
   ATRs". CLAUDE.md's "≤4 ATR-days" has the same drift.
-- `_position_qty` (`bot.py:490`) and `_days_held` are only used by the stale
-  `.worktrees/sma-50-cross` worktree. Its branch `feat/sma-50-cross` is fully
-  merged (`git log main..feat/sma-50-cross` is empty). Delete the dead helpers
-  and remove the worktree.
+- `_position_qty` (`bot.py:490`) is dead in `main`; only the stale
+  `.worktrees/sma-50-cross` worktree calls it. (An earlier draft also listed
+  `_days_held`, but `_reconcile_closed` still uses it.) The worktree's branch
+  `feat/sma-50-cross` is fully merged (`git log main..feat/sma-50-cross` is
+  empty). Delete the dead helper and remove the worktree.
 
 ---
 

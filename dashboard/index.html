@@ -200,6 +200,9 @@ code{background:#252830;padding:2px 6px;border-radius:4px;font-size:12px}
     <div class="section-title">Bot Orders @ Alpaca <span class="hint">(only orders tagged <code>swingv2</code>)</span></div>
     <div id="botOrders"><div class="loading">Loading bot orders...</div></div>
 
+    <div class="section-title">Execution vs Backtest Model <span class="hint">(live fill against the modelled first-minute fill)</span></div>
+    <div id="execQuality"><div class="loading">Loading execution quality...</div></div>
+
     <div class="section-title">Recent Trades</div>
     <div id="trades"><div class="loading">Loading trades...</div></div>
 
@@ -345,17 +348,18 @@ function fmtClock(iso) {
 }
 
 // ── LIVE: bot status, account, universe, positions, bot orders ─────────────────
-const KIND_COLORS = { entry:'#60a5fa', tp1:'#22c55e', tp2:'#22c55e', tp3:'#22c55e',
-                      stop:'#ef4444', exit:'#f59e0b' };
+const KIND_COLORS = { entry:'#60a5fa', tp:'#22c55e', tp1:'#22c55e', tp2:'#22c55e', tp3:'#22c55e',
+                      stop:'#ef4444', exit:'#f59e0b', protect:'#a78bfa' };
 
 async function loadLive() {
   // Each block is independent — settle them so one failure doesn't blank the rest.
-  const [statusR, acctR, marketR, posR, ordR] = await Promise.allSettled([
+  const [statusR, acctR, marketR, posR, ordR, execR] = await Promise.allSettled([
     api('/api/bot-status'),
     api('/api/account'),
     api('/api/market'),
     api('/api/positions'),
     api('/api/bot-orders?limit=40'),
+    api('/api/execution-quality?limit=20'),
   ]);
 
   // Held tickers (for universe badges + position table) — from live Alpaca positions.
@@ -368,6 +372,31 @@ async function loadLive() {
   renderUniverse(marketR.status === 'fulfilled' ? marketR.value : null, heldSet);
   renderPositions(positions);
   renderBotOrders(ordR.status === 'fulfilled' ? ordR.value : null);
+  renderExecQuality(execR.status === 'fulfilled' ? execR.value : null);
+}
+
+function renderExecQuality(data) {
+  const el = document.getElementById('execQuality');
+  if (!data) { el.innerHTML = '<p class="empty">Execution quality unavailable.</p>'; return; }
+  const rows = data.trades || [];
+  if (!rows.length) { el.innerHTML = '<p class="empty">No live entries with a modelled fill yet.</p>'; return; }
+  const pct = v => v == null ? '—' : `<span class="${v > 0 ? 'neg' : v < 0 ? 'pos' : 'neu'}">${v > 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
+  const mins = s => s == null ? '—' : `${(s / 60).toFixed(1)} min`;
+  const summary = `<p class="hint" style="margin:0 0 8px">Median delay ${mins(data.median_delay_sec)} · `
+    + `vs model ${pct(data.median_slip_vs_model_pct)} · vs signal close ${pct(data.median_slip_vs_signal_pct)}`
+    + ` <span style="color:#6b7280">(positive = paid more than the model)</span></p>`;
+  el.innerHTML = summary + tableHtml(
+    ['Filled', 'Ticker', 'Delay', 'Fill', 'Model', 'vs model', 'vs signal'],
+    rows.map(r => [
+      fmtWhen(r.entry_filled_at),
+      `<strong>${r.ticker}</strong>`,
+      mins(r.delay_sec),
+      r.fill_price != null ? `$${r.fill_price.toFixed(2)}` : '—',
+      r.model_fill_price != null ? `$${r.model_fill_price.toFixed(2)}` : '—',
+      pct(r.slip_vs_model_pct),
+      pct(r.slip_vs_signal_pct),
+    ])
+  );
 }
 
 function renderBotStatus(st, market) {
