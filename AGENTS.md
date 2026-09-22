@@ -173,13 +173,13 @@ the one-time install command above after a fresh clone (otherwise no auto tag/pu
 
 | Strategy | Entry conditions | SL | TP | Max hold | 2025 P&L | 2026 P&L |
 |----------|-----------------|----|----|----------|----------|----------|
-| **trend_pullback** | Price > SMA(50), RSI dipped below 55 recently, bounce bar (close > open, rising RSI). Skips entries 3 days before earnings. | 10% | 2×ATR [3%, 8%] | 5d | +$87.46 | +$59.22 |
-| **breakout** | Intrabar high breaks prior 20-bar high with ≥1.5× avg volume, current range ≤1.3× prior 10-bar average, price > SMA(50), RSI ≥50 rising | 8% | 3×ATR [5%, 15%] | 7d | +$78.64 | +$3.95 |
-| **mean_reversion** | Price > SMA(50), at least 0.5% below SMA(20), RSI reached ≤50 in 7 bars, bounce bar | 7% | 1.5×ATR [1.5%, 5%] | 3d | +$35.10 | -$23.15 |
-| **momentum_macd** | MACD histogram just crossed above 0, RSI > 50 rising, price > SMA(20) and SMA(50) | 9% | 2.5×ATR [4%, 12%] | 6d | +$29.89 | +$3.99 |
-| **ensemble** | Weighted vote ≥0.30 (Regime alone qualifies; `ensemble_min_votes`=1): regime(0.35) + MACD(0.25) + trend(0.20) + breakout(0.15) + MR(0.05) | 9% | 2.5×ATR [4%, 12%] | 6d | +$91.83 | +$243.87 |
-| **regime** | EMA(10)/EMA(50) cross: risk-on = buy dips with 12% stop, risk-off = oversold bounces with 7% stop, neutral = trend-like with 10% stop | adaptive | ATR-based [3%, 8%] | 5d | +$196.45 | +$207.28 |
-| **sma_50_cross** | Completed daily close crosses from ≤ SMA(50) to > SMA(50); exit on the opposite daily cross | 10% emergency | none | until cross | +$117.12 | +$146.19 |
+| **trend_pullback** | Price > SMA(50), RSI dipped below 55 recently, bounce bar (close > open, rising RSI). Skips entries 3 days before earnings. | 10% | 2×ATR [3%, 8%] | 5d | +$30.77 | +$66.51 |
+| **breakout** | Intrabar high breaks prior 20-bar high with ≥1.5× avg volume, current range ≤1.3× prior 10-bar average, price > SMA(50), RSI ≥50 rising | 8% | 3×ATR [5%, 15%] | 7d | -$75.85 | +$36.47 |
+| **mean_reversion** | Price > SMA(50), at least 0.5% below SMA(20), RSI reached ≤50 in 7 bars, bounce bar | 7% | 1.5×ATR [1.5%, 5%] | 3d | +$22.98 | +$13.34 |
+| **momentum_macd** | MACD histogram just crossed above 0, RSI > 50 rising, price > SMA(20) and SMA(50) | 9% | 2.5×ATR [4%, 12%] | 6d | +$75.72 | +$16.68 |
+| **ensemble** | Weighted vote ≥0.30 (Regime alone qualifies; `ensemble_min_votes`=1): regime(0.35) + MACD(0.25) + trend(0.20) + breakout(0.15) + MR(0.05) | 9% | 2.5×ATR [4%, 12%] | 6d | +$219.42 | +$282.38 |
+| **regime** | EMA(10)/EMA(50) cross: risk-on = buy dips with 12% stop, risk-off = oversold bounces with 7% stop, neutral = trend-like with 10% stop | adaptive | ATR-based [3%, 8%] | 5d | +$125.45 | +$156.87 |
+| **sma_50_cross** | Completed daily close crosses from ≤ SMA(50) to > SMA(50); exit on the opposite daily cross | 10% emergency | none | until cross | +$117.28 | +$154.28 |
 
 All strategies share one position per ticker, a whole-share entry capped at 20%
 of current equity and available cash, five positions maximum, and no margin.
@@ -187,9 +187,10 @@ Annual backtests start at $1,000, compound realized P&L within the year, and
 reset to $1,000 for the next year. The six bracket strategies use the TP
 reachability filter; `sma_50_cross` has no TP and bypasses it.
 
-The P&L columns above predate the F16 Breakout, Ensemble, and Regime corrections
-in v0.24.21. They remain historical evidence only until the corrected baselines
-are regenerated; no improvement claim follows from the fixes.
+P&L columns are the corrected v0.25.1 baselines (2026 year-to-date); see
+[docs/baselines-2026-09-21.md](docs/baselines-2026-09-21.md) for 2024, drawdown,
+significance and the finding that live Ensemble entries equal Regime's.
+`tqqq_momentum` (TQQQ only): 2025 +$19.39, 2026 −$14.71.
 
 ## Research ideas — status
 

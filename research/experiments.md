@@ -1,5 +1,46 @@
 # Research Experiments Log
 
+## Experiment 5: Ensemble vote-gate ablation on the corrected engine (2026-09-21)
+
+**Goal:** V05 of [the verification review](../docs/code-review-2026-09-21-verification.md).
+F16 had deployed a 2-vote Ensemble rule without evaluation; v0.25.0 restored the
+1-vote rule pending this test.
+
+**Setup:** `research/ensemble_vote_ablation.py`, four variants declared before
+running (trials = 4): **A** live (score ≥0.30, ≥1 vote), **B** ≥2 votes,
+**C** Regime vote only, **D** equal 0.20 weights. Corrected engine (v0.25.1): IEX
+4h signals, one-minute regular-session execution, daily-loss guard, 20% sizing,
+$1,000 annual reset, earnings filter with the labelled historical import. One
+frozen dataset per year (fingerprints in `reports/ensemble_vote_ablation.json`).
+
+| Variant | 2022 | 2023 | 2024 | 2025 | 2026 YTD | Total | Trades | Worst DD | BHY p |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A live (1 vote) | −$232.67 | +$779.69 | +$362.69 | +$219.42 | +$282.38 | **+$1,411.51** | 636 | 31.8% | 0.0001 |
+| B two votes | −$36.41 | +$475.38 | +$188.10 | +$127.62 | +$89.97 | +$844.66 | 383 | 12.8% | 0.0008 |
+| C regime only | −$232.67 | +$779.69 | +$362.69 | +$219.42 | +$282.38 | +$1,411.51 | 636 | 31.8% | 0.0001 |
+| D equal weights | −$44.17 | +$448.65 | +$145.39 | +$121.79 | +$89.97 | +$761.63 | 392 | 12.8% | 0.0020 |
+
+**Search-corrected verdict for the winner (A):** t = 4.13 vs month-block
+bootstrap hurdle 2.48 over 4 variants. It clears, and the haircut Sharpe is 0.15.
+No challenger beat A in both 2025 and 2026.
+
+**Findings:**
+- **C = A exactly.** Across five years no Ensemble entry qualified without the
+  Regime vote. The live Ensemble is therefore Regime's entry signal with the
+  Ensemble's 9% stop / 2.5×ATR target / 6-session time stop; the other four
+  members change no entries. This confirms the original review's suspicion.
+- **B (the F16 rule) halves return but cuts the 2022 loss from −23% to −4% and the
+  worst drawdown from 31.8% to 12.8%.** That is a drawdown/return trade-off, not
+  an improvement under the project rule (P&L in both 2025 and 2026). Evaluating
+  it as a risk-control variant would be a new, separately counted trial with a
+  predeclared drawdown objective.
+
+**Verdict: REJECTED challengers; keep A (`ensemble_min_votes = 1`).** Caveats:
+trades overlap across correlated tickers, so per-trade t-statistics are
+optimistic. 2022–2024 were reused from earlier research and are not
+out-of-sample. Earnings decisions before 2026-09-14 rest on the import's
+14-day-ahead approximation. Logged via `log_experiment` with evidence.
+
 ## Experiment 4: Daily SMA 50 Price Cross (2026-07-18)
 
 **Goal:** Add the simplest possible trend strategy: buy a completed daily close crossing above SMA(50), then sell the opposite cross.

@@ -283,7 +283,9 @@ def bootstrap_max_t_hurdle(
 
     Returns (hurdle, distribution of bootstrapped maxima).
     Original variants need enough finite trades, two months and nonzero
-    variance. An underfilled resample receives +inf, not a silent omission.
+    variance. In a resample, an eligible variant with at least two trades
+    contributes its t-statistic; one with fewer has no statistic there. A
+    resample in which no variant has a statistic receives +inf.
     A constant positive null resample has an infinite upper tail; constant
     nonpositive resamples contribute zero to the positive maximum. Infinite
     hurdles cannot establish significance. No resamples are redrawn/dropped.
@@ -331,7 +333,7 @@ def bootstrap_max_t_hurdle(
 
     for b in range(n_boot):
         drawn = [month_list[i] for i in rng.integers(0, n_months, size=n_months)]
-        best = 0.0
+        best = None
         for name in configs:
             buckets = by_period.get(name) or {}
             if not buckets:
@@ -341,9 +343,14 @@ def bootstrap_max_t_hurdle(
                 block = buckets.get(month)
                 if block:
                     sample.extend(block)
-            if len(sample) < min_trades:
-                best = float('inf')
-                break
+            # A thin resample still yields a (heavy-tailed) t that raises the
+            # maximum honestly. Setting the whole resample to +inf whenever any
+            # eligible variant fell below the original trade floor made every
+            # realistic panel's hurdle infinite (nothing could ever pass). Only
+            # a variant with no variance estimate at all (< 2 trades) has no
+            # statistic in this resample.
+            if len(sample) < 2:
+                continue
             arr = np.asarray(sample)
             t = _sample_t(arr)
             if t is None:
@@ -351,9 +358,9 @@ def bootstrap_max_t_hurdle(
                 # a null upper tail. Doing so would lower the selection hurdle.
                 t = (0.0 if np.isfinite(arr).all() and np.all(arr == arr[0]) and arr[0] <= 0
                      else float('inf'))
-            if t > best:
-                best = t
-        maxima[b] = best
+            best = t if best is None else max(best, t)
+        # No variant produced a statistic: uninformative, never a low hurdle.
+        maxima[b] = float('inf') if best is None else max(0.0, best)
 
     # Select an observed order statistic, avoiding inf-inf interpolation/NaN.
     hurdle = float(np.quantile(maxima, 1.0 - alpha, method='higher'))

@@ -341,6 +341,34 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.25.1] - 2026-09-21
+
+Validation: 841 tests passed (2 added); one existing dependency warning.
+
+### Added
+- **Corrected strategy baselines** ([docs/baselines-2026-09-21.md](docs/baselines-2026-09-21.md)):
+  2024–2026 regenerated on the fully corrected engine with the earnings import.
+  Ensemble +$362.69 / +$219.42 / +$282.38 on $1,000; breakout and tqqq_momentum
+  fail the both-years rule. No single year's winner clears its selection hurdle.
+- **Ensemble vote-gate ablation** (`research/ensemble_vote_ablation.py`,
+  Experiment 5): 4 predeclared variants over 2022–2026. The live 1-vote rule wins
+  (t = 4.13 vs bootstrap hurdle 2.48) and is kept. Regime-only entries are identical
+  to live, so the other members never open a trade alone. The 2-vote rule halves
+  return but cuts the 2022 loss and the worst drawdown (31.8% → 12.8%).
+  Logged with evidence.
+
+### Fixed
+- **Significance hurdle was always infinite** (`research/significance.py`, F08
+  over-correction): any eligible variant resampled below 20 trades made the whole
+  bootstrap draw +inf, so every realistic panel reported `t >= inf` and nothing
+  could pass. Thin resamples now contribute their own heavy-tailed t; only a draw
+  with no statistic at all is +inf. Year hurdles are now 2.80 / 3.43 / 3.66.
+
+### Changed
+- Ensemble weights are per-instance (`EnsembleStrategy.weights`) so research
+  variants cannot mutate live weights; live behaviour is unchanged.
+
 ## [0.25.0] - 2026-09-21
 
 Fixes all nine items (V01–V09) from
@@ -1842,6 +1870,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

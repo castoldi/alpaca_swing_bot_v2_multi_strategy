@@ -28,7 +28,13 @@ statistics have large one-sided p-values. This follows the
   resampling. Ineligible variants do not establish the bootstrap maximum, but
   remain in `evaluate_search`'s trial count and BHY p-value panel; an ineligible
   winner cannot use another variant's calibrated hurdle to claim significance.
-- A resample below the trade-count floor receives an infinite upper bound.
+- In a resample, an eligible variant with at least two trades contributes its
+  t-statistic even below the original 20-trade floor (small-sample t values are
+  heavy-tailed, so thin variants raise the hurdle honestly); a variant with
+  fewer than two trades has no statistic in that resample, and a resample in
+  which no variant has one receives an infinite upper bound. (Until v0.25.1 any
+  variant below 20 resampled trades made the whole draw infinite, so realistic
+  panels always reported an infinite hurdle and nothing could pass.)
   A constant positive null resample likewise receives positive infinity;
   constant nonpositive resamples contribute zero to the positive maximum.
   Other numerically unrepresentable resamples receive positive infinity.

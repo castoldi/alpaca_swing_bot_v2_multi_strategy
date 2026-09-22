@@ -24,8 +24,12 @@ database results, so none were run.
 | V08 | Kill switch uses the bot's own P&L since the previous close over yesterday's equity; if that is unknown it falls back to the account-wide drop | 4 rewritten `test_bot_risk_guards.py` cases |
 | V09 | Remediation doc corrected (F03 status, stale "next" line, repeated boilerplate, unlinked review claims) | — |
 
-Still open: regenerate the corrected baselines, then run the V05 ablation (1 vs 2
-votes, regime-only, equal weights) through `evaluate_search`.
+**Follow-up done (v0.25.1):** corrected baselines regenerated
+([baselines-2026-09-21.md](baselines-2026-09-21.md)), and the V05 ablation was run
+over 2022–2026 (Experiment 5 in `research/experiments.md`). The live 1-vote rule
+is kept; regime-only entries turned out identical to live. Running it exposed an
+F08 over-correction: any thin panel variant made the bootstrap hurdle infinite,
+so no search could ever pass. That is fixed in `research/significance.py`.
 
 ## Verdict
 

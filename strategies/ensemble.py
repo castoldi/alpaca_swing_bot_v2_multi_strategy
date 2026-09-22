@@ -43,6 +43,8 @@ class EnsembleStrategy(BaseStrategy):
             "momentum_macd": MomentumMACDStrategy(),
             "regime": RegimeAdaptiveStrategy(),
         }
+        # Per-instance so research variants never mutate the live weights.
+        self.weights: dict[str, float] = dict(ENSEMBLE_WEIGHTS)
 
     def check_entry(self, df: pd.DataFrame, idx: int, p: StrategyParams = PARAMS) -> Optional[EntrySignal]:
         if idx < 60:
@@ -53,7 +55,7 @@ class EnsembleStrategy(BaseStrategy):
 
         signals = {name: s.check_entry(df, idx, p) for name, s in self._members.items()}
         active = [name for name, signal in signals.items() if signal is not None]
-        score = sum(ENSEMBLE_WEIGHTS.get(name, 0) for name in active)
+        score = sum(self.weights.get(name, 0) for name in active)
 
         if score < 0.30 or len(active) < p.ensemble_min_votes:
             return None

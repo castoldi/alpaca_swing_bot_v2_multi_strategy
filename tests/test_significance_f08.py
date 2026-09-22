@@ -185,3 +185,26 @@ def test_invalid_calibration_limits_are_rejected(argument, value):
 def test_invalid_bootstrap_count_is_rejected_explicitly(n_boot):
     with pytest.raises(ValueError, match='n_boot'):
         bootstrap_max_t_hurdle(panel([-.01, .02] * 10, [-.02, .01] * 10), n_boot=n_boot)
+
+
+def test_thin_but_eligible_variant_does_not_make_every_hurdle_infinite():
+    # Regression (v0.25.1): one 20-30 trade variant used to push >5% of
+    # month-block resamples below 20 trades, each scored +inf, so the hurdle
+    # was always infinite and no search could ever pass.
+    rng = np.random.default_rng(7)
+    months = pd.date_range('2025-01-01', periods=12, freq='MS')
+    dense = [(m + pd.Timedelta(days=int(d)), float(r)) for m in months
+             for d, r in zip(rng.integers(0, 27, 10), rng.normal(.004, .02, 10))]
+    thin = [(months[i] + pd.Timedelta(days=3), float(r))
+            for i, r in zip(rng.integers(0, 12, 22), rng.normal(0, .02, 22))]
+    strong = [(when, r + .02) for when, r in dense]
+    configs = {'dense': dense, 'thin': thin, 'strong': strong}
+
+    hurdle, maxima = bootstrap_max_t_hurdle(configs, n_boot=300)
+
+    assert math.isfinite(hurdle) and 1.5 < hurdle < 5
+    assert np.isfinite(maxima).all()
+    report, _ = evaluate_search(configs, winner='strong', n_boot=300)
+    assert report.significant
+    weak, _ = evaluate_search(configs, winner='thin', n_boot=300)
+    assert not weak.significant
