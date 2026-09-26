@@ -221,6 +221,12 @@ Health model: bot = pid alive AND heartbeat fresh within ~2 intervals; dashboard
 - **Alpaca paper hardcoded**: `paper=True` is set in both `bot.py` and `server.py` regardless of `.env`.
 - **Windows venv**: `.venv\Scripts\activate` (not `source .venv/Scripts/activate`).
 - **DB empty**: backtests write results to `dashboard/swing_bot_v2.db` — run them before opening the dashboard.
+- **Shorting is settled — don't re-propose it.** Short-only (`research/short_only_mirror.py`,
+  2026-09-26: the real strategy code on inverted prices) lost 10 of 11 years
+  2016–2026 (ensemble, −0.80%/trade, t = −5.13) and 19 of 22 years on NVDA
+  2005–2026; only 2022 won. Bear-only shorting also failed (docs/bear-market-playbook.md §4).
+  For bear protection, pair `ensemble` with `tqqq_momentum`. Run that script with
+  `ensemble` as an argument: all six strategies take >10 min and can hit low memory.
 
 ## Keep-alive watchdog
 

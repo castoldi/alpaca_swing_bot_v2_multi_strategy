@@ -17,6 +17,10 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Short-only research** (`research/short_only_mirror.py`) — runs the real strategy
+  code on inverted prices and recomputes real short P&L. Verdict: rejected. Ensemble
+  short-only lost 10/11 years 2016–2026 (−0.80%/trade, t = −5.13; long +0.74%, t = +5.95)
+  and 19/22 years on NVDA 2005–2026. Logged in research/experiments.md and CLAUDE.md pitfalls.
 - **F01–F16 remediation verification** ([docs/code-review-2026-09-21-verification.md](docs/code-review-2026-09-21-verification.md)) —
   confirms most fixes (805 tests pass; F08/F14 checked against SciPy/edge cases)
   and records nine new items: same-bar live re-entry (P1, live ledger evidence),

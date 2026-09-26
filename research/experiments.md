@@ -163,3 +163,43 @@ reported figures as historical, not isolated evidence for a Bollinger rule.
 **Verdict at the time: KEPT** — Both years improved in that run. F16 later added
 the advertised two-member requirement and corrected member behavior, so the #1
 ranking and recommendation are withdrawn pending corrected baseline regeneration.
+
+## Experiment: Short-only bot (2026-09-26)
+
+**Question:** what if the bot only shorted? `research/short_only_mirror.py` inverts
+every price (P' = K/P, high' = K/low) so the unchanged strategy code fires its
+signals on the mirror image, then recomputes each trade as a real short
+(1 − exit/entry). Same path for both sides: legacy 4h next-open fills, tax guard on,
+kill switch off, $1M notional, 20% slots, no costs/borrow, non-compounded.
+Mirrored bracket on the real ticker: stop ≈ 9.9% above, target ≈ 4.8% below.
+Trials counted: 12 (6 strategies × 2 sides planned).
+
+**Ensemble, SIP 4h, NVDA AMZN META AMD ARM, 2016 – 2026-09-09**
+
+| Year | Long | Short-only |
+|---|---:|---:|
+| 2016 | +53.7% | −38.5% |
+| 2017 | +37.5% | −29.5% |
+| 2018 | +15.5% | −14.9% |
+| 2019 | +37.1% | −34.3% |
+| 2020 | +42.3% | −34.2% |
+| 2021 | +34.3% | −30.0% |
+| 2022 | −30.6% | **+48.1%** |
+| 2023 | +99.6% | −48.6% |
+| 2024 | +20.2% | −37.0% |
+| 2025 | +10.8% | −21.0% |
+| 2026 YTD | +33.9% | −34.4% |
+| Per trade | +0.74%, t = +5.95 (2,095) | −0.80%, t = −5.13 (1,809) |
+
+**NVDA only, IBKR 4h, 2005–2026:** short lost 19/22 years (won 2008 +4.1%,
+2010 +7.1%, 2022 +5.6%), −1.07%/trade, t = −4.28; long +0.79%/trade, t = +4.10.
+
+Short win rate is 60–75%, but a ~5% target against a ~10% stop on strongly
+trending names means the stop-outs cost about 2× the wins. Absolute long numbers
+here exceed the official backtests (simplified execution); the long-vs-short
+comparison is like-for-like.
+
+**Verdict: REJECTED.** Shorting has no edge on this universe, neither always-on
+nor bear-only (docs/bear-market-playbook.md §4). Bear protection: pair `ensemble`
+with `tqqq_momentum`. The other five strategies were not run (memory pressure);
+rerun with `python research/short_only_mirror.py` if wanted.
