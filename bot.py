@@ -2736,6 +2736,8 @@ def build_pnl_report(strategy: str | None = None) -> str:
         f"  Best trade     ${snap.best_trade:+,.2f}     Worst ${snap.worst_trade:+,.2f}",
         f"  Deployed total ${snap.total_deployed:,.2f}  "
         f"(return on deployed {snap.return_on_deployed * 100:+.2f}%)",
+        f"  Closed by other bots: {snap.interference_count} "
+        f"(${snap.interference_pnl:+,.2f}, in P&L, excluded from stats above)",
         f"  First trade    {snap.first_trade_at or 'n/a'}",
     ]
 

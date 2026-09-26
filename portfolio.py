@@ -49,6 +49,17 @@ def shares_of(trade: dict) -> float:
         return 0.0
 
 
+# Exits forced by another project on the shared Alpaca key (bot.py closes the
+# row as `external_liquidation`). Their dollars are real and stay in realized
+# P&L, but they are not strategy outcomes, so they are counted separately and
+# kept out of win rate, profit factor, averages and best/worst.
+EXTERNAL_EXIT_REASONS = frozenset({"external_liquidation"})
+
+
+def is_external_exit(trade: dict) -> bool:
+    return str(trade.get("exit_reason") or "") in EXTERNAL_EXIT_REASONS
+
+
 def cost_basis(trade: dict) -> float:
     """Dollars the bot committed to this trade at entry."""
     return effective_entry_price(trade) * shares_of(trade)
@@ -186,6 +197,9 @@ class Snapshot:
     broker_confirmed: int
     broker_mismatched: int
     positions: tuple[OpenPosition, ...] = field(default=())
+    # Closed by another project, excluded from the strategy stats above.
+    interference_count: int = 0
+    interference_pnl: float = 0.0
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -235,14 +249,17 @@ def build_snapshot(
     opened = [t for t in real if is_open(t)]
 
     realized = sum(pnl_of(t) for t in closed)
-    wins = sum(1 for t in closed if pnl_of(t) > 0)
-    losses = sum(1 for t in closed if pnl_of(t) <= 0)
-    gross_profit = sum(pnl_of(t) for t in closed if pnl_of(t) > 0)
-    gross_loss = sum(-pnl_of(t) for t in closed if pnl_of(t) < 0)
-    total_deployed = sum(cost_basis(t) for t in closed)
+    external = [t for t in closed if is_external_exit(t)]
+    scored = [t for t in closed if not is_external_exit(t)]
+    wins = sum(1 for t in scored if pnl_of(t) > 0)
+    losses = sum(1 for t in scored if pnl_of(t) <= 0)
+    gross_profit = sum(pnl_of(t) for t in scored if pnl_of(t) > 0)
+    gross_loss = sum(-pnl_of(t) for t in scored if pnl_of(t) < 0)
+    total_deployed = sum(cost_basis(t) for t in scored)
+    scored_realized = sum(pnl_of(t) for t in scored)
 
     pcts = []
-    for t in closed:
+    for t in scored:
         try:
             pcts.append(float(t.get("pnl_pct") or 0.0))
         except (TypeError, ValueError):
@@ -309,18 +326,18 @@ def build_snapshot(
         open_count=len(opened),
         open_cost_basis=round(sum(cost_basis(t) for t in opened), 2),
         open_market_value=round(open_market_value, 2),
-        closed_count=len(closed),
+        closed_count=len(scored),
         wins=wins,
         losses=losses,
-        win_rate=(wins / len(closed)) if closed else 0.0,
+        win_rate=(wins / len(scored)) if scored else 0.0,
         gross_profit=round(gross_profit, 2),
         gross_loss=round(gross_loss, 2),
         profit_factor=_profit_factor(gross_profit, gross_loss),
         avg_pnl_pct=(sum(pcts) / len(pcts)) if pcts else 0.0,
-        best_trade=round(max((pnl_of(t) for t in closed), default=0.0), 2),
-        worst_trade=round(min((pnl_of(t) for t in closed), default=0.0), 2),
+        best_trade=round(max((pnl_of(t) for t in scored), default=0.0), 2),
+        worst_trade=round(min((pnl_of(t) for t in scored), default=0.0), 2),
         total_deployed=round(total_deployed, 2),
-        return_on_deployed=(realized / total_deployed) if total_deployed else 0.0,
+        return_on_deployed=(scored_realized / total_deployed) if total_deployed else 0.0,
         first_trade_at=entries[0].isoformat() if entries else None,
         last_trade_at=entries[-1].isoformat() if entries else None,
         marks_complete=marks_complete,
@@ -329,6 +346,8 @@ def build_snapshot(
             1 for v in broker_status.values() if v in ("mismatch", "missing")
         ),
         positions=tuple(positions),
+        interference_count=len(external),
+        interference_pnl=round(sum(pnl_of(t) for t in external), 2),
     )
 
 

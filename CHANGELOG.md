@@ -345,6 +345,32 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.28.0] - 2026-09-26
+
+Validation: full test suite passes, plus 9 new tests in `tests/test_ledger_integrity.py`.
+Live-readiness plan items 0.1 and 0.4.
+
+### Fixed
+- **34 corrupt live-ledger rows quarantined** (`scripts/quarantine_trades.py`,
+  new `trades_quarantine` table; moved, never deleted; DB backed up first). All were
+  1-share NVDA rows from 2026-06-25 to 07-04, before the ownership checks. Checked
+  against Alpaca order history: 18 recorded a buy that never filled, all 34 booked
+  another project's sell as their exit, and 8 of those sells filled before the
+  buy. Net P&L +$64.95, but they were 34 of 73 closed rows.
+- **The ledger now refuses double claims.** Unique indexes on the entry
+  `client_order_id`, the broker entry order id, the exit order id (one sell closes
+  at most one trade; an unfilled entry closed with its own id is exempt) and
+  `trade_exit_fills.alpaca_order_id`. If duplicates already exist, startup logs
+  the missing index instead of failing, so exits keep reconciling.
+
+### Changed
+- **Exits forced by other projects (`external_liquidation`) are out of the
+  strategy stats.** Win rate, profit factor, trade count, average/best/worst and
+  return on deployed exclude them; their dollars stay in realized/total P&L and
+  are reported separately (`interference_count` / `interference_pnl` in
+  `/api/summary` and `/api/pnl`, on the Win Rate tile and in `bot.py --report`).
+
 ## [0.27.1] - 2026-09-26
 
 ### Fixed
@@ -1963,6 +1989,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

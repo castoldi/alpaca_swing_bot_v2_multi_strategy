@@ -294,6 +294,76 @@ def _migrate(c: sqlite3.Connection):
         if col not in exp_have:
             c.execute(f"ALTER TABLE research_experiments ADD COLUMN {col} {decl}")
 
+    _ensure_ledger_integrity(c)
+
+
+# Live-readiness 0.1. Corrupt rows are moved here, never deleted: same columns
+# as `trades` plus why and when. Rows 1-34 (June-July 2026) were the first:
+# 18 recorded a buy that never filled and all 34 claimed another project's
+# sell as their exit, 8 of them filled before the buy.
+_UNIQUE_LEDGER_INDEXES = {
+    "ux_trades_client_order_id":
+        "trades(client_order_id) WHERE client_order_id IS NOT NULL",
+    "ux_trades_alpaca_order_id":
+        "trades(alpaca_order_id) WHERE alpaca_order_id IS NOT NULL",
+    # One broker sell closes at most one trade. An unfilled entry is closed
+    # with its own entry id as the exit id, so that case is exempt.
+    "ux_trades_exit_alpaca_order_id":
+        "trades(exit_alpaca_order_id) WHERE exit_alpaca_order_id IS NOT NULL "
+        "AND exit_alpaca_order_id != COALESCE(alpaca_order_id, '')",
+    "ux_trade_exit_fills_order":
+        "trade_exit_fills(alpaca_order_id)",
+}
+
+
+def _ensure_ledger_integrity(c) -> None:
+    """Quarantine table plus unique indexes that make a double claim fail loudly.
+
+    An index that cannot be built because duplicates already exist is logged,
+    not raised: the bot must still start so exits keep reconciling. Run
+    `scripts/quarantine_trades.py` to move the offending rows, then restart.
+    """
+    columns = [(r["name"], r["type"]) for r in c.execute("PRAGMA table_info(trades)")]
+    have = {r["name"] for r in c.execute("PRAGMA table_info(trades_quarantine)")}
+    if not have:
+        cols = ", ".join(f'"{name}" {decl}' for name, decl in columns)
+        c.execute(f"CREATE TABLE trades_quarantine ({cols}, "
+                  "quarantine_reason TEXT NOT NULL, quarantined_at TEXT NOT NULL)")
+    else:
+        for name, decl in columns:
+            if name not in have:
+                c.execute(f'ALTER TABLE trades_quarantine ADD COLUMN "{name}" {decl}')
+    for name, spec in _UNIQUE_LEDGER_INDEXES.items():
+        try:
+            c.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {spec}")
+        except sqlite3.IntegrityError:
+            _log.error("Ledger has duplicate order ids; unique index %s NOT active — "
+                       "run scripts/quarantine_trades.py", name)
+
+
+def quarantine_trades(trade_ids: list[int], reason: str) -> int:
+    """Move trades (and their exit-fill rows) into trades_quarantine atomically."""
+    if not trade_ids:
+        return 0
+    _ensure_tables()
+    now = datetime.now(timezone.utc).isoformat()
+    marks = ",".join("?" * len(trade_ids))
+    with _con() as c:
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(trades)")]
+        quoted = ", ".join(f'"{name}"' for name in cols)
+        c.execute(
+            f"INSERT INTO trades_quarantine ({quoted}, quarantine_reason, quarantined_at) "
+            f"SELECT {quoted}, ?, ? FROM trades WHERE id IN ({marks})",
+            (reason, now, *trade_ids),
+        )
+        c.execute(f"DELETE FROM trade_exit_fills WHERE trade_id IN ({marks})", trade_ids)
+        # Derived rows; rebuild_tax_records regenerates them from `trades`.
+        c.execute(f"DELETE FROM tax_records WHERE trade_id IN ({marks})", trade_ids)
+        moved = c.execute(f"DELETE FROM trades WHERE id IN ({marks})", trade_ids).rowcount
+    _ensure_tables(force=True)  # the indexes can build once duplicates are gone
+    rebuild_tax_records()
+    return moved
+
 
 def set_tickers(tickers: list[str]):
     global _TICKERS
@@ -1067,6 +1137,14 @@ def portfolio_stats() -> dict[str, Any]:
                    COALESCE(SUM(CASE WHEN pnl_dollars > 0 THEN pnl_dollars ELSE 0 END), 0) as gross_profit,
                    COALESCE(SUM(CASE WHEN pnl_dollars < 0 THEN ABS(pnl_dollars) ELSE 0 END), 0) as gross_loss
             FROM trades WHERE status='closed' AND COALESCE(shares, 0) > 0
+              AND COALESCE(exit_reason, '') != 'external_liquidation'
+        """).fetchone()
+        # Closed by another project on the shared key: real money, not a
+        # strategy outcome. Reported beside the stats, never inside them.
+        interference = c.execute("""
+            SELECT COUNT(*), COALESCE(SUM(pnl_dollars), 0) FROM trades
+            WHERE status='closed' AND COALESCE(shares, 0) > 0
+              AND exit_reason = 'external_liquidation'
         """).fetchone()
 
         open_count = c.execute(
@@ -1075,6 +1153,9 @@ def portfolio_stats() -> dict[str, Any]:
 
         total = dict(closed)
         total["open_positions"] = open_count
+        total["interference_count"] = interference[0]
+        total["interference_pnl"] = round(interference[1], 2)
+        total["total_pnl"] = round(total["total_pnl"] + interference[1], 2)
         total["tickers"] = _TICKERS
         if total["gross_loss"] > 0:
             total["profit_factor"] = round(total["gross_profit"] / total["gross_loss"], 2)

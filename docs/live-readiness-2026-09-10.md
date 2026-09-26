@@ -204,11 +204,14 @@ until they land there is no trustworthy measurement to base one on.
 
 Nothing else is worth doing first: today the numbers cannot support a decision.
 
-- [ ] **0.1 — Fix duplicate trade recording.** Find the root cause of 22 rows for one NVDA entry
+- [x] **0.1 — Fix duplicate trade recording.** Find the root cause of 22 rows for one NVDA entry
       (likely repeated `save_trade` on re-entry into the reconcile path, or per-fill recording).
       Add a DB uniqueness constraint on `client_order_id`. Archive existing duplicates to a
       `trades_quarantine` table rather than deleting — they may be real duplicate *orders*, which is a
       separate and worse bug worth confirming against Alpaca's order history.
+      *Done 2026-09-26 (v0.28.0): 34 rows quarantined after checking Alpaca: 18 buys never
+      filled, all 34 claimed another project's sell, 8 of those sells filled before the buy.
+      Unique indexes now reject duplicate entry ids and a sell claimed by two trades.*
 - [x] **0.2 — Virtual capital allocation (the shared-account substitute for a sub-account).**
       Add `bot_capital_allocation` to `config.py`. Size against
       `min(allocation × position_size_pct, actual_available_cash)` instead of account-wide equity.
@@ -221,9 +224,11 @@ Nothing else is worth doing first: today the numbers cannot support a decision.
       `starting_capital = $154,114.89`. Report return as a percentage of the allocation. Keep
       `broker_equity` beside it as context only, clearly labelled as account-wide and not this bot's.
       *Done 2026-09-26 (v0.27.0): bot ledger, `--report` and the dashboard's return % use the allocation.*
-- [ ] **0.4 — Quarantine external interference from performance stats.** Exclude
+- [x] **0.4 — Quarantine external interference from performance stats.** Exclude
       `external_liquidation` trades from win rate / PF / P&L headline figures and surface them as a
       separate interference counter. An outside flatten is not a strategy outcome. Alert when one occurs.
+      *Done 2026-09-26 (v0.28.0): excluded from win rate/PF/counts; dollars kept in P&L and shown
+      separately. The email alert already existed (v0.19.1).*
 
 **Exit criteria:** dashboard win rate, PF and P&L are computed only from this bot's own,
 non-interfered, de-duplicated trades, against a fixed allocation.
