@@ -93,6 +93,34 @@ def test_exiting_launcher_access_denied_on_terminate_is_not_a_failure(manager, m
     assert not proc.alive
 
 
+def test_exiting_launcher_access_denied_on_identity_read_is_not_a_failure(manager, monkeypatch):
+    # 2026-09-26: exe()/cmdline() on the exiting launcher raised AccessDenied
+    # ("(pid=N)") before terminate was reached, aborting restart after the stop.
+    proc = Process(manager.root)
+    snapshot = runtime.process_identity(proc, "bot", manager.root)
+    def denied(*_args):
+        raise psutil.AccessDenied(proc.pid)
+    monkeypatch.setattr(runtime, "process_identity", denied)
+    monkeypatch.setattr(psutil, "Process", lambda pid: proc)
+    manager.stop_identity(snapshot)
+    assert not proc.killed
+
+
+def test_live_unreadable_process_is_still_refused(manager, monkeypatch):
+    proc = Process(manager.root)
+    snapshot = runtime.process_identity(proc, "bot", manager.root)
+    def denied(*_args):
+        raise psutil.AccessDenied(proc.pid)
+    def still_running(timeout=None):
+        raise psutil.TimeoutExpired(timeout, proc.pid)
+    monkeypatch.setattr(runtime, "process_identity", denied)
+    proc.wait = still_running
+    monkeypatch.setattr(psutil, "Process", lambda pid: proc)
+    with pytest.raises(RuntimeError, match="identity"):
+        manager.stop_identity(snapshot)
+    assert not proc.killed
+
+
 def test_process_ignoring_terminate_is_killed_after_timeout(manager, monkeypatch):
     proc = Process(manager.root)
     snapshot = runtime.process_identity(proc, "bot", manager.root)

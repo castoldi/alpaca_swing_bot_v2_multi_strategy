@@ -93,7 +93,14 @@ class Manager:
     def stop_identity(self, identity):
         try:
             proc = psutil.Process(identity["pid"])
-            actual = runtime.process_identity(proc, identity["service"], self.root, self.port)
+            try:
+                actual = runtime.process_identity(proc, identity["service"], self.root, self.port)
+            except psutil.AccessDenied:
+                # Windows denies exe()/cmdline() on a process that is already
+                # exiting — the venv launcher, once its interpreter child is
+                # stopped. Same rule as a changed identity below: accept only a
+                # prompt exit, otherwise refuse.
+                actual = None
             if actual is None or actual["process_created"] != identity["process_created"]:
                 # Stopping the verified interpreter can make its launcher exit
                 # between the inventory snapshot and its own stop. Treat only

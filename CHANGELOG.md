@@ -344,6 +344,18 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.27.1] - 2026-09-26
+
+### Fixed
+- **`manage.ps1 restart-*` stopped a service and then failed to start it**
+  (`Manager refused operation: (pid=N)`). Once the interpreter child is stopped,
+  its venv launcher is exiting and Windows denies `exe()`/`cmdline()`;
+  `stop_identity` only caught that `AccessDenied` on terminate, not on the
+  identity read. It now treats it like a changed identity: a prompt exit is
+  accepted, a live unreadable process is still refused and never killed. Two
+  tests added; restart of both services through `manage.ps1` verified.
+
 ## [0.27.0] - 2026-09-26
 
 Validation: full test suite passes, plus 8 new tests in `tests/test_bot_allocation.py`.
@@ -1951,6 +1963,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
