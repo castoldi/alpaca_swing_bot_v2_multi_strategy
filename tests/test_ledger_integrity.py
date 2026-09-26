@@ -113,3 +113,13 @@ def test_portfolio_stats_excludes_external_liquidations_from_stats_not_money():
     assert (stats["trades"], stats["wins"], stats["win_rate"]) == (1, 1, 100.0)
     assert stats["interference_count"] == 1
     assert stats["total_pnl"] == pytest.approx(-400.0)
+
+
+def test_return_base_never_below_capital_actually_deployed():
+    """Lowering the allocation to $5k must not turn $100k-book profits into +300%."""
+    trades = [_t(1, 1000.0, "bracket_filled")]
+    trades[0]["shares"] = 200.0            # $20,000 deployed
+    snap = portfolio.build_snapshot(trades, {}, starting_capital=5_000)
+    assert snap.starting_capital == pytest.approx(20_000)
+    assert snap.total_return_pct == pytest.approx(0.05)
+    assert portfolio.build_snapshot(trades, {}, starting_capital=50_000).starting_capital == 50_000

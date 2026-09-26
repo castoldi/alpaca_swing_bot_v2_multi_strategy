@@ -346,6 +346,25 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.28.1] - 2026-09-26
+
+### Added
+- **Capital-size experiment** (`research/capital_size_experiment.py`) — ensemble
+  2022–2026 on the production engine at $1k / $5k / $100k. The $1k baselines
+  skipped META every year from 2024 (one share > the $200 slot), so they
+  understated both return and risk. At $5k results are within a few points of
+  $100k: 5-year compounded +250%, but 2022 −35.0% with a 40.6% realized drawdown
+  (vs −23.3% / 31.8% at $1k). Logged in research/experiments.md.
+
+### Fixed
+- **Return % could be inflated by lowering the allocation.** With the paper bot
+  switched to a $5,000 allocation, $15.7k of profit made on a ~$115k book showed
+  as +314%. The ledger base is now max(allocation, peak capital actually
+  deployed); `capital_base_method` says which one applied.
+- Tests no longer read `BOT_CAPITAL_ALLOCATION` from the machine's `.env`
+  (conftest pins it off unless a test sets it).
+
 ## [0.28.0] - 2026-09-26
 
 Validation: full test suite passes, plus 9 new tests in `tests/test_ledger_integrity.py`.
@@ -1989,6 +2008,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

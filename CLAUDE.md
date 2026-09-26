@@ -169,8 +169,10 @@ override `BOT_CAPITAL_ALLOCATION` in `.env`, 0 = off): the Alpaca key is shared,
 so live "equity" is this fixed allocation (capped at real account equity), not
 the account. Spendable cash = min(real account cash, allocation − this bot's own
 open cost basis); an unreadable ledger means nothing is spendable. The same base
-drives the leveraged/group caps, the kill-switch denominator and the ledger's
-return %. Not compounded. Backtests ignore it.
+drives the leveraged/group caps and the kill-switch denominator; the ledger's
+return % uses max(allocation, peak capital actually deployed). Not compounded.
+Backtests ignore it. Paper runs at $5,000 (`.env`) since 2026-09-26 to match the
+planned live start; validate risk at that size (`research/capital_size_experiment.py`).
 
 **Leveraged exposure cap**: total notional across `LEVERAGED_TICKERS` is capped
 at `max_leveraged_exposure_pct` (default 20%) of equity, enforced identically in

@@ -2626,7 +2626,7 @@ def _ledger_capital_base() -> float | None:
 
 
 def _ledger_capital_label() -> str:
-    return "allocation   " if _ledger_capital_base() else "peak deployed"
+    return "alloc/peak   " if _ledger_capital_base() else "peak deployed"
 
 
 def _record_balance_snapshot(strat_name: str, tc) -> portfolio.Snapshot | None:

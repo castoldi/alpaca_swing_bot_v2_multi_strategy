@@ -113,6 +113,14 @@ def pnl_of(trade: dict) -> float:
 
 # ── Capital base ──────────────────────────────────────────────────────────────
 
+def capital_base(trades: Iterable[dict], allocation: Optional[float] = None) -> float:
+    """Return denominator: the allocation, but never less than the capital the
+    bot actually had at risk. Lowering the allocation (e.g. $100k -> $5k) must
+    not turn profits made on a larger book into a huge fake percentage."""
+    peak = peak_deployed_capital(trades)
+    return max(allocation, peak) if allocation else peak
+
+
 def peak_deployed_capital(trades: Iterable[dict]) -> float:
     """Most capital held at risk at any one moment across the whole history.
 
@@ -309,7 +317,7 @@ def build_snapshot(
             broker_status=broker_status.get(int(t.get("id") or 0), "unverified"),
         ))
 
-    base = starting_capital if starting_capital else peak_deployed_capital(trades)
+    base = capital_base(trades, starting_capital)
     total_pnl = realized + unrealized
     entries = [_parse_ts(t.get("entry_date")) for t in real]
     entries = sorted(e for e in entries if e is not None)

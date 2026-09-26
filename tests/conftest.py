@@ -91,3 +91,15 @@ def skip_execution_quality(request, monkeypatch):
     if request.node.get_closest_marker("execution_quality") or "bot" not in sys.modules:
         return
     monkeypatch.setattr(sys.modules["bot"], "_record_execution_quality", lambda *_a, **_k: 0)
+
+
+@pytest.fixture(autouse=True)
+def pin_capital_allocation(monkeypatch):
+    """Tests must not depend on BOT_CAPITAL_ALLOCATION in the machine's .env.
+
+    Off (account-wide sizing) unless a test sets it: most sizing tests predate
+    the allocation. tests/test_bot_allocation.py sets it explicitly.
+    """
+    from dataclasses import replace
+    import bot
+    monkeypatch.setattr(bot, "PARAMS", replace(bot.PARAMS, bot_capital_allocation=0.0))

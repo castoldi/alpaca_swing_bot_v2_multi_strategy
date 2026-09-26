@@ -203,3 +203,30 @@ comparison is like-for-like.
 nor bear-only (docs/bear-market-playbook.md §4). Bear protection: pair `ensemble`
 with `tqqq_momentum`. The other five strategies were not run (memory pressure);
 rerun with `python research/short_only_mirror.py` if wanted.
+
+
+## Experiment: Capital size — $1k vs $5k vs $100k (2026-09-26)
+
+**Question:** every tuned number came from $1,000 annual backtests. The planned
+live start is ~$5,000. Does capital change the result? (Live-readiness Phase 2.)
+`research/capital_size_experiment.py`: ensemble, production engine (minute
+execution, earnings filter, kill switch), candidates collected once per year and
+replayed at each capital. Drawdown is realized-equity (understates open dips).
+
+| Year | $1k return / DD | $5k return / DD | $100k return / DD | Trades 1k→5k |
+|---|---|---|---|---|
+| 2022 | −23.3% / 31.8% | **−35.0% / 40.6%** | −38.3% / 43.8% | 135 → 146 |
+| 2023 | +78.0% / 8.0% | +90.5% / 10.0% | +94.6% / 10.7% | 156 → 160 |
+| 2024 | +36.3% / 10.4% | +59.9% / 12.6% | +66.3% / 13.0% | 161 → 193 |
+| 2025 | +21.9% / 16.8% | +31.6% / 28.5% | +34.9% / 31.1% | 131 → 178 |
+| 2026 YTD | +27.5% / 2.6% | +34.2% / 11.5% | +39.7% / 13.4% | 54 → 154 |
+| 5y compounded | +189% | **+250%** | +277% | |
+
+**Why:** at $1k a slot is $200, so META never traded from 2024 on, and in 2026
+AMD/AMZN barely did. At $5k every ticker fits (META is 1 share). $5k behaves
+like $100k minus whole-share rounding.
+
+**Verdict:** the $1k baselines understated BOTH return and risk. At the real
+$5k size, plan for a bad year like 2022 to cost about a third of the account
+(≈ −$1,750) with a ≥40% drawdown along the way. 2024–2026 are in-sample for the
+tuning; 2022 is the only bear. Not a parameter change, so no trial correction applies.

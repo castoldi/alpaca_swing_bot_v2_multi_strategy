@@ -251,9 +251,12 @@ non-interfered, de-duplicated trades, against a fixed allocation.
 
 - [ ] **2.1 — Add `--capital` to the backtest runners.** Default stays $1,000 for continuity with the
       existing corpus; the allocation figure becomes the number decisions are made on.
-- [ ] **2.2 — Re-run 2020 / 2022 / 2024 / 2025 / 2026 at the real allocation** for all 8 strategies.
+- [~] **2.2 — Re-run 2020 / 2022 / 2024 / 2025 / 2026 at the real allocation** for all 8 strategies.
       Expect materially worse drawdowns than the stored rows (§2.5). Treat the existing table as
       historical, not current.
+      *Partial 2026-09-26: planned live size is now ~$5k. Ensemble 2022–2026 at $1k/$5k/$100k in
+      research/experiments.md: at $5k, 2022 = −35.0% / 40.6% DD (vs −23.3% at $1k). Other
+      strategies and 2020 not yet run.*
 - [ ] **2.3 — Re-validate anything tuned on $1,000 data**, starting with the `ensemble` threshold
       (0.30). Log every run through `db_mod.log_experiment(...)` with an honest `trials` count.
       Per `CLAUDE.md`: expect most of it to fail re-validation. That is the correct outcome.

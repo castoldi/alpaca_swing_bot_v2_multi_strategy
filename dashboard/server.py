@@ -401,7 +401,9 @@ async def get_pnl():
         starting_capital=allocation if use_allocation else None,
     )
     payload = snap.as_dict()
-    payload["capital_base_method"] = "allocation" if use_allocation else "peak_deployed"
+    payload["capital_base_method"] = (
+        "allocation" if use_allocation and snap.starting_capital == round(allocation, 2)
+        else "peak_deployed")
     if sync_error:
         payload["sync_error"] = sync_error
     return payload
