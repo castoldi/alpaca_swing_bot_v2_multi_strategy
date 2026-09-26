@@ -263,11 +263,16 @@ non-interfered, de-duplicated trades, against a fixed allocation.
 
 ### Phase 3 — Bear posture, chosen deliberately
 
-- [ ] **3.1 — Make the allocation decision a written one.** Three options from
+- [x] **3.1 — Make the allocation decision a written one.** Three options from
       `bear-market-defence.md` §7: keep `ensemble` and accept a −17% bear year; move to
       `ensemble + tqqq_momentum` (−5.5% worst, ~60% of return); or `breakout + tqqq_momentum`
       (never lost a year, ~35% of the return). This is a risk-appetite decision, not a technical one.
-- [ ] **3.2 — If a combination is chosen, build multi-strategy execution.** `bot.py` needs
+      **Decided 2026-09-26 by the operator: keep `ensemble`**, planned live size ~$5,000. Accepted
+      knowingly, from the $5k re-run (research/experiments.md): a 2022-type year ≈ −35% (≈ −$1,750)
+      with a ~40% realized drawdown, in exchange for ~+250% over 2022–2026 versus ~+116% with a
+      +3.4% worst year for `breakout + momentum_macd + tqqq_momentum`. The earlier `ensemble +
+      tqqq_momentum` option was dropped: at $5k it does not reduce the 2022 loss.
+- [x] **3.2 — If a combination is chosen, build multi-strategy execution.** *Not needed: `ensemble` alone was chosen (3.1).* `bot.py` needs
       `--strategy a,b`; `manage.ps1` needs to pass it; the singleton rule must hold (one process running
       N strategies, never two processes). Capital splits across strategies *within* the Phase 0
       allocation — and note `bear-market-defence.md` §6 warns combination results will be **worse than
