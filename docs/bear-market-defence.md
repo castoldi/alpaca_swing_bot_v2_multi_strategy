@@ -167,6 +167,13 @@ separate finding worth its own test — but it is the opposite of bear defence.)
 
 ## 5. What actually works: strategy selection
 
+> **Superseded at real account size (2026-09-26).** Re-run at $5,000 with whole-share
+> fragmentation and a shared 5-slot book, `ensemble + tqqq_momentum` does **not** cut the
+> 2022 loss (shared book −35.0%; sleeves −15.9% only by leaving half the cash idle).
+> `breakout + momentum_macd + tqqq_momentum` in one shared book was positive every year
+> 2022–2026 (+8.4% in 2022, +116% over 5 years). See research/experiments.md,
+> "Every strategy and three combinations at $5,000".
+
 Equal-weight combinations, capital-normalised (running *N* strategies deploys
 *N* × $1,000, so raw sums are not comparable — these divide by *N*):
 

@@ -17,6 +17,12 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **All strategies and three combinations at $5,000** (`research/capital_size_experiment.py`
+  now takes `--strategies all`, `--combos a+b` in a shared book and as sleeves, and caches
+  candidates). `ensemble + tqqq_momentum` does not cut the 2022 loss at $5k (−35.0% shared);
+  `breakout + momentum_macd + tqqq_momentum` in one book was positive every year 2022–2026
+  (+116% over 5y vs ensemble +250%) and clears the trial correction. The earlier −5.5%
+  combination figure is marked superseded in docs/bear-market-defence.md.
 - **F01–F16 remediation verification** ([docs/code-review-2026-09-21-verification.md](docs/code-review-2026-09-21-verification.md)) —
   confirms most fixes (805 tests pass; F08/F14 checked against SciPy/edge cases)
   and records nine new items: same-bar live re-entry (P1, live ledger evidence),

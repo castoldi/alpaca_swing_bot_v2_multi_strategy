@@ -230,3 +230,56 @@ like $100k minus whole-share rounding.
 $5k size, plan for a bad year like 2022 to cost about a third of the account
 (≈ −$1,750) with a ≥40% drawdown along the way. 2024–2026 are in-sample for the
 tuning; 2022 is the only bear. Not a parameter change, so no trial correction applies.
+
+
+## Experiment: Every strategy and three combinations at $5,000 (2026-09-26)
+
+Same harness (`research/capital_size_experiment.py --strategies all --capitals 1000 5000
+--combos ...`). Combinations at $5,000 two ways: **shared book** (one account, 5 slots,
+all members compete, 20% sizing, leveraged cap — what a multi-strategy process would
+do) and **sleeves** ($5,000 / N per member, whole shares, summed). Sleeve drawdown is
+approximate (worst sleeve / N). Realized-equity drawdowns throughout.
+
+| Portfolio @ $5k | 2022 | 2023 | 2024 | 2025 | 2026 YTD | 5y comp | Worst yr | Max DD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ensemble (live) | −35.0% | +90.5% | +59.9% | +31.6% | +34.2% | **+249.6%** | −35.0% | 40.6% |
+| regime | −41.6% | +102.1% | +35.6% | +14.5% | +18.3% | +116.7% | −41.6% | 46.4% |
+| sma_50_cross | −16.4% | +50.1% | +2.2% | +22.3% | +42.8% | +123.6% | −16.4% | 16.4% |
+| momentum_macd | +6.2% | +27.4% | +4.0% | +7.8% | +11.4% | +68.9% | **+4.0%** | 5.7% |
+| trend_pullback | −20.2% | +44.4% | +17.5% | −0.5% | +2.2% | +37.7% | −20.2% | 26.7% |
+| breakout | +1.8% | +9.7% | +15.3% | −6.0% | +9.3% | +32.2% | −6.0% | 7.2% |
+| tqqq_momentum | −0.5% | +6.4% | −1.2% | +1.4% | −1.4% | +4.5% | −1.4% | 3.9% |
+| mean_reversion | −7.4% | +4.0% | −0.0% | −1.0% | +1.4% | −3.3% | −7.4% | 9.8% |
+| ensemble + tqqq, shared | −35.0% | +102.2% | +50.3% | +24.8% | +28.7% | +217.1% | −35.0% | 39.7% |
+| ensemble + tqqq, sleeves | −15.9% | +45.8% | +27.8% | +11.0% | +16.1% | +101.9% | −15.9% | ~18.5% |
+| breakout + tqqq, shared | +1.3% | +16.2% | +13.9% | −4.8% | +7.9% | +37.7% | −4.8% | 9.0% |
+| breakout + tqqq, sleeves | +0.8% | +7.5% | +5.9% | −2.8% | +2.3% | +14.1% | −2.8% | ~3.6% |
+| **breakout + macd + tqqq, shared** | +8.4% | +37.4% | +20.6% | +3.4% | +16.2% | **+115.9%** | **+3.4%** | 8.0% |
+| breakout + macd + tqqq, sleeves | +2.4% | +12.7% | +3.7% | +1.4% | +2.2% | +24.0% | +1.4% | ~2.2% |
+
+**Trial correction** (22 portfolios looked at; per-trade t, optimistic because trades
+overlap on correlated tickers):
+
+| | Trades | t | Hurdle | |
+|---|---:|---:|---:|---|
+| ensemble | 831 | 3.87 | 2.84 | clears |
+| momentum_macd | 160 | 4.25 | 2.87 | clears |
+| breakout + macd + tqqq, shared | 307 | 4.13 | 2.85 | clears |
+| sma_50_cross | 170 | 1.82 | 2.87 | fails |
+
+**Findings**
+1. **The recommended `ensemble + tqqq_momentum` does not protect a $5k account.**
+   In one shared book, ensemble fills all 5 slots and 2022 is unchanged (−35.0%). As
+   sleeves, 2022 halves only because half the money sits idle: the TQQQ sleeve can
+   hold at most 20% of $2,500. The earlier −5.5% figure (docs/bear-market-defence.md
+   §5) ignored both effects.
+2. **`breakout + momentum_macd + tqqq_momentum` in one shared book** is the only
+   portfolio that stayed positive every year including 2022 (+8.4%), with an 8%
+   drawdown and +116% over 5 years (about half ensemble's +250%). It clears the trial
+   correction. It is a survivor chosen from 22 looks on 5 years with one bear, so
+   treat "never loses" as a hypothesis for the paper run, not a fact.
+3. `momentum_macd` alone also never lost a year, but it's only 160 trades in 5 years.
+4. The choice is risk appetite: ~+250% with a −35% year, or ~+116% with a +3% worst year.
+
+Not run: 2020–2021 (IEX 4h history begins 2020-07) and pre-2020 bears. Running two or
+three strategies in one process is not built yet (live-readiness 3.2).
