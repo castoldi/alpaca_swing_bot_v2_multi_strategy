@@ -17,6 +17,10 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Year-by-year detail report** (`research/ensemble_yearly_detail.py`) — one strategy at one
+  account size: return, $ P&L, buy-and-hold benchmark, trades, win rate, avg win/loss, PF,
+  drawdown, best/worst trade, exit mix, per-ticker P&L, worst month. Realistic engine
+  2022–2026 plus the simple 4h engine 2016–2026 (the two differ by up to ~40 points a year).
 - **All strategies and three combinations at $5,000** (`research/capital_size_experiment.py`
   now takes `--strategies all`, `--combos a+b` in a shared book and as sleeves, and caches
   candidates). `ensemble + tqqq_momentum` does not cut the 2022 loss at $5k (−35.0% shared);
