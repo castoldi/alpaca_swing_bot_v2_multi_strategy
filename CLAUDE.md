@@ -156,13 +156,21 @@ All 8 strategies live in `strategies/`. The six bracket strategies exit through 
 
 All strategies share: TP reachability filter (TP1 within 4 ATRs of the entry,
 measured on the strategy's own candles — 4 bar-ATRs on 4h),
-one position per ticker, whole-share entries capped at 20% of current equity
+one position per ticker, whole-share entries capped at 20% of equity
 and cash, five positions maximum, no margin, an entry slippage guard
 (skip if live price drifts >1.5% from the signal close), a daily-loss kill
-switch (the bot's own loss since the previous close reaching 3% of yesterday's
-equity halts new entries; account-wide drop only as a fallback), and
+switch (the bot's own loss since the previous close reaching 3% of its
+capital base halts new entries; account-wide drop only as a fallback), and
 one protected bracket exit (TP3 + SL) per entry regardless of quantity. Annual
 backtests start at $1,000, compound within the year, and reset each January.
+
+**Virtual capital allocation** (`bot_capital_allocation`, default $100,000,
+override `BOT_CAPITAL_ALLOCATION` in `.env`, 0 = off): the Alpaca key is shared,
+so live "equity" is this fixed allocation (capped at real account equity), not
+the account. Spendable cash = min(real account cash, allocation − this bot's own
+open cost basis); an unreadable ledger means nothing is spendable. The same base
+drives the leveraged/group caps, the kill-switch denominator and the ledger's
+return %. Not compounded. Backtests ignore it.
 
 **Leveraged exposure cap**: total notional across `LEVERAGED_TICKERS` is capped
 at `max_leveraged_exposure_pct` (default 20%) of equity, enforced identically in

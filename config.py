@@ -85,6 +85,17 @@ class StrategyParams:
     position_size_pct: float = 0.20
     max_concurrent_positions: int = 5
 
+    # Virtual capital allocation for the LIVE bot, in dollars. The Alpaca key
+    # is shared with other projects, so account equity is not this bot's money:
+    # sizing against it let the bot deploy 100% of the shared account. When
+    # > 0, live sizing, the leveraged/group caps, the kill-switch denominator
+    # and the ledger's return base all use this figure instead, and new entries
+    # are further capped by (allocation - this bot's open cost basis) and by
+    # real account cash. Not compounded: it stays fixed until changed.
+    # 5 slots x 20% = the allocation. 0 restores account-wide sizing.
+    # Override with BOT_CAPITAL_ALLOCATION in .env. Backtests ignore it.
+    bot_capital_allocation: float = float(os.getenv("BOT_CAPITAL_ALLOCATION", "100000"))
+
     # ── Live risk guards ──────────────────────────────────────────────────
     # Skip an entry when the live price has drifted further than this from the
     # signal bar close: the SL/TP geometry would no longer match the backtest.

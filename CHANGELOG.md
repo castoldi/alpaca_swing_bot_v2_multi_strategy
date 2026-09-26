@@ -17,10 +17,6 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
-- **Short-only research** (`research/short_only_mirror.py`) — runs the real strategy
-  code on inverted prices and recomputes real short P&L. Verdict: rejected. Ensemble
-  short-only lost 10/11 years 2016–2026 (−0.80%/trade, t = −5.13; long +0.74%, t = +5.95)
-  and 19/22 years on NVDA 2005–2026. Logged in research/experiments.md and CLAUDE.md pitfalls.
 - **F01–F16 remediation verification** ([docs/code-review-2026-09-21-verification.md](docs/code-review-2026-09-21-verification.md)) —
   confirms most fixes (805 tests pass; F08/F14 checked against SciPy/edge cases)
   and records nine new items: same-bar live re-entry (P1, live ledger evidence),
@@ -346,6 +342,25 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+
+## [0.27.0] - 2026-09-26
+
+Validation: full test suite passes, plus 8 new tests in `tests/test_bot_allocation.py`.
+
+### Added
+- **Virtual capital allocation** (`bot_capital_allocation`, default $100,000,
+  `BOT_CAPITAL_ALLOCATION` in `.env`, 0 = off). Live sizing no longer reads the
+  shared Alpaca account's equity: each 20% slot is 20% of the allocation (capped
+  at real equity), and spendable cash is min(account cash, allocation − own open
+  cost basis), zero if the ledger is unreadable. The leveraged/group caps, the
+  kill-switch denominator and the ledger/dashboard return % use the same base.
+  Previously the bot could deploy 100% of the shared account (it held $114k of
+  $115k). Live-readiness plan items 0.2 and 0.3.
+- **Short-only research** (`research/short_only_mirror.py`) — runs the real strategy
+  code on inverted prices and recomputes real short P&L. Verdict: rejected. Ensemble
+  short-only lost 10/11 years 2016–2026 (−0.80%/trade, t = −5.13; long +0.74%, t = +5.95)
+  and 19/22 years on NVDA 2005–2026. Logged in research/experiments.md and CLAUDE.md pitfalls.
 
 ## [0.26.0] - 2026-09-22
 
@@ -1936,6 +1951,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 
 import ipaddress
+import math
 import os
 import secrets
 import sys
@@ -392,12 +393,15 @@ async def get_pnl():
     if unmarked:
         marks.update(await run_in_threadpool(broker_sync.fetch_marks, unmarked))
 
+    allocation = PARAMS.bot_capital_allocation
+    use_allocation = math.isfinite(allocation) and allocation > 0
     snap = portfolio.build_snapshot(
         trades, marks,
         broker_status=broker_sync.status_map(checks) if checks else None,
+        starting_capital=allocation if use_allocation else None,
     )
     payload = snap.as_dict()
-    payload["capital_base_method"] = "peak_deployed"
+    payload["capital_base_method"] = "allocation" if use_allocation else "peak_deployed"
     if sync_error:
         payload["sync_error"] = sync_error
     return payload

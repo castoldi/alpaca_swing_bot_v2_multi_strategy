@@ -93,9 +93,11 @@ def _bot_daily_loss_pct(account) -> float | None:
     The paper key is shared with other projects, so account equity moves on
     trades this bot never made (and can hide this bot's losses). Numerator: P&L
     of the bot's open trades plus trades closed today, each measured from the
-    previous close (or from its fill if it entered today). Denominator:
-    yesterday's account equity — the same base the 20% position sizing uses.
-    The backtest guard measures the same thing on its isolated portfolio.
+    previous close (or from its fill if it entered today). Denominator: the
+    capital allocation (capped at yesterday's account equity) — the same base
+    the 20% position sizing uses; yesterday's account equity when the
+    allocation is off. The backtest guard measures the same thing on its
+    isolated portfolio.
     """
     try:
         base = float(getattr(account, "last_equity", None))
@@ -103,6 +105,9 @@ def _bot_daily_loss_pct(account) -> float | None:
         return None
     if not (math.isfinite(base) and base > 0):
         return None
+    allocation = PARAMS.bot_capital_allocation
+    if math.isfinite(allocation) and allocation > 0:
+        base = min(base, allocation)
     today = datetime.now(_ET).date()
     try:
         relevant = []
@@ -285,17 +290,69 @@ def _refresh_tax_records() -> None:
         log.warning("Tax records not refreshed (%s)", exc)
 
 
+def _bot_open_cost_basis() -> float:
+    """Dollars this bot has in its own open trades (shares x actual fill).
+
+    Raises when the ledger is unreadable or a row is malformed, so the caller
+    disables entries rather than assuming the allocation is free.
+    """
+    total = 0.0
+    for trade in db_mod.get_open_trades() or []:
+        shares = float(trade.get("shares") or 0)
+        price = portfolio.effective_entry_price(trade)
+        if not (math.isfinite(shares) and math.isfinite(price)) or shares < 0 or price < 0:
+            raise ValueError(f"unreadable cost basis for trade {trade.get('id')}")
+        total += shares * price
+    return total
+
+
+def _allocation_sizing(equity: float, cash: float) -> tuple[float, float]:
+    """(sizing base, spendable cash) under the virtual capital allocation.
+
+    The base is the allocation, never more than the real account equity. Cash
+    is the smaller of real account cash (another project may have spent it)
+    and what is left of the allocation after this bot's own open positions.
+    With the allocation off (<= 0) both stay account-wide. An unreadable
+    ledger fails closed: nothing is spendable this cycle.
+    """
+    allocation = PARAMS.bot_capital_allocation
+    if not (math.isfinite(allocation) and allocation > 0):
+        return equity, cash
+    try:
+        deployed = _bot_open_cost_basis()
+    except Exception as exc:
+        log.warning("Allocation usage unreadable (%s) — no new entries this cycle", exc)
+        return min(allocation, equity), 0.0
+    return min(allocation, equity), min(cash, max(0.0, allocation - deployed))
+
+
 def _load_live_sizing(tc) -> LiveSizingState | None:
     """Read one safe, non-margin sizing snapshot for the current bot cycle.
 
-    Cash, equity and leveraged notional stay account-wide on purpose — they are
-    genuinely shared with anything else trading this key. Only the position-slot
-    count is scoped to what this bot owns.
+    Sizing runs against ``PARAMS.bot_capital_allocation`` (see
+    ``_allocation_sizing``) so this bot's footprint on the shared key is
+    bounded. Leveraged/group notional stays account-wide on purpose — exposure
+    is exposure whoever opened it. Only the position-slot count is scoped to
+    what this bot owns.
     """
     try:
         account = tc.get_account()
-        equity = float(account.equity)
-        cash = float(account.cash)
+        account_equity = float(account.equity)
+        account_cash = float(account.cash)
+        if (
+            not math.isfinite(account_equity)
+            or not math.isfinite(account_cash)
+            or account_equity <= 0
+            or account_cash < 0
+        ):
+            raise ValueError("invalid equity or cash")
+        equity, cash = _allocation_sizing(account_equity, account_cash)
+        if equity != account_equity or cash != account_cash:
+            log.info(
+                "Sizing base: allocation $%.2f (account equity $%.2f), "
+                "spendable $%.2f (account cash $%.2f)",
+                equity, account_equity, cash, account_cash,
+            )
         get_positions = getattr(tc, "get_all_positions", None)
         positions = get_positions() if callable(get_positions) else []
         open_position_count = _our_open_position_count(
@@ -2562,6 +2619,16 @@ def _broker_equity(tc) -> float | None:
         return None
 
 
+def _ledger_capital_base() -> float | None:
+    """Return base for the ledger: the allocation, or None (peak deployed)."""
+    allocation = PARAMS.bot_capital_allocation
+    return allocation if math.isfinite(allocation) and allocation > 0 else None
+
+
+def _ledger_capital_label() -> str:
+    return "allocation   " if _ledger_capital_base() else "peak deployed"
+
+
 def _record_balance_snapshot(strat_name: str, tc) -> portfolio.Snapshot | None:
     """Confirm this bot's own open trades, then append to its local equity curve.
 
@@ -2594,6 +2661,7 @@ def _record_balance_snapshot(strat_name: str, tc) -> portfolio.Snapshot | None:
             trades, marks,
             strategy=strat_name,
             broker_status=broker_sync.status_map(checks),
+            starting_capital=_ledger_capital_base(),
         )
         db_mod.save_balance_snapshot(
             snap.as_dict(), source="bot_run", broker_equity=_broker_equity(tc)
@@ -2644,6 +2712,7 @@ def build_pnl_report(strategy: str | None = None) -> str:
         trades, marks,
         strategy=strategy,
         broker_status=broker_sync.status_map(checks) if checks else None,
+        starting_capital=_ledger_capital_base(),
     )
 
     # ASCII only: this prints to the Windows console, which is cp1252 and
@@ -2653,7 +2722,7 @@ def build_pnl_report(strategy: str | None = None) -> str:
         "=" * w,
         "  BOT V2 - LIFETIME P&L (local ledger, this bot's trades only)",
         "=" * w,
-        f"  Capital base (peak deployed)  ${snap.starting_capital:>14,.2f}",
+        f"  Capital base ({_ledger_capital_label()})  ${snap.starting_capital:>14,.2f}",
         f"  Realized P&L                  ${snap.realized_pnl:>+14,.2f}",
         f"  Unrealized P&L                ${snap.unrealized_pnl:>+14,.2f}",
         "  " + "-" * (w - 4),

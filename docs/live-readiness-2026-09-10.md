@@ -209,15 +209,18 @@ Nothing else is worth doing first: today the numbers cannot support a decision.
       Add a DB uniqueness constraint on `client_order_id`. Archive existing duplicates to a
       `trades_quarantine` table rather than deleting — they may be real duplicate *orders*, which is a
       separate and worse bug worth confirming against Alpaca's order history.
-- [ ] **0.2 — Virtual capital allocation (the shared-account substitute for a sub-account).**
+- [x] **0.2 — Virtual capital allocation (the shared-account substitute for a sub-account).**
       Add `bot_capital_allocation` to `config.py`. Size against
       `min(allocation × position_size_pct, actual_available_cash)` instead of account-wide equity.
       Real cash must still gate the order — another project may have spent it — but this bot's
       *footprint* becomes bounded and deterministic regardless of what the other 8 projects do.
       Set it so `5 × 20% = allocation`, not 100% of the shared account.
-- [ ] **0.3 — Re-base the ledger on the allocation.** Retire the stale
+      *Done 2026-09-26 (v0.27.0): $100,000 default, `BOT_CAPITAL_ALLOCATION` override; spendable
+      cash also capped by allocation − own open cost basis; kill switch uses the same base.*
+- [x] **0.3 — Re-base the ledger on the allocation.** Retire the stale
       `starting_capital = $154,114.89`. Report return as a percentage of the allocation. Keep
       `broker_equity` beside it as context only, clearly labelled as account-wide and not this bot's.
+      *Done 2026-09-26 (v0.27.0): bot ledger, `--report` and the dashboard's return % use the allocation.*
 - [ ] **0.4 — Quarantine external interference from performance stats.** Exclude
       `external_liquidation` trades from win rate / PF / P&L headline figures and surface them as a
       separate interference counter. An outside flatten is not a strategy outcome. Alert when one occurs.
