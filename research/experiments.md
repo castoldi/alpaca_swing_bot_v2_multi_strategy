@@ -283,3 +283,37 @@ overlap on correlated tickers):
 
 Not run: 2020–2021 (IEX 4h history begins 2020-07) and pre-2020 bears. Running two or
 three strategies in one process is not built yet (live-readiness 3.2).
+
+
+## Experiment: Win big, lose small — exit style (2026-09-26)
+
+**Question:** the live exit caps winners (TP 4–12%) and allows a 9% stop, so the
+average win (+4%) is half the average loss (−9%). Do trailing exits that let winners
+run fix that? `research/exit_style_experiment.py`: the ensemble's own entries, only
+the exit re-simulated on 4h bars (stop checked first, gaps fill at the open), then the
+real annual portfolio at $5,000. 2016–2021 simple-engine entries, 2022–2026
+production entries. 4 variants fixed in advance; R0 is the current exit re-simulated
+the same way, so the comparison is like-for-like. (This 4h simulator is more generous
+than the minute engine: R0 2022–26 = +384% here vs +250% there.)
+
+| Variant @ $5k | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 | 2022–26 | 2016–26 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **R0 current** | +54.5 | +30.3 | +9.5 | +36.3 | +46.6 | +35.8 | −29.0 | +106.9 | +66.7 | +33.4 | +48.2 | **+384%** | **+2,800%** |
+| W1 trail 3×ATR, no TP | +62.1 | +30.6 | +18.9 | +28.9 | +53.5 | +43.6 | −28.0 | +45.3 | +58.7 | +6.0 | +42.6 | +151% | +1,692% |
+| W2 = W1 + 5% stop | +61.2 | +31.5 | +18.3 | +28.7 | +47.9 | +41.6 | −31.6 | +45.1 | +47.9 | +2.5 | +36.1 | +105% | +1,284% |
+| W3 = W1 + breakeven at +5% | +60.8 | +28.0 | +13.2 | +29.5 | +51.9 | +43.8 | −29.2 | +44.5 | +55.3 | +6.2 | +41.2 | +138% | +1,471% |
+
+| Variant | Trades | Win % | Avg win | Avg loss | Worst trade | t (hurdle 2.24) |
+|---|---:|---:|---:|---:|---:|---:|
+| R0 current | 1,901 | 77% | +3.8% | −8.4% | −15.0% | 7.54 |
+| W1 | 1,531 | 44% | +6.7% | −3.2% | −11.6% | 5.86 |
+| W2 | 1,628 | 41% | +6.8% | −3.0% | −11.0% | 5.38 |
+| W3 | 1,569 | 42% | +6.7% | −3.0% | −11.6% | 5.66 |
+
+**Verdict: REJECTED.** The variants did produce "win big, lose small" (avg win +6.7%,
+avg loss −3%), but they made far less money: 2022–26 +105–151% vs +384%, and
+2023/2025 collapsed. None improved 2022 (−28% to −32%). They helped a little in
+2016–2018 and 2020–2021. Why: ensemble's entries buy dips that bounce a few percent and
+fade; a fixed target banks the bounce, a trailing stop hands most of it back. Win big,
+lose small suits trend-following entries (sma_50_cross, tqqq_momentum), not these.
+The payoff asymmetry is the price of a 77% win rate, not a defect in itself.

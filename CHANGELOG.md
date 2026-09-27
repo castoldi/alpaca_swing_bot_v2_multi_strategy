@@ -17,6 +17,10 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Exit-style experiment** (`research/exit_style_experiment.py`) — "win big, lose small":
+  trailing 3×ATR exits without a target, with a 5% stop, and with a breakeven lock, on the
+  ensemble's own entries at $5k, 2016–2026. Rejected: the profile flipped (avg win +6.7%,
+  avg loss −3%) but 2022–26 returns fell from +384% to +105–151% and 2022 did not improve.
 - **Year-by-year detail report** (`research/ensemble_yearly_detail.py`) — one strategy at one
   account size: return, $ P&L, buy-and-hold benchmark, trades, win rate, avg win/loss, PF,
   drawdown, best/worst trade, exit mix, per-ticker P&L, worst month. Realistic engine
