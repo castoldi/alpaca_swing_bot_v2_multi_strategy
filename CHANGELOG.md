@@ -17,6 +17,10 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Earnings-hold experiment** (`research/earnings_exit_experiment.py`) — skip entries with a
+  report inside the hold window, or sell before the report, at $5k 2016–2026. Halves the
+  worst trade (−27.4% → −13.7%) and cuts 2022 from −35% to −27%, but 2022–26 return falls
+  from +250% to +172–202%. Logged as insurance, not adopted.
 - **Exit-style experiment** (`research/exit_style_experiment.py`) — "win big, lose small":
   trailing 3×ATR exits without a target, with a 5% stop, and with a breakeven lock, on the
   ensemble's own entries at $5k, 2016–2026. Rejected: the profile flipped (avg win +6.7%,

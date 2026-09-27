@@ -317,3 +317,34 @@ avg loss −3%), but they made far less money: 2022–26 +105–151% vs +384%, a
 fade; a fixed target banks the bounce, a trailing stop hands most of it back. Win big,
 lose small suits trend-following entries (sma_50_cross, tqqq_momentum), not these.
 The payoff asymmetry is the price of a 77% win rate, not a defect in itself.
+
+
+## Experiment: Holding through earnings (2026-09-27)
+
+**Question:** the worst ensemble trade at $5k was META −27.4% (Feb 2022 earnings gap
+through a 9% stop). The live filter only skips entries 3 days before a report. Should
+the bot also avoid holding through reports? `research/earnings_exit_experiment.py`,
+3 variants fixed in advance, ensemble at $5,000, 2016–2021 simple-engine candidates and
+2022–2026 production candidates. Baseline keeps its own engine exits. Report dates from
+cache/earnings.db (checked: exactly 4 per ticker per year).
+
+| Variant | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 | 2022–26 | 2016–26 | Max DD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **E0 current** | +53.6 | +36.5 | +15.6 | +36.0 | +41.1 | +32.5 | −35.0 | +90.5 | +59.9 | +31.6 | +34.2 | **+250%** | **+2,054%** | 40.6% |
+| E1 skip entry if report in hold window | +42.3 | +39.1 | +9.5 | +25.6 | +34.5 | +24.1 | **−27.2** | +70.1 | +54.6 | +16.2 | +35.8 | +202% | +1,272% | **33.2%** |
+| E2 sell at last close before report | +49.9 | +39.7 | +14.5 | +33.1 | +46.6 | +27.6 | −27.3 | +63.9 | +47.7 | +18.1 | +30.7 | +172% | +1,522% | 33.5% |
+| E3 both | +40.0 | +39.1 | +9.5 | +24.7 | +34.6 | +23.1 | −27.2 | +66.7 | +54.6 | +14.3 | +31.6 | +182% | +1,142% | 33.2% |
+
+| Variant | Trades | Trades ≤ −10% | Worst trade | Sold pre-report | t (hurdle 2.12) |
+|---|---:|---:|---:|---:|---:|
+| E0 | 1,859 | 32 | −27.4% | 0 | 6.84 |
+| E1 | 1,712 | 26 | −13.7% | 0 | 6.37 |
+| E2 | 1,879 | 26 | −13.7% | 84 | 6.48 |
+| E3 | 1,714 | 24 | −13.7% | 13 | 6.11 |
+
+**Verdict: works as insurance, not as an improvement — NOT ADOPTED (operator chose max
+return, 2026-09-26).** Avoiding reports halves the worst trade (−27.4% → −13.7%), cuts
+2022 from −35% to −27% and max drawdown from 40.6% to ~33%. It costs return in most
+years: 2022–26 falls from +250% to +172–202%. On average, holding these names through
+earnings paid. E1 (skip the entry) is the cheapest version if the tail ever matters more
+than return; it is a one-parameter change in how `earnings_avoid_days` is applied.
