@@ -126,6 +126,10 @@ Worst trades below the stop level are gaps through the stop (filled at the open)
 
 ## Verdict
 
+> **Outcome (same day):** the production-engine check came back a wash (+253.6% vs
+> +249.6%, 2022–26 at $5k). The 9% stop stays. See
+> [stop-width-production-2022-2026.md](stop-width-production-2022-2026.md).
+
 **Promising, not adopted yet.** The consistent result is that the current stop is too
 tight, not that the stop should go. Recommended next step before any live change:
 re-run **ensemble with `ensemble_stop_loss_pct = 0.20`** (now 0.09) on the

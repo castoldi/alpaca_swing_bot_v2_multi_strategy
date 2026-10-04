@@ -17,6 +17,10 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Stop width on the production engine** (`research/stop_width_production.py`): ensemble
+  with a 20% stop vs the live 9%, 2022–2026 at $5k. +253.6% vs +249.6%, max DD 39.3% vs
+  40.6%, avg loss −15.4% vs −8.6%. A wash; the 9% stop stays. Write-up:
+  docs/stop-width-production-2022-2026.md.
 - **Disaster-stop experiment** (`research/no_stop_experiment.py --set disaster`): stops at
   −20/−25/−30%, a 6-month max hold, and −25% + 6 months, for all six bracket strategies,
   2016–2026 and 2004–2015. Every variant beat the current stop on return (60/60), but 2022

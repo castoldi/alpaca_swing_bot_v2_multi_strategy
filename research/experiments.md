@@ -393,3 +393,19 @@ cumulative). Full write-up: [docs/disaster-stop-2004-2026.md](../docs/disaster-s
 total return, and holds drop from years to under ~10 months. 2022 got worse for every
 strategy, and no stop width is reliably best. H6 had −54%/−70% trades. Next: ensemble
 with `ensemble_stop_loss_pct = 0.20` on the production engine, 2022–26 at $5k.
+
+
+## Experiment: Ensemble 20% stop on the production engine (2026-10-03)
+
+`research/stop_width_production.py`: the one pre-chosen candidate from the disaster-stop
+experiment, `ensemble_stop_loss_pct = 0.20`, on the production engine (capital-size
+harness, $5k, annual reset). Baseline reproduces +249.6%. Write-up:
+[docs/stop-width-production-2022-2026.md](../docs/stop-width-production-2022-2026.md).
+
+| Ensemble @ $5k | 2022 | 2023 | 2024 | 2025 | 2026 | 5y comp | Max DD | Avg loss | Worst |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 9% (live) | −35.0 | +90.5 | +59.9 | +31.6 | +34.2 | +249.6% | 40.6% | −8.6% | −27.4% |
+| 20% | −33.4 | +106.6 | +50.4 | +21.5 | +40.6 | +253.6% | 39.3% | −15.4% | −31.2% |
+
+**Verdict: REJECTED, keep 9%.** A wash on the real engine; the legacy-engine gain came
+from the continuous book and 4h fills. Closes the no-stop / stop-width line (55 trials).

@@ -252,13 +252,14 @@ Health model: bot = pid alive AND heartbeat fresh within ~2 intervals; dashboard
   never recover. Judge it on mark-to-market equity only: open losers never enter
   trade stats, so 99% win rates and huge t-statistics are artifacts. Run it one
   strategy at a time (`--strategies X`), since all six at once ran out of memory.
-- **Stop width: the current 7–12% stops are too tight on this universe, but don't
-  remove them.** [docs/disaster-stop-2004-2026.md](docs/disaster-stop-2004-2026.md)
-  (2026-10-03, `--set disaster`): −20/−25/−30% stops beat the current stop on return in
-  60/60 strategy-period cells, but 2022 got worse for every strategy. No width is
-  reliably best, and a time limit without a stop gave −54%/−70% trades. Open next step:
-  `ensemble_stop_loss_pct = 0.20` on the production engine (2022–26, $5k) before any
-  live change. 54 trials already spent on exit rules, so count them.
+- **Stop width is settled: keep the 9% ensemble stop.** No stop
+  ([docs/no-stop-2016-2026.md](docs/no-stop-2016-2026.md)) and −20/−25/−30% stops
+  ([docs/disaster-stop-2004-2026.md](docs/disaster-stop-2004-2026.md)) only looked better
+  on the legacy 4h continuous-book engine. On the production engine, a 20% ensemble stop
+  was a wash: +253.6% vs +249.6% over 2022–26 at $5k, with the average loss nearly
+  doubled ([docs/stop-width-production-2022-2026.md](docs/stop-width-production-2022-2026.md)).
+  Legacy-engine wins must be re-checked on the production engine before any live
+  change. 55 trials have been spent on exit rules.
 - **IBKR import holds the cache write lock.** `scripts/import_ibkr_history.py` keeps
   `cache/market_data.db` locked for ~13 min per 4h series, and backtests fail with
   "database is locked" until it finishes. A 4h series import is longer than a 10-min
