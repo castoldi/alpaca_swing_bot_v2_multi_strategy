@@ -1,0 +1,28 @@
+  regime 2016: 1337 candidates
+  regime 2017: 1561 candidates
+  regime 2018: 1528 candidates
+  regime 2019: 1496 candidates
+  regime 2020: 1525 candidates
+  regime 2021: 1428 candidates
+  regime 2022: 1243 candidates
+  regime 2023: 1671 candidates
+  regime 2024: 1886 candidates
+  regime 2025: 1865 candidates
+  regime 2026: 1153 candidates
+  regime / S0 current (stop): done
+  regime / N1 no stop + time stop: done
+  regime / N2 no stop, TP only: done
+
+Continuous book 2016-01-01 -> 2026-09-09, $5,000, mark-to-market yearly returns
+portfolio                                      2016   2017   2018   2019   2020   2021   2022   2023   2024   2025   2026     total   CAGR  maxDD     end $
+regime | S0 current (stop)                     +61%   +28%   +21%   +27%   +40%   +22%   -40%   +85%   +27%   +14%   +29%    +1017% +25.3%   -50%    55,834
+regime | N1 no stop + time stop                +79%   +33%    +9%   +46%   +52%   +32%   -40%   +94%   +40%   +27%   +43%    +2125% +33.7%   -46%   111,249
+regime | N2 no stop, TP only                   +79%   +34%    +9%   +46%   +54%   +30%   -38%   +86%   +48%   +17%   +44%    +2094% +33.5%   -44%   109,718
+B&H QQQ                                         +9%   +33%    -0%   +39%   +49%   +27%   -32%   +55%   +26%   +21%   +17%     +607% +20.1%   -35%    35,364
+B&H SPY                                        +13%   +22%    -5%   +31%   +18%   +29%   -18%   +26%   +25%   +18%   +12%     +346% +15.0%   -34%    22,279
+B&H basket (NVDA/AMZN/META/AMD)               +141%   +38%    +9%   +99%   +98%   +70%   -53%  +171%   +83%   +45%   +48%   +12001% +56.7%   -65%   605,059
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+regime | S0 current (stop)                     2241   82%  -15.5%      4     83   5.46   2.63  [('NVDA', '2026-09-04', -2.8), ('AMD', '2026-09-08', 2.2), ('META', '2026-09-09', 0.8), ('ARM', '2026-09-09', -0.1), ('AMZN', '2026-09-09', 0.0)]
+regime | N1 no stop + time stop                 694   98%  -39.7%      5    868  22.83   2.64  [('META', '2025-08-12', -17.4), ('NVDA', '2026-05-14', -4.7), ('ARM', '2026-06-18', -39.7), ('AMD', '2026-06-30', -10.3), ('AMZN', '2026-08-03', -11.5)]
+regime | N2 no stop, TP only                    433   99%  -37.8%      6   1009  27.56   2.64  [('META', '2025-07-31', -16.1), ('NVDA', '2026-05-14', -2.6), ('ARM', '2026-06-02', -37.8), ('AMD', '2026-06-30', -9.9), ('AMZN', '2026-08-03', -11.5)]

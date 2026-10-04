@@ -79,7 +79,7 @@ with `MarketDataCache().status()` or the `coverage` table.
 | `iex` | Alpaca IEX (live default, `MARKET_DATA_FEED`) | 2020-07+ | 4h, 1d | auto, read-through |
 | `sip` | Alpaca SIP | 2016-01+ | 4h, 1d | auto, read-through |
 | `yfinance` | Yahoo | 2007–2015 | 1d only | auto |
-| **`ibkr`** | **IB Gateway via `ibkr_trading_bot`** | **1999+** (META 2012, TQQQ 2010, ARM 2023) | 4h, 1d | **import-only** |
+| **`ibkr`** | **IB Gateway via `ibkr_trading_bot`** | 1d **1999+**; 4h only from **2004** (IBKR hourly limit; AMD 4h/1d from 2015) | 4h, 1d | **import-only** |
 
 **Need more backtest history (pre-2016, the 2000/2008 bears, new symbols)? Use
 the IBKR connection.** The sibling project `C:\Data\ai_projects\ibkr_trading_bot`
@@ -243,6 +243,19 @@ Health model: bot = pid alive AND heartbeat fresh within ~2 intervals; dashboard
   2005–2026; only 2022 won. Bear-only shorting also failed (docs/bear-market-playbook.md §4).
   For bear protection, pair `ensemble` with `tqqq_momentum`. Run that script with
   `ensemble` as an argument: all six strategies take >10 min and can hit low memory.
+- **No stop-loss (TP only + re-entry) is studied — read before re-proposing.**
+  [docs/no-stop-2016-2026.md](docs/no-stop-2016-2026.md) and
+  [docs/no-stop-bear-stress-test-2004-2015.md](docs/no-stop-bear-stress-test-2004-2015.md)
+  (2026-10-03, `research/no_stop_experiment.py`). It raised returns for all six bracket
+  strategies in 2016–2026 and 2004–2015, but only because every held name recovered
+  (one NVDA entry was held ~8 years). Not adopted. Untested: 2000–2002, and names that
+  never recover. Judge it on mark-to-market equity only: open losers never enter
+  trade stats, so 99% win rates and huge t-statistics are artifacts. Run it one
+  strategy at a time (`--strategies X`), since all six at once ran out of memory.
+- **IBKR import holds the cache write lock.** `scripts/import_ibkr_history.py` keeps
+  `cache/market_data.db` locked for ~13 min per 4h series, and backtests fail with
+  "database is locked" until it finishes. A 4h series import is longer than a 10-min
+  foreground shell, so start it with hidden `pythonw.exe`.
 
 ## Keep-alive watchdog
 
@@ -282,6 +295,10 @@ pwsh scripts\setup_keepalive_task.ps1 -Unregister
 3. Compare in dashboard or DB; both years must improve — **necessary, not sufficient**
 4. Price the result against the search that found it (see below)
 5. Log via `db_mod.log_experiment(..., evidence=report.as_dict())`
+6. Write each analysis, and each follow-up, as its **own** `docs/<topic>.md` (question,
+   method, tables, findings, verdict). Add a short entry in `research/experiments.md`
+   and a pointer in this file, then commit and push. The owner asked for this so results
+   are never lost in chat.
 
 ### ⚠️ RULE: count your trials before keeping a change
 

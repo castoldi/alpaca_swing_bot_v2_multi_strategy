@@ -1,0 +1,28 @@
+  breakout 2016: 60 candidates
+  breakout 2017: 76 candidates
+  breakout 2018: 70 candidates
+  breakout 2019: 65 candidates
+  breakout 2020: 69 candidates
+  breakout 2021: 57 candidates
+  breakout 2022: 57 candidates
+  breakout 2023: 73 candidates
+  breakout 2024: 71 candidates
+  breakout 2025: 74 candidates
+  breakout 2026: 46 candidates
+  breakout / S0 current (stop): done
+  breakout / N1 no stop + time stop: done
+  breakout / N2 no stop, TP only: done
+
+Continuous book 2016-01-01 -> 2026-09-09, $5,000, mark-to-market yearly returns
+portfolio                                      2016   2017   2018   2019   2020   2021   2022   2023   2024   2025   2026     total   CAGR  maxDD     end $
+breakout | S0 current (stop)                   +16%    +8%    +4%   +13%   +13%   +18%   -10%   +28%    -1%   +20%    -1%     +162%  +9.5%   -12%    13,121
+breakout | N1 no stop + time stop              +22%   +21%    -3%   +39%   +32%   +26%   -40%   +78%   +12%   +26%   +13%     +458% +17.5%   -44%    27,901
+breakout | N2 no stop, TP only                 +38%   +20%   +34%   +39%   +39%   +31%   -40%   +81%   +21%   +20%   +28%    +1031% +25.5%   -44%    56,573
+B&H QQQ                                         +9%   +33%    -0%   +39%   +49%   +27%   -32%   +55%   +26%   +21%   +17%     +607% +20.1%   -35%    35,364
+B&H SPY                                        +13%   +22%    -5%   +31%   +18%   +29%   -18%   +26%   +25%   +18%   +12%     +346% +15.0%   -34%    22,279
+B&H basket (NVDA/AMZN/META/AMD)               +141%   +38%    +9%   +99%   +98%   +70%   -53%  +171%   +83%   +45%   +48%   +12001% +56.7%   -65%   605,059
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+breakout | S0 current (stop)                    498   75%  -10.2%      7     44   4.17   2.64  [('NVDA', '2026-08-27', -1.9)]
+breakout | N1 no stop + time stop               299   98%  -40.5%      9    868  12.85   2.65  [('META', '2025-08-12', -17.4), ('NVDA', '2026-05-14', -5.0), ('ARM', '2026-06-18', -40.5), ('AMD', '2026-06-30', -10.3)]
+breakout | N2 no stop, TP only                  231   98%  -40.5%     14    950  20.84   2.65  [('META', '2025-07-31', -16.4), ('NVDA', '2026-05-14', -5.0), ('ARM', '2026-06-18', -40.5), ('AMD', '2026-06-30', -10.3)]

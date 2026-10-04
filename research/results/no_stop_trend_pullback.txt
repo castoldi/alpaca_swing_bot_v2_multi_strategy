@@ -1,0 +1,28 @@
+  trend_pullback 2016: 718 candidates
+  trend_pullback 2017: 818 candidates
+  trend_pullback 2018: 749 candidates
+  trend_pullback 2019: 846 candidates
+  trend_pullback 2020: 941 candidates
+  trend_pullback 2021: 750 candidates
+  trend_pullback 2022: 573 candidates
+  trend_pullback 2023: 1029 candidates
+  trend_pullback 2024: 1021 candidates
+  trend_pullback 2025: 987 candidates
+  trend_pullback 2026: 605 candidates
+  trend_pullback / S0 current (stop): done
+  trend_pullback / N1 no stop + time stop: done
+  trend_pullback / N2 no stop, TP only: done
+
+Continuous book 2016-01-01 -> 2026-09-09, $5,000, mark-to-market yearly returns
+portfolio                                      2016   2017   2018   2019   2020   2021   2022   2023   2024   2025   2026     total   CAGR  maxDD     end $
+trend_pullback | S0 current (stop)             +53%   +21%    -5%   +33%   +44%   +18%   -22%   +72%   +10%   +20%    +5%     +640% +20.6%   -38%    37,020
+trend_pullback | N1 no stop + time stop        +69%   +31%    -4%   +49%   +62%   +30%   -41%   +97%   +29%   +47%   +35%    +1895% +32.3%   -47%    99,754
+trend_pullback | N2 no stop, TP only           +69%   +35%    -2%   +49%   +64%   +31%   -39%   +92%   +33%   +24%   +39%    +1859% +32.1%   -45%    97,944
+B&H QQQ                                         +9%   +33%    -0%   +39%   +49%   +27%   -32%   +55%   +26%   +21%   +17%     +607% +20.1%   -35%    35,364
+B&H SPY                                        +13%   +22%    -5%   +31%   +18%   +29%   -18%   +26%   +25%   +18%   +12%     +346% +15.0%   -34%    22,279
+B&H basket (NVDA/AMZN/META/AMD)               +141%   +38%    +9%   +99%   +98%   +70%   -53%  +171%   +83%   +45%   +48%   +12001% +56.7%   -65%   605,059
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+trend_pullback | S0 current (stop)             1518   83%  -12.5%      5     82   5.66   2.63  [('AMZN', '2026-08-28', -4.8), ('NVDA', '2026-09-04', -2.8), ('AMD', '2026-09-08', 2.2), ('ARM', '2026-09-08', -0.4)]
+trend_pullback | N1 no stop + time stop         669   99%  -35.2%      6    864  22.91   2.64  [('META', '2025-08-12', -17.4), ('ARM', '2026-06-22', -35.2), ('AMD', '2026-06-30', -10.3), ('AMZN', '2026-08-12', -7.5), ('NVDA', '2026-09-04', -2.8)]
+trend_pullback | N2 no stop, TP only            404   99%  -35.2%      6   1030  27.46   2.64  [('META', '2025-07-31', -16.1), ('ARM', '2026-06-22', -35.2), ('AMD', '2026-06-30', -9.9), ('AMZN', '2026-08-03', -11.5)]

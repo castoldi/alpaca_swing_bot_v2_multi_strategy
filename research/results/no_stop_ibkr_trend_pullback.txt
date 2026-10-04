@@ -1,0 +1,31 @@
+  META: no ibkr 4h history (The 'ibkr' cache partition is import-only and does not cover this range: run scripts/import_ibkr_history.py)
+  ARM: no ibkr 4h history (The 'ibkr' cache partition is import-only and does not cover this range: run scripts/import_ibkr_history.py)
+  trend_pullback 2004: 107 candidates
+  trend_pullback 2005: 125 candidates
+  trend_pullback 2006: 142 candidates
+  trend_pullback 2007: 218 candidates
+  trend_pullback 2008: 209 candidates
+  trend_pullback 2009: 228 candidates
+  trend_pullback 2010: 202 candidates
+  trend_pullback 2011: 191 candidates
+  trend_pullback 2012: 199 candidates
+  trend_pullback 2013: 235 candidates
+  trend_pullback 2014: 185 candidates
+  trend_pullback 2015: 398 candidates
+  trend_pullback / S0 current (stop): done
+  trend_pullback / N1 no stop + time stop: done
+  trend_pullback / N2 no stop, TP only: done
+
+Continuous book 2004-07-01 -> 2015-12-30, $5,000, mark-to-market yearly returns
+portfolio                                      2004   2005   2006   2007   2008   2009   2010   2011   2012   2013   2014   2015     total   CAGR  maxDD     end $
+trend_pullback | S0 current (stop)              +4%    +2%   +13%   +12%    +1%   +33%    -0%    -7%    -1%    +5%    -0%   +21%     +108%  +6.6%   -13%     9,418
+trend_pullback | N1 no stop + time stop         -1%   +11%    +3%   +29%   -15%   +31%    +3%    -1%    +8%   +10%    -0%   +23%     +144%  +8.1%   -27%    12,262
+trend_pullback | N2 no stop, TP only            -1%   +15%    +7%   +23%   -23%   +27%    +5%    +3%    +8%   +11%    +1%   +22%     +135%  +7.7%   -29%    12,160
+B&H QQQ                                         +8%    +2%    +7%   +19%   -42%   +55%   +20%    +3%   +18%   +37%   +19%   +11%     +232% +11.0%   -53%    16,610
+B&H SPY                                         +7%    +3%   +15%    +5%   -37%   +26%   +15%    +2%   +16%   +32%   +13%    +2%     +121%  +7.2%   -55%    11,071
+B&H basket (NVDA/AMZN)                          +0%   +36%   +62%   +53%   -68%  +148%    +7%    -5%   +23%   +55%    -7%  +105%     +872% +21.9%   -80%    48,590
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+trend_pullback | S0 current (stop)              609   69%  -16.0%      6     76   2.55   2.64  [('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+trend_pullback | N1 no stop + time stop         222   79%   -7.5%      6   1377  14.81   2.65  [('AMD', '2015-03-02', -7.5), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+trend_pullback | N2 no stop, TP only            106   97%   -2.3%     12   2965  24.63   2.68  [('AMD', '2015-02-09', -2.3), ('NVDA', '2015-12-08', 0.0), ('AMZN', '2015-12-29', -0.9)]

@@ -1,0 +1,31 @@
+  META: no ibkr 4h history (The 'ibkr' cache partition is import-only and does not cover this range: run scripts/import_ibkr_history.py)
+  ARM: no ibkr 4h history (The 'ibkr' cache partition is import-only and does not cover this range: run scripts/import_ibkr_history.py)
+  breakout 2004: 7 candidates
+  breakout 2005: 11 candidates
+  breakout 2006: 13 candidates
+  breakout 2007: 23 candidates
+  breakout 2008: 13 candidates
+  breakout 2009: 25 candidates
+  breakout 2010: 17 candidates
+  breakout 2011: 22 candidates
+  breakout 2012: 16 candidates
+  breakout 2013: 18 candidates
+  breakout 2014: 13 candidates
+  breakout 2015: 17 candidates
+  breakout / S0 current (stop): done
+  breakout / N1 no stop + time stop: done
+  breakout / N2 no stop, TP only: done
+
+Continuous book 2004-07-01 -> 2015-12-30, $5,000, mark-to-market yearly returns
+portfolio                                      2004   2005   2006   2007   2008   2009   2010   2011   2012   2013   2014   2015     total   CAGR  maxDD     end $
+breakout | S0 current (stop)                    +1%    +1%    -4%    +2%    -9%    +0%    -3%    +4%    +1%    +2%    +2%    +9%       +6%  +0.5%   -18%     5,405
+breakout | N1 no stop + time stop               +1%    +6%    +3%   +11%   -12%   +20%    +1%   +10%    +9%    +5%    -3%   +11%      +76%  +5.1%   -22%     8,959
+breakout | N2 no stop, TP only                  +1%   +10%    +7%   +15%   -20%   +29%    +5%    -1%    +6%   +11%    +7%   +16%     +118%  +7.0%   -26%    11,176
+B&H QQQ                                         +8%    +2%    +7%   +19%   -42%   +55%   +20%    +3%   +18%   +37%   +19%   +11%     +232% +11.0%   -53%    16,610
+B&H SPY                                         +7%    +3%   +15%    +5%   -37%   +26%   +15%    +2%   +16%   +32%   +13%    +2%     +121%  +7.2%   -55%    11,071
+B&H basket (NVDA/AMZN)                          +0%   +36%   +62%   +53%   -68%  +148%    +7%    -5%   +23%   +55%    -7%  +105%     +872% +21.9%   -80%    48,590
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+breakout | S0 current (stop)                    144   66%  -11.8%      8     24   0.63   2.67  []
+breakout | N1 no stop + time stop               101   85%   +0.0%      9    969  10.36   2.68  []
+breakout | N2 no stop, TP only                   65  100%   +5.0%     14   2448  28.64   2.71  []

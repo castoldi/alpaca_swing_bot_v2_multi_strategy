@@ -17,6 +17,15 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **No stop-loss experiment** (`research/no_stop_experiment.py`): take profit + re-entry,
+  stop removed, one continuous $5k book with mark-to-market drawdowns, all six bracket
+  strategies vs QQQ/SPY/universe buy-and-hold. 2016–2026: ensemble +2,244% vs +1,304% with
+  stops (max DD −44% vs −40%); 2004–2015 IBKR stress test incl. 2008: +143–170% vs +64%.
+  Not adopted: every held name recovered (one NVDA entry held ~8 years), 2000–2002 is
+  untested. Write-ups: docs/no-stop-2016-2026.md, docs/no-stop-bear-stress-test-2004-2015.md.
+  `--feed ibkr --start --end` runs it on IBKR history; raw output in research/results/.
+- **IBKR history**: AMZN 4h (2004+), AMD 4h/1d (2015+), QQQ/SPY 1d (1999+) imported.
+  IBKR hourly bars (the 4h source) stop at 2004; CLAUDE.md coverage table corrected.
 - **Earnings-hold experiment** (`research/earnings_exit_experiment.py`) — skip entries with a
   report inside the hold window, or sell before the report, at $5k 2016–2026. Halves the
   worst trade (−27.4% → −13.7%) and cuts 2022 from −35% to −27%, but 2022–26 return falls

@@ -1,0 +1,28 @@
+  mean_reversion 2016: 87 candidates
+  mean_reversion 2017: 82 candidates
+  mean_reversion 2018: 94 candidates
+  mean_reversion 2019: 121 candidates
+  mean_reversion 2020: 120 candidates
+  mean_reversion 2021: 114 candidates
+  mean_reversion 2022: 78 candidates
+  mean_reversion 2023: 151 candidates
+  mean_reversion 2024: 124 candidates
+  mean_reversion 2025: 120 candidates
+  mean_reversion 2026: 79 candidates
+  mean_reversion / S0 current (stop): done
+  mean_reversion / N1 no stop + time stop: done
+  mean_reversion / N2 no stop, TP only: done
+
+Continuous book 2016-01-01 -> 2026-09-09, $5,000, mark-to-market yearly returns
+portfolio                                      2016   2017   2018   2019   2020   2021   2022   2023   2024   2025   2026     total   CAGR  maxDD     end $
+mean_reversion | S0 current (stop)              -3%    +3%    -3%   +12%    +9%    -2%    -9%   +16%    +2%    +1%    -8%      +17%  +1.5%   -13%     5,861
+mean_reversion | N1 no stop + time stop        +11%   +10%   -13%   +34%   +23%    +8%   -32%   +70%    +5%   +32%    +4%     +215% +11.3%   -35%    15,746
+mean_reversion | N2 no stop, TP only           +12%   +20%   -11%   +39%   +30%    +9%   -38%   +81%   +10%   +21%   +15%     +311% +14.2%   -43%    20,554
+B&H QQQ                                         +9%   +33%    -0%   +39%   +49%   +27%   -32%   +55%   +26%   +21%   +17%     +607% +20.1%   -35%    35,364
+B&H SPY                                        +13%   +22%    -5%   +31%   +18%   +29%   -18%   +26%   +25%   +18%   +12%     +346% +15.0%   -34%    22,279
+B&H basket (NVDA/AMZN/META/AMD)               +141%   +38%    +9%   +99%   +98%   +70%   -53%  +171%   +83%   +45%   +48%   +12001% +56.7%   -65%   605,059
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+mean_reversion | S0 current (stop)              504   79%   -8.0%      2     28   1.02   2.64  [('AMZN', '2026-08-13', -5.6)]
+mean_reversion | N1 no stop + time stop         361   99%  -30.7%      3    857  13.04   2.64  [('META', '2025-09-23', -15.0), ('ARM', '2026-06-24', -30.7), ('AMZN', '2026-08-13', -5.6)]
+mean_reversion | N2 no stop, TP only            291   99%  -30.7%      4    859  16.80   2.65  [('META', '2025-09-23', -15.0), ('ARM', '2026-06-24', -30.7), ('AMZN', '2026-08-13', -5.6)]

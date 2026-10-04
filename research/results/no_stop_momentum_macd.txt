@@ -1,0 +1,28 @@
+  momentum_macd 2016: 55 candidates
+  momentum_macd 2017: 60 candidates
+  momentum_macd 2018: 43 candidates
+  momentum_macd 2019: 74 candidates
+  momentum_macd 2020: 60 candidates
+  momentum_macd 2021: 61 candidates
+  momentum_macd 2022: 48 candidates
+  momentum_macd 2023: 83 candidates
+  momentum_macd 2024: 82 candidates
+  momentum_macd 2025: 51 candidates
+  momentum_macd 2026: 39 candidates
+  momentum_macd / S0 current (stop): done
+  momentum_macd / N1 no stop + time stop: done
+  momentum_macd / N2 no stop, TP only: done
+
+Continuous book 2016-01-01 -> 2026-09-09, $5,000, mark-to-market yearly returns
+portfolio                                      2016   2017   2018   2019   2020   2021   2022   2023   2024   2025   2026     total   CAGR  maxDD     end $
+momentum_macd | S0 current (stop)              +14%   +10%    +2%   +17%   +10%    +9%   -11%   +20%   +18%    +5%    +3%     +144%  +8.7%   -20%    12,206
+momentum_macd | N1 no stop + time stop         +22%   +18%    +1%   +34%   +20%   +19%   -35%   +83%   +21%   +22%   +19%     +477% +17.8%   -41%    28,839
+momentum_macd | N2 no stop, TP only            +33%   +21%    +9%   +37%   +30%   +18%   -42%   +87%   +29%   +27%   +21%     +687% +21.3%   -48%    39,363
+B&H QQQ                                         +9%   +33%    -0%   +39%   +49%   +27%   -32%   +55%   +26%   +21%   +17%     +607% +20.1%   -35%    35,364
+B&H SPY                                        +13%   +22%    -5%   +31%   +18%   +29%   -18%   +26%   +25%   +18%   +12%     +346% +15.0%   -34%    22,279
+B&H basket (NVDA/AMZN/META/AMD)               +141%   +38%    +9%   +99%   +98%   +70%   -53%  +171%   +83%   +45%   +48%   +12001% +56.7%   -65%   605,059
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+momentum_macd | S0 current (stop)               490   81%  -11.5%      7     60   4.26   2.64  [('AMZN', '2026-08-28', -4.8), ('NVDA', '2026-09-02', -1.7)]
+momentum_macd | N1 no stop + time stop          338   98%  -17.4%      7    785  19.49   2.65  [('META', '2025-08-12', -17.4), ('AMZN', '2026-08-28', -4.8), ('NVDA', '2026-09-02', -1.7)]
+momentum_macd | N2 no stop, TP only             233   98%  -16.1%     12    826  32.33   2.65  [('META', '2025-07-31', -16.1), ('AMD', '2026-07-09', -6.4), ('AMZN', '2026-08-28', -4.8), ('NVDA', '2026-09-02', -1.7)]

@@ -348,3 +348,27 @@ return, 2026-09-26).** Avoiding reports halves the worst trade (−27.4% → −
 years: 2022–26 falls from +250% to +172–202%. On average, holding these names through
 earnings paid. E1 (skip the entry) is the cheapest version if the tail ever matters more
 than return; it is a one-parameter change in how `earnings_avoid_days` is applied.
+
+
+## Experiment: No stop-loss — take profit + re-entry (2026-10-03)
+
+**Question:** never sell at a loss; keep the take-profit, drop the stop, re-enter on
+the next signal. `research/no_stop_experiment.py`, 3 variants fixed in advance × 6
+bracket strategies, one continuous $5,000 book (no January reset), mark-to-market.
+Full write-ups: [docs/no-stop-2016-2026.md](../docs/no-stop-2016-2026.md) and
+[docs/no-stop-bear-stress-test-2004-2015.md](../docs/no-stop-bear-stress-test-2004-2015.md).
+
+| ensemble @ $5k | 2016–2026 | Max DD | 2004–2015 (IBKR, NVDA+AMZN) | Max DD |
+|---|---:|---:|---:|---:|
+| S0 current (stop) | +1,304% | −40% | +64% | −28% |
+| N1 no stop + time stop | +2,174% | −45% | +170% | −28% |
+| N2 no stop, TP only | +2,244% | −44% | +143% | −29% |
+| B&H QQQ | +607% | −35% | +232% | −53% |
+| B&H universe basket | +12,001% | −65% | +872% | −80% |
+
+**Verdict: NOT ADOPTED (recorded for the decision).** No-stop raised returns for all six
+strategies in both periods, but every held name in both tests eventually recovered (an
+NVDA entry near the 2007 peak was held ~8 years). Losses become stuck slots: 2016–26
+drawdowns rose for 5 of 6 strategies, and four of the five ensemble slots are underwater
+today (ARM −40%). 2000–2002 is untested (IBKR 4h starts 2004). The 99% win rates and
+t = 10–32 are artifacts: open losers never enter the trade statistics. 24 trials so far.
