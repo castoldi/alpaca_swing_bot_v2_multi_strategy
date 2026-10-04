@@ -1,0 +1,31 @@
+  META: no ibkr 4h history (The 'ibkr' cache partition is import-only and does not cover this range: run scripts/import_ibkr_history.py)
+  ARM: no ibkr 4h history (The 'ibkr' cache partition is import-only and does not cover this range: run scripts/import_ibkr_history.py)
+  regime / S0 current (stop): done
+  regime / N1 no stop + time stop: done
+  regime / D20 stop -20%: done
+  regime / D25 stop -25%: done
+  regime / D30 stop -30%: done
+  regime / H6 no stop, 6-month max hold: done
+  regime / D25+H6 -25% + 6 months: done
+
+Continuous book 2004-07-01 -> 2015-12-30, $5,000, mark-to-market yearly returns
+portfolio                                      2004   2005   2006   2007   2008   2009   2010   2011   2012   2013   2014   2015     total   CAGR  maxDD     end $
+regime | S0 current (stop)                     -12%   +10%   +16%   +27%   -15%   +20%    -2%    -7%    +2%   +11%    +1%   +29%      +95%  +6.0%   -22%     9,373
+regime | N1 no stop + time stop                 -1%   +14%   +11%   +25%   -23%   +27%    +5%    -1%    +7%   +11%    -2%   +29%     +139%  +7.9%   -29%    12,124
+regime | D20 stop -20%                          +0%   +14%    +9%   +15%   -20%   +32%    -2%    -3%    +4%   +15%    +6%   +36%     +153%  +8.4%   -30%    12,629
+regime | D25 stop -25%                          -2%   +11%    +9%   +16%   -16%   +30%    +4%    +5%    +3%   +15%    +5%   +33%     +172%  +9.1%   -25%    13,444
+regime | D30 stop -30%                          +9%    +9%   +11%    +9%   -12%   +30%    -2%    +0%    +4%   +14%    +3%   +38%     +172%  +9.1%   -23%    13,800
+regime | H6 no stop, 6-month max hold           -2%   +15%   +11%   +23%   -26%   +40%    +4%    -3%    +3%   +13%    +4%   +40%     +168%  +9.0%   -34%    13,588
+regime | D25+H6 -25% + 6 months                 -2%   +11%    +9%   +16%   -16%   +30%    +4%    +5%    +3%   +15%    +5%   +30%     +165%  +8.9%   -25%    13,111
+B&H QQQ                                         +8%    +2%    +7%   +19%   -42%   +55%   +20%    +3%   +18%   +37%   +19%   +11%     +232% +11.0%   -53%    16,610
+B&H SPY                                         +7%    +3%   +15%    +5%   -37%   +26%   +15%    +2%   +16%   +32%   +13%    +2%     +121%  +7.2%   -55%    11,071
+B&H basket (NVDA/AMZN)                          +0%   +36%   +62%   +53%   -68%  +148%    +7%    -5%   +23%   +55%    -7%  +105%     +872% +21.9%   -80%    48,590
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+regime | S0 current (stop)                      924   69%  -18.5%      6     93   2.03   3.11  [('AMD', '2015-12-24', 1.0), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+regime | N1 no stop + time stop                 211   82%  -10.8%      6   2922  14.05   3.15  [('AMD', '2015-02-05', -10.8), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+regime | D20 stop -20%                          696   75%  -22.6%      6    157   2.86   3.12  [('AMD', '2015-12-29', -1.7), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+regime | D25 stop -25%                          630   76%  -28.6%      6    196   3.02   3.12  [('AMD', '2015-12-29', -1.7), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+regime | D30 stop -30%                          587   77%  -31.8%      6    273   3.03   3.12  [('AMD', '2015-12-29', -1.7), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+regime | H6 no stop, 6-month max hold           449   77%  -70.5%      6    185   3.51   3.12  [('AMD', '2015-12-29', -1.7), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]
+regime | D25+H6 -25% + 6 months                 632   76%  -28.6%      6    179   2.93   3.12  [('AMD', '2015-12-29', -1.7), ('AMZN', '2015-12-29', -0.9), ('NVDA', '2015-12-30', -1.2)]

@@ -372,3 +372,24 @@ NVDA entry near the 2007 peak was held ~8 years). Losses become stuck slots: 201
 drawdowns rose for 5 of 6 strategies, and four of the five ensemble slots are underwater
 today (ARM −40%). 2000–2002 is untested (IBKR 4h starts 2004). The 99% win rates and
 t = 10–32 are artifacts: open losers never enter the trade statistics. 24 trials so far.
+
+
+## Experiment: Wide disaster stop instead of no stop (2026-10-03)
+
+Follow-up to the no-stop experiment. `research/no_stop_experiment.py --set disaster`:
+stops at −20/−25/−30%, a 6-month max hold without a stop, and −25% + 6 months; TP and
+the break-even time stop kept. 6 strategies × 2 periods, 5 new variants (54 trials
+cumulative). Full write-up: [docs/disaster-stop-2004-2026.md](../docs/disaster-stop-2004-2026.md).
+
+| ensemble @ $5k | 2016–26 | Max DD | 2022 | 2004–15 | Max DD | 2008 |
+|---|---:|---:|---:|---:|---:|---:|
+| S0 current (9%) | +1,304% | −40% | −28% | +64% | −28% | −23% |
+| D20 | +1,634% | −43% | −33% | +155% | −31% | −24% |
+| D25 | +2,183% | −47% | −40% | +126% | −30% | −21% |
+| D30 | +2,482% | −49% | −42% | +178% | −31% | −19% |
+| H6 (no stop, 6 mo) | +2,473% | −49% | −40% | +204% | −31% | −25% |
+
+**Verdict: PROMISING, NOT ADOPTED.** All 60 wide-stop cells beat the current stop on
+total return, and holds drop from years to under ~10 months. 2022 got worse for every
+strategy, and no stop width is reliably best. H6 had −54%/−70% trades. Next: ensemble
+with `ensemble_stop_loss_pct = 0.20` on the production engine, 2022–26 at $5k.

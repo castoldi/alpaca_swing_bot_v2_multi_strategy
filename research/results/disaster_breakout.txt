@@ -1,0 +1,29 @@
+  breakout / S0 current (stop): done
+  breakout / N1 no stop + time stop: done
+  breakout / D20 stop -20%: done
+  breakout / D25 stop -25%: done
+  breakout / D30 stop -30%: done
+  breakout / H6 no stop, 6-month max hold: done
+  breakout / D25+H6 -25% + 6 months: done
+
+Continuous book 2016-01-01 -> 2026-09-09, $5,000, mark-to-market yearly returns
+portfolio                                      2016   2017   2018   2019   2020   2021   2022   2023   2024   2025   2026     total   CAGR  maxDD     end $
+breakout | S0 current (stop)                   +16%    +8%    +4%   +13%   +13%   +18%   -10%   +28%    -1%   +20%    -1%     +162%  +9.5%   -12%    13,121
+breakout | N1 no stop + time stop              +22%   +21%    -3%   +39%   +32%   +26%   -40%   +78%   +12%   +26%   +13%     +458% +17.5%   -44%    27,901
+breakout | D20 stop -20%                       +22%   +17%   +10%   +21%   +25%   +26%   -30%   +46%    +9%   +12%   +12%     +312% +14.2%   -33%    20,606
+breakout | D25 stop -25%                       +22%   +16%    +5%   +24%   +24%   +26%   -35%   +46%    +9%   +14%   +13%     +280% +13.3%   -37%    18,984
+breakout | D30 stop -30%                       +22%   +21%    +0%   +24%   +22%   +26%   -33%   +46%    +7%    +9%   +10%     +249% +12.4%   -35%    17,441
+breakout | H6 no stop, 6-month max hold        +22%   +21%    -3%   +29%   +29%   +26%   -36%   +52%   +10%   +18%   +15%     +332% +14.7%   -42%    21,609
+breakout | D25+H6 -25% + 6 months              +22%   +16%    +5%   +24%   +23%   +26%   -35%   +46%    +9%   +14%   +13%     +276% +13.2%   -37%    18,778
+B&H QQQ                                         +9%   +33%    -0%   +39%   +49%   +27%   -32%   +55%   +26%   +21%   +17%     +607% +20.1%   -35%    35,364
+B&H SPY                                        +13%   +22%    -5%   +31%   +18%   +29%   -18%   +26%   +25%   +18%   +12%     +346% +15.0%   -34%    22,279
+B&H basket (NVDA/AMZN/META/AMD)               +141%   +38%    +9%   +99%   +98%   +70%   -53%  +171%   +83%   +45%   +48%   +12001% +56.7%   -65%   605,059
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+breakout | S0 current (stop)                    498   75%  -10.2%      7     44   4.17   3.12  [('NVDA', '2026-08-27', -1.9)]
+breakout | N1 no stop + time stop               299   98%  -40.5%      9    868  12.85   3.13  [('META', '2025-08-12', -17.4), ('NVDA', '2026-05-14', -5.0), ('ARM', '2026-06-18', -40.5), ('AMD', '2026-06-30', -10.3)]
+breakout | D20 stop -20%                        449   91%  -20.8%      9    136   5.18   3.12  [('NVDA', '2026-05-14', -5.0)]
+breakout | D25 stop -25%                        436   93%  -25.0%      9    203   4.64   3.12  [('NVDA', '2026-05-14', -5.0)]
+breakout | D30 stop -30%                        425   93%  -30.0%      9    225   4.18   3.13  [('NVDA', '2026-05-14', -5.0), ('AMD', '2026-06-30', -10.3)]
+breakout | H6 no stop, 6-month max hold         371   95%  -54.2%      9    186   5.43   3.13  [('NVDA', '2026-05-14', -5.0), ('ARM', '2026-06-18', -40.5), ('AMD', '2026-06-30', -10.3)]
+breakout | D25+H6 -25% + 6 months               437   92%  -25.0%      9    181   4.59   3.12  [('NVDA', '2026-05-14', -5.0)]

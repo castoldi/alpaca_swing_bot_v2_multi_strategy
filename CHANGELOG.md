@@ -17,6 +17,11 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Disaster-stop experiment** (`research/no_stop_experiment.py --set disaster`): stops at
+  −20/−25/−30%, a 6-month max hold, and −25% + 6 months, for all six bracket strategies,
+  2016–2026 and 2004–2015. Every variant beat the current stop on return (60/60), but 2022
+  got worse for all (ensemble −28% → −33% at D20). Not adopted; the next step is a 20%
+  ensemble stop on the production engine. Write-up: docs/disaster-stop-2004-2026.md.
 - **No stop-loss experiment** (`research/no_stop_experiment.py`): take profit + re-entry,
   stop removed, one continuous $5k book with mark-to-market drawdowns, all six bracket
   strategies vs QQQ/SPY/universe buy-and-hold. 2016–2026: ensemble +2,244% vs +1,304% with

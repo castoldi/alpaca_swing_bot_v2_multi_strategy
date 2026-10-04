@@ -31,7 +31,18 @@ listed 2012, so the basket is NVDA/AMZN/AMD until then):
 
   python research/no_stop_experiment.py --feed ibkr --start 2000-01-01 --end 2015-12-31
 
-Usage:  python research/no_stop_experiment.py [--strategies ensemble ...] [--capital 5000]
+Follow-up (--set disaster, 2026-10-03): the no-stop result came from names that
+always recovered, so cap the tail instead of removing the stop. Variants fixed
+before any result was seen (5 new x 6 strategies = 30 trials; 54 cumulative).
+All keep the TP and the current break-even time stop:
+
+  D20 / D25 / D30   wide disaster stop at -20% / -25% / -30% from the fill
+  H6                no stop, but sell at the close once 126 sessions (~6 months) have passed
+  D25+H6            -25% stop plus the 126-session limit
+
+S0 and N1 are re-run with the same loop as like-for-like references.
+
+Usage:  python research/no_stop_experiment.py [--set no_stop|disaster] [--strategies ensemble ...] [--capital 5000]
 """
 from __future__ import annotations
 
@@ -55,10 +66,23 @@ from config import PARAMS, TICKERS  # noqa: E402
 from market_cache import MarketDataCache  # noqa: E402
 from research.significance import evaluate  # noqa: E402
 from strategies import REGISTRY  # noqa: E402
+from backtest_execution import signal_availability  # noqa: E402
+from holding_period import holding_deadline, holding_sessions_limit  # noqa: E402
 from strategies.base import EntrySignal, ExitLeg, add_indicators, simulate_exit  # noqa: E402
 
 BRACKET = ["ensemble", "regime", "momentum_macd", "trend_pullback", "breakout", "mean_reversion"]
-VARIANTS = ["S0 current (stop)", "N1 no stop + time stop", "N2 no stop, TP only"]
+VARIANT_SETS = {
+    "no_stop": ["S0 current (stop)", "N1 no stop + time stop", "N2 no stop, TP only"],
+    "disaster": ["S0 current (stop)", "N1 no stop + time stop", "D20 stop -20%", "D25 stop -25%",
+                 "D30 stop -30%", "H6 no stop, 6-month max hold", "D25+H6 -25% + 6 months"],
+}
+# (stop: None = the strategy's own, 0 = none, else fraction below the fill; max hold sessions)
+SPECS = {
+    "S0 current (stop)": (None, None), "N1 no stop + time stop": (0, None),
+    "D20 stop -20%": (0.20, None), "D25 stop -25%": (0.25, None), "D30 stop -30%": (0.30, None),
+    "H6 no stop, 6-month max hold": (0, 126), "D25+H6 -25% + 6 months": (0.25, 126),
+}
+VARIANTS = VARIANT_SETS["no_stop"]
 TRIALS = 2 * len(BRACKET)
 START, END = pd.Timestamp("2016-01-01"), pd.Timestamp("2026-09-10")
 BASKET = ["NVDA", "AMZN", "META", "AMD"]
@@ -84,6 +108,30 @@ def legacy_candidates(name: str, frames: dict, cache_dir: Path, feed: str) -> li
         print(f"  {name} {year}: {len(found)} candidates", flush=True)
         out += found
     return out
+
+
+def resimulate_spec(c, data: pd.DataFrame, closes, variant: str) -> ExitLeg:
+    """simulate_exit's bar rules (gap stop at the open, stop before target, break-even
+    time stop at the bar's close time), plus an optional unconditional max hold."""
+    stop_spec, max_hold = SPECS[variant]
+    idx = data.index.get_loc(pd.Timestamp(c.entry_date))
+    entry, tp = c.entry_price, c.take_profit
+    sl = c.stop_loss if stop_spec is None else (-np.inf if stop_spec == 0 else entry * (1 - stop_spec))
+    deadline = holding_deadline(pd.Timestamp(c.entry_date), holding_sessions_limit(c.strategy, PARAMS))
+    hard = holding_deadline(pd.Timestamp(c.entry_date), max_hold) if max_hold else None
+    o, h, lo, cl = (data[k].to_numpy() for k in ("open", "high", "low", "close"))
+    for i in range(idx, len(data)):
+        if o[i] < sl:
+            return ExitLeg(data.index[i], float(o[i]), "gap_stop", i - idx, 1.0)
+        if lo[i] <= sl:
+            return ExitLeg(data.index[i], float(sl), "stop_loss", i - idx, 1.0)
+        if h[i] >= tp:
+            return ExitLeg(data.index[i], float(tp), "take_profit", i - idx, 1.0)
+        if closes[i] >= deadline and cl[i] >= entry:
+            return ExitLeg(closes[i], float(cl[i]), "time_stop", i - idx, 1.0)
+        if hard is not None and closes[i] >= hard:
+            return ExitLeg(closes[i], float(cl[i]), "max_hold", i - idx, 1.0)
+    return ExitLeg(data.index[-1], float(cl[-1]), "end_of_data", len(data) - 1 - idx, 1.0)
 
 
 def resimulate(c, data: pd.DataFrame, variant: str) -> ExitLeg:
@@ -128,15 +176,18 @@ def stats(eq: pd.Series) -> dict:
 
 
 def main() -> int:
-    global START, END
+    global START, END, VARIANTS, TRIALS
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--strategies", nargs="+", default=BRACKET)
     parser.add_argument("--capital", type=float, default=5000)
     parser.add_argument("--feed", default="sip", choices=["sip", "ibkr"])
+    parser.add_argument("--set", default="no_stop", choices=list(VARIANT_SETS))
     parser.add_argument("--start", default=str(START.date()))
     parser.add_argument("--end", default=str(END.date()))
     args = parser.parse_args()
     START, END = pd.Timestamp(args.start), pd.Timestamp(args.end)
+    VARIANTS = VARIANT_SETS[args.set]
+    TRIALS = 2 * len(BRACKET) if args.set == "no_stop" else 54
     cache_dir = ROOT / "cache" / "capital_experiment"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache = MarketDataCache()
@@ -152,6 +203,7 @@ def main() -> int:
         if len(f) > 300:
             raw[t] = f
     ind = {t: add_indicators(f, PARAMS) for t, f in raw.items()}
+    avail = {t: signal_availability(f.index, "4h") for t, f in ind.items()}
     closes = pd.DataFrame({t: f["close"].groupby(f.index.normalize()).last() for t, f in raw.items()})
     basket = [t for t in BASKET if t in closes and closes[t].loc[START:].notna().iloc[:5].any()]
     closes = closes.loc[START:].ffill().dropna(subset=basket)  # first day the basket traded
@@ -162,7 +214,8 @@ def main() -> int:
         for variant in VARIANTS:
             rebuilt = []
             for c in cands:
-                leg = resimulate(c, ind[c.ticker], variant)
+                leg = (resimulate(c, ind[c.ticker], variant) if args.set == "no_stop"
+                       else resimulate_spec(c, ind[c.ticker], avail[c.ticker], variant))
                 rebuilt.append(replace(c, single_legs=(leg,), scaled_legs=(leg,)))
             res = run_annual_portfolio(
                 rebuilt, initial_equity=args.capital, position_fraction=PARAMS.position_size_pct,

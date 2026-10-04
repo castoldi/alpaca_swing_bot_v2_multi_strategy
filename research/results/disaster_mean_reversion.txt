@@ -1,0 +1,29 @@
+  mean_reversion / S0 current (stop): done
+  mean_reversion / N1 no stop + time stop: done
+  mean_reversion / D20 stop -20%: done
+  mean_reversion / D25 stop -25%: done
+  mean_reversion / D30 stop -30%: done
+  mean_reversion / H6 no stop, 6-month max hold: done
+  mean_reversion / D25+H6 -25% + 6 months: done
+
+Continuous book 2016-01-01 -> 2026-09-09, $5,000, mark-to-market yearly returns
+portfolio                                      2016   2017   2018   2019   2020   2021   2022   2023   2024   2025   2026     total   CAGR  maxDD     end $
+mean_reversion | S0 current (stop)              -3%    +3%    -3%   +12%    +9%    -2%    -9%   +16%    +2%    +1%    -8%      +17%  +1.5%   -13%     5,861
+mean_reversion | N1 no stop + time stop        +11%   +10%   -13%   +34%   +23%    +8%   -32%   +70%    +5%   +32%    +4%     +215% +11.3%   -35%    15,746
+mean_reversion | D20 stop -20%                 +11%   +10%    -8%   +13%   +16%    -2%   -21%   +26%    -0%   +10%    +4%      +67%  +4.9%   -24%     8,349
+mean_reversion | D25 stop -25%                 +11%   +10%   -11%   +18%   +15%    +8%   -23%   +23%    -6%   +11%    +6%      +67%  +4.9%   -25%     8,354
+mean_reversion | D30 stop -30%                 +11%   +10%   -16%   +18%   +14%    +8%   -20%   +32%    +1%   +15%    +2%      +88%  +6.1%   -25%     9,376
+mean_reversion | H6 no stop, 6-month max hold   +11%   +10%   -13%   +30%   +20%    +8%   -27%   +29%    +1%   +17%    +4%     +108%  +7.1%   -29%    10,423
+mean_reversion | D25+H6 -25% + 6 months        +11%   +10%   -11%   +18%   +15%    +8%   -23%   +23%    -6%   +11%    +6%      +67%  +4.9%   -25%     8,373
+B&H QQQ                                         +9%   +33%    -0%   +39%   +49%   +27%   -32%   +55%   +26%   +21%   +17%     +607% +20.1%   -35%    35,364
+B&H SPY                                        +13%   +22%    -5%   +31%   +18%   +29%   -18%   +26%   +25%   +18%   +12%     +346% +15.0%   -34%    22,279
+B&H basket (NVDA/AMZN/META/AMD)               +141%   +38%    +9%   +99%   +98%   +70%   -53%  +171%   +83%   +45%   +48%   +12001% +56.7%   -65%   605,059
+
+portfolio                                    trades  win%   worst  med d  max d      t hurdle  open at end
+mean_reversion | S0 current (stop)              504   79%   -8.0%      2     28   1.02   3.12  [('AMZN', '2026-08-13', -5.6)]
+mean_reversion | N1 no stop + time stop         361   99%  -30.7%      3    857  13.04   3.13  [('META', '2025-09-23', -15.0), ('ARM', '2026-06-24', -30.7), ('AMZN', '2026-08-13', -5.6)]
+mean_reversion | D20 stop -20%                  479   94%  -20.0%      3     97   2.38   3.12  [('AMZN', '2026-08-13', -5.6)]
+mean_reversion | D25 stop -25%                  468   95%  -25.0%      3    184   2.19   3.12  [('AMZN', '2026-08-13', -5.6)]
+mean_reversion | D30 stop -30%                  455   96%  -30.1%      3    185   2.65   3.12  [('AMZN', '2026-08-13', -5.6)]
+mean_reversion | H6 no stop, 6-month max hold    423   96%  -55.9%      3    185   3.11   3.13  [('ARM', '2026-06-24', -30.7), ('AMZN', '2026-08-13', -5.6)]
+mean_reversion | D25+H6 -25% + 6 months         468   95%  -25.0%      3    182   2.22   3.12  [('AMZN', '2026-08-13', -5.6)]
