@@ -260,6 +260,11 @@ Health model: bot = pid alive AND heartbeat fresh within ~2 intervals; dashboard
   doubled ([docs/stop-width-production-2022-2026.md](docs/stop-width-production-2022-2026.md)).
   Legacy-engine wins must be re-checked on the production engine before any live
   change. 55 trials have been spent on exit rules.
+- **Trailing exits on dip-buy entries are settled: rejected.** Chandelier trail
+  (`research/exit_style_experiment.py`) and the trendline swing-low trail
+  ([docs/trendline-bounce-2004-2026.md](docs/trendline-bounce-2004-2026.md), 2026-10-10)
+  both lost to the fixed bracket. The trendline-bounce *entry* duplicates the ensemble
+  (same edge per trade, ~25× fewer signals); adding it changed nothing. 56 exit trials.
 - **IBKR import holds the cache write lock.** `scripts/import_ibkr_history.py` keeps
   `cache/market_data.db` locked for ~13 min per 4h series, and backtests fail with
   "database is locked" until it finishes. A 4h series import is longer than a 10-min

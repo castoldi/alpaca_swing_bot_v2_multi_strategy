@@ -409,3 +409,27 @@ harness, $5k, annual reset). Baseline reproduces +249.6%. Write-up:
 
 **Verdict: REJECTED, keep 9%.** A wash on the real engine; the legacy-engine gain came
 from the continuous book and 4h fills. Closes the no-stop / stop-width line (55 trials).
+
+
+## Experiment: Trendline bounce from a YouTube video (2026-10-10)
+
+**Question:** Tori Trades' trendline method (buy a bounce off a rising line through
+swing lows, stop beyond the line, trail under new swing lows, exit on a close through
+the line). Does the entry or the exit help? `research/trendline_bounce_experiment.py`,
+mechanical rules fixed in advance, legacy 4h engine, annual $5,000 book. Write-up:
+[docs/trendline-bounce-2004-2026.md](../docs/trendline-bounce-2004-2026.md).
+
+| SIP 2016–26 @ $5k | Comp | Max DD | Trades | Win % | Mean | t (hurdle 2.13) |
+|---|---:|---:|---:|---:|---:|---:|
+| E0 ensemble | +1,790% | 26.7% | 2,113 | 77% | +0.79% | 6.47 |
+| T1 trendline + video exit | +35% | 10.4% | 393 | 30% | +0.44% | 1.35 |
+| T2 trendline + bracket | +74% | 9.6% | 376 | 78% | +0.82% | 3.01 |
+| T3 ensemble + T2 | +1,869% | 28.1% | 2,124 | 77% | +0.80% | 6.55 |
+
+IBKR 2004–2015 (NVDA, AMZN, AMD): E0 +72%, T1 +3% (t 0.30), T2 +16%, T3 +74%.
+
+**Verdict: REJECTED.** The video's exit fails (t 1.35; 0.30 out of sample). It is the
+fourth trailing/tight exit to lose to the bracket on dip-buy entries. The entry is about
+as good per trade as the ensemble but fires ~25× less often, and 56% of its signals are
+on an ensemble bar. Added to the ensemble it moves results by noise (+11 trades in 11
+years; 2022/2023 and max DD worse). 3 trials; exit rules now 56.

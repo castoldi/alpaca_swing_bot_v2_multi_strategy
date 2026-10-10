@@ -1,0 +1,25 @@
+tickers: NVDA, AMZN, AMD
+  2004: E0 201  TL 6 candidates (3 same bar as E0)
+  2005: E0 240  TL 1 candidates (1 same bar as E0)
+  2006: E0 305  TL 5 candidates (4 same bar as E0)
+  2007: E0 408  TL 5 candidates (5 same bar as E0)
+  2008: E0 330  TL 10 candidates (2 same bar as E0)
+  2009: E0 432  TL 9 candidates (5 same bar as E0)
+  2010: E0 371  TL 19 candidates (17 same bar as E0)
+  2011: E0 403  TL 15 candidates (5 same bar as E0)
+  2012: E0 353  TL 17 candidates (6 same bar as E0)
+  2013: E0 423  TL 11 candidates (7 same bar as E0)
+  2014: E0 403  TL 10 candidates (3 same bar as E0)
+  2015: E0 689  TL 15 candidates (6 same bar as E0)
+
+variant                         2004    2005    2006    2007    2008    2009    2010    2011    2012    2013    2014    2015       comp  maxDD
+E0 ensemble                   -13.5%  +13.6%  +14.3%  +20.1%  -26.1%  +24.0%   +2.2%   +0.5%   -2.7%  +10.4%   +2.5%  +23.2%     +72.4%  29.5%
+T1 trendline + video exit      +2.4%   -0.1%   -1.3%   -2.5%   -1.2%   +0.4%   +8.1%   -0.1%   -0.7%   -0.4%   -0.8%   -0.6%      +2.8%   2.7%
+T2 trendline + bracket         +2.3%   +0.9%   -1.7%   +1.6%   +1.1%   +3.6%   +5.4%   -2.7%   -0.3%   +2.1%   -2.3%   +5.1%     +15.7%   5.3%
+T3 ensemble + T2              -13.5%  +13.6%  +14.3%  +20.1%  -26.1%  +24.0%   +4.8%   -1.3%   -2.7%  +10.6%   +2.5%  +23.4%     +74.2%  29.5%
+
+variant                       cands trades  win%  avg win avg loss    mean   worst hold bars      t hurdle
+E0 ensemble                    4558    897   65%    +4.1%    -6.7%  +0.35%  -16.0%      17.6   1.70   2.12   {'take_profit': 333, 'time_stop': 324, 'stop_loss': 200, 'gap_stop': 26, 'end_of_data': 14}
+T1 trendline + video exit       123     77   23%    +5.7%    -1.5%  +0.21%   -4.8%      11.9   0.30   2.16   {'stop_loss': 45, 'line_break': 30, 'end_of_data': 1, 'gap_stop': 1}
+T2 trendline + bracket          123     71   76%    +3.1%    -5.6%  +1.06%   -9.0%      20.0   1.89   2.16   {'time_stop': 30, 'take_profit': 29, 'stop_loss': 10, 'end_of_data': 2}
+T3 ensemble + T2               4617    902   65%    +4.1%    -6.7%  +0.35%  -16.0%      17.6   1.72   2.12   {'take_profit': 337, 'time_stop': 323, 'stop_loss': 202, 'gap_stop': 26, 'end_of_data': 14}

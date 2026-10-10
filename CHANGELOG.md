@@ -17,6 +17,11 @@ semantic (`MAJOR.MINOR.PATCH`).
 _Changes landed but not yet released under a new version number go here._
 
 ### Added
+- **Trendline-bounce experiment** (`research/trendline_bounce_experiment.py`): a mechanical
+  version of a YouTube trendline method (swing-low rays, line stop, swing-low trail, exit on
+  a close through the line), 2016–2026 SIP and 2004–2015 IBKR at $5k. The video's exit
+  failed (t 1.35); the entry matches the ensemble per trade but fires ~25× less often and
+  adds only noise to it. Rejected, no bot change. Write-up: docs/trendline-bounce-2004-2026.md.
 - **Stop width on the production engine** (`research/stop_width_production.py`): ensemble
   with a 20% stop vs the live 9%, 2022–2026 at $5k. +253.6% vs +249.6%, max DD 39.3% vs
   40.6%, avg loss −15.4% vs −8.6%. A wash; the 9% stop stays. Write-up:
