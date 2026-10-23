@@ -1,0 +1,23 @@
+[Unit]
+Description=Alpaca Swing Bot V2 dashboard (port 8004)
+Documentation=https://github.com/castoldi/alpaca_swing_bot_v2_multi_strategy
+After=network-online.target tailscaled.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=__REPO_DIR__
+Environment=PATH=/home/opc/.local/bin:/home/opc/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONIOENCODING=utf-8
+Environment=TZ=America/Chicago
+# SELinux (Enforcing) refuses to exec a venv interpreter under /home directly
+# (203/EXEC), so go through bash — same pattern as nfl-dashboard/watch-vault.
+# run_dashboard.py holds the runtime singleton lock: a second start exits 0.
+ExecStart=/bin/bash -c "exec .venv/bin/python scripts/run_dashboard.py --port 8004"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

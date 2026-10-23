@@ -1,0 +1,26 @@
+[Unit]
+Description=Alpaca Swing Bot V2 trader (ensemble, 30m loop)
+Documentation=https://github.com/castoldi/alpaca_swing_bot_v2_multi_strategy
+After=network-online.target tailscaled.service
+Wants=network-online.target
+# No .env, no keys: stay down instead of failing in a loop.
+ConditionPathExists=__REPO_DIR__/.env
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=__REPO_DIR__
+# claude lives in ~/.local/bin, opencode in ~/.opencode/bin (research loop).
+Environment=PATH=/home/opc/.local/bin:/home/opc/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONIOENCODING=utf-8
+Environment=TZ=America/Chicago
+# Via bash: SELinux (Enforcing) refuses to exec a venv interpreter under
+# /home directly (203/EXEC). Mirrors the Windows loop:
+#   bot.py --strategy ensemble --loop --interval 30
+ExecStart=/bin/bash -c "exec .venv/bin/python bot.py --strategy ensemble --loop --interval 30"
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

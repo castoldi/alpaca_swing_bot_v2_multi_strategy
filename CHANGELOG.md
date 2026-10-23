@@ -388,6 +388,21 @@ _Changes landed but not yet released under a new version number go here._
 
 
 
+
+## [0.29.0] - 2026-10-22
+
+### Added
+- **Linux deploy support** (`scripts/install_linux.sh`, `systemd/alpaca-swing-dashboard.service`,
+  `systemd/alpaca-swing-bot.service`): idempotent Oracle Linux installer — python3.12 venv,
+  dashboard unit on port 8004 (Tailscale-only firewall), bot unit for the ensemble 30m loop.
+  Units exec via bash because SELinux Enforcing refuses venv interpreters under /home.
+  The installer leaves the bot disabled until the Windows loop is stopped (singleton rule);
+  this release migrates hosting to Oracle Linux, so the Windows schedulers stay disabled.
+
+### Fixed
+
+### Changed
+
 ## [0.28.1] - 2026-09-26
 
 ### Added
@@ -2049,6 +2064,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 
