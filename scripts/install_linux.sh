@@ -95,8 +95,10 @@ else
   log "dashboard: NOT listening yet — check: sudo journalctl -u $DASHBOARD_UNIT"
 fi
 if ! grep -q "^DASHBOARD_TOKEN=..*" "$ROOT/.env" 2>/dev/null; then
-  log "WARNING: DASHBOARD_TOKEN is not set in .env — the dashboard is open to"
-  log "every device on the tailnet. Set it and use ?token=<token> in the URL."
+  log "security note: DASHBOARD_TOKEN is empty — the token gate is OFF, so any"
+  log "device that can reach port 8004 sees the dashboard. The firewall keeps"
+  log "8004 off the public zone (Tailscale only); set DASHBOARD_TOKEN in .env"
+  log "and restart the unit to turn the gate back on."
 fi
 TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
 [ -n "$TS_IP" ] && log "dashboard over Tailscale: http://$TS_IP:8004"

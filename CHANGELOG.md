@@ -344,50 +344,18 @@ _Changes landed but not yet released under a new version number go here._
   signals on the bot's own strategies (not just the index) before implementing a
   market-wide entry gate.
 
+## [0.29.1] - 2026-10-23
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### Changed
+- **Dashboard token gate disabled on the Linux host.** DASHBOARD_TOKEN is empty
+  in the host .env, so http://100.113.131.74:8004 opens with no ?token=
+  suffix (the previous 401 is gone). Port 8004 stays firewalled to the Tailscale
+  zone only — with the gate off, the firewall is the sole protection.
+- scripts/install_linux.sh now reports the token gate as a security note (on/off)
+  instead of warning it is unset.
+- **AGENTS.md**: documents Oracle Linux (cc-server-1) as the production host —
+  systemd service names, restart/verify commands, tailnet dashboard URL, and the
+  rule that the Windows bot/dashboard and AlpacaSwingBotKeepAlive stay disabled.
 
 ## [0.29.0] - 2026-10-22
 
@@ -2064,6 +2032,7 @@ build-version + auto-tag workflow.
   orders. Raise `dollars_per_trade` in `config.py` to trade them with proper brackets.
 - `CLAUDE.md` / `AGENTS.md` updated with the no-duplicate rule, PID-finding
   instructions, the health model, and the manager-based restart workflow.
+
 
 
 

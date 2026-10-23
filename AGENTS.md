@@ -28,6 +28,13 @@ python backtest_2026.py
 
 ## Running the bot & dashboard — use the manager (NEVER start duplicates)
 
+> **Host since 2026-10-23: Oracle Linux (`acc-server-1`).** The dashboard and the
+> ensemble bot loop run as systemd services on that box — see
+> [Linux host](#linux-host-oracle-linux) below. The Windows manager commands
+> documented in this section still work but the Windows bot/dashboard are
+> **stopped**, and the `AlpacaSwingBotKeepAlive` scheduled task is **Disabled**.
+> Do not re-enable either: two live loops double-trade and double-email.
+
 The bot and dashboard are **singletons**. Two `--loop` bots running at once flooded
 the user with duplicate emails, so a long-running process must be started **only**
 through `scripts/manage.ps1`, which checks for a live, healthy instance and refuses
@@ -48,11 +55,33 @@ pwsh scripts\manage.ps1 stop-dashboard
 `start-*` is safe to call repeatedly: a healthy instance is left alone; a dead/hung
 one is replaced and any orphan processes are swept first.
 
-Dashboard URL for the user: http://192.168.0.191:8004 (their mobile network
-address — always give this, never `localhost`, which their phone can't reach;
-`localhost:8004` still works for local health checks from this machine). Routes:
+Dashboard URL for the user: **http://100.113.131.74:8004** (or
+`http://acc-server-1:8004`) — the Oracle Linux host's Tailscale address; always
+give this, never `localhost`, which their phone can't reach. `localhost:8004`
+still works for local health checks **on the Linux host**. The token gate is
+**off** (`DASHBOARD_TOKEN` empty), so no `?token=` suffix is needed. Routes:
 `/` Home (KPIs, positions, trades, backtests), `/` Strategies (6 cards + live P&L),
 `/backtest-2024`, `/backtest-2025`, `/backtest-2026` (Plotly reports).
+
+### Linux host (Oracle Linux)
+
+`acc-server-1`, `~/ai-projects/alpaca_swing_bot_v2_multi_strategy`, services
+managed by systemd (**not** `manage.ps1`):
+
+```bash
+bash scripts/install_linux.sh                 # idempotent: venv, units, firewall 8004
+sudo systemctl status  alpaca-swing-dashboard alpaca-swing-bot
+sudo systemctl restart alpaca-swing-dashboard # after editing dashboard/*
+sudo systemctl restart alpaca-swing-bot       # after editing bot.py
+sudo journalctl -u alpaca-swing-bot -n 50 --no-pager
+```
+
+- Dashboard on `8004` is bound `0.0.0.0` but firewalled to zone `internal`
+  (Tailscale) only — never open `8004` on `public`.
+- `.env` and `dashboard/swing_bot_v2.db` are host-local, copied by hand with
+  `scp` (both are git-ignored). Never commit either.
+- Prompts that require root: the `opc` user has passwordless sudo.
+
 
 ### Finding the PIDs
 
@@ -207,9 +236,17 @@ significance and the finding that live Ensemble entries equal Regime's.
 
 ## RULE: restart after changes
 
-**Whenever you make changes to any dashboard file (`dashboard/server.py`, `dashboard/index.html`, `dashboard/db.py`, `dashboard/bot_hooks.py`) or to `bot.py`, you MUST restart via the manager (it swaps in place — never start a second process):**
+**Whenever you make changes to any dashboard file (`dashboard/server.py`, `dashboard/index.html`, `dashboard/db.py`, `dashboard/bot_hooks.py`) or to `bot.py`, you MUST restart the service on the host that owns it (it swaps in place — never start a second process):**
 
-1. For the **dashboard**: `pwsh scripts\manage.ps1 restart-dashboard`, then post `http://192.168.0.191:8004` (not `localhost`) once `status` shows it HEALTHY.
+Production host is **Oracle Linux** (see [Linux host](#linux-host-oracle-linux)):
+
+1. For the **dashboard**: `sudo systemctl restart alpaca-swing-dashboard`, then post `http://100.113.131.74:8004` (not `localhost`) once `systemctl is-active` reports `active`.
+2. For the **bot**: `sudo systemctl restart alpaca-swing-bot`.
+3. Run `systemctl is-active alpaca-swing-dashboard alpaca-swing-bot` and confirm both `active` in your response.
+
+Only if you are deliberately running the Windows copy (it is normally stopped):
+
+1. For the **dashboard**: `pwsh scripts\manage.ps1 restart-dashboard`, then post `http://192.168.0.191:8004` once `status` shows it HEALTHY.
 2. For the **bot**: `pwsh scripts\manage.ps1 restart-bot -Strategy <strategy>`.
 3. Run `pwsh scripts\manage.ps1 status` and confirm HEALTHY in your response.
 
